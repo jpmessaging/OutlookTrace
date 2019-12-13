@@ -1,95 +1,108 @@
-�T�v
-===
+## 概要
+OutlookTrace.ps1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
-���p���@
-===
+[ダウンロード](https://https://github.com/jpmessaging/OutlookTrace/edit/master/placeholder.ps1)
 
-1. OutlookTrace.ps1 ���_�E�����[�h���A�u���b�N���������܂�
+## 利用方法
+1. OutlookTrace.ps1 をダウンロードし、ブロックを解除します。
 
-    1.1. �t�@�C�����E�N���b�N���āA�v���p�e�B���J���܂��B  
-    1.2. [�S��] �^�u�ɂāA�u���̃t�@�C���͑��̃R���s���[�^�[����擾�������̂ł��B���̃R���s���[�^�[��ی삷�邽�߁A���̃t�@�C���ւ̃A�N�Z�X�̓u���b�N�����\��������܂��B�v�Ƃ������b�Z�[�W���\������Ă���ꍇ�ɂ́A[������] �Ƀ`�F�b�N�����܂��B  
+    1.1. ファイルを右クリックして、プロパティを開きます。  
+    1.2. [全般] タブにて、「このファイルは他のコンピューターから取得したものです。このコンピューターを保護するため、このファイルへのアクセスはブロックされる可能性があります。」というメッセージが表示されている場合には、[許可する] にチェックを入れます。  
 
-2. �Ώۂ̃}�V����� OutlookTrace.ps1 ���R�s�[���܂�
-3. PowerShell ���N�����܂�
-4. �h�b�g �\�[�X�� OutlookTrace.ps1 ���C���|�[�g���܂��B
+2. 対象のマシン上に OutlookTrace.ps1 をコピーします。
+3. 管理者権限で PowerShell を起動します。
+
+   Get-ExecutionPolicy を実行して RemoteSigned となっていない場合には以下のように設定します。
+
+    ```PowerShell
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned
+    ```
+       
+4. ドット ソースで OutlookTrace.ps1 をインポートします。
 
     ```
-    . <OutlookTrace.ps1 �ւ̃p�X>
+    . <OutlookTrace.ps1 へのパス>
     ```
 
-    ��: 
+    例: 
     ```
     . C:\temp\OutlookTrace.ps1
     ```
 
-5. Collect-OutlookInfo �����s���܂�  
+5. Collect-OutlookInfo を実行します  
 
-    �� �̎悷��R���|�[�l���g�ƃ^�O�ɂ��Ă̓G���W�j�A����̈ē������m�F���������B
+    ※ 採取するコンポーネントとタグについてはエンジニアからの案内をご確認ください。
 
     ```
-    Collect-OutlookInfo -Path <�o�͐�t�H���_> -Component <�̎悷��R���|�[�l���g>
+    Collect-OutlookInfo -Path <出力先フォルダ> -Component <採取するコンポーネント>
     ```
 
-    ��:
+    例:
     ```
     Collect-OutlookInfo -Path c:\temp -Component Configuration, Netsh, Outlook
     ```
 
-6. ����Ƀg���[�X���J�n�����ƁA"Hit enter to stop tracing" �ƕ\�������̂ŁA���ۂ��Č����܂��B
+6. 正常にトレースが開始されると、"Hit enter to stop tracing" と表示されるので、事象を再現します。
    
-    �� �̎悷��R���|�[�l���g�� Fiddler ���܂߂��ꍇ�A[FiddlerCap Web Recordder] �_�C�A���O�{�b�N�X���\������܂��B�ȉ��̎菇�ɏ]���Ď蓮�ŁA�L���v�`�����J�n���������B�L���v�`���J�n��Ɏ��ۂ��Č����܂��B
+    ※ 採取するコンポーネントに Fiddler を含めた場合、[FiddlerCap Web Recordder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
 
-    1. [HTTPS �ʐM�����] �Ƀ`�F�b�N�����܂�                
-    2. �ȉ��̐������\�����ꂽ��A���e���m�F���� [OK] ���N���b�N���܂�
-
-        ```
-        HTTPS �̉�ǂ́AHTTPS �v���g�R���o�R�ő����� Raw �g���t�B�b�N�����邽�߂Ƀf�o�b�O���₷�����Ă���܂��B
-        ���̋@�\�� SSL �g���t�B�b�N����ǂ��A���[�J���ɐ������ꂽ�ؖ�����p���čēx�Í������܂��B����āA���̋@�\���g���ƁA�s���Ȕ��s������̏ؖ������g���Ă��郊���[�g�T�C�g�ł��邱�ƕ\������A�Ԃ��x���y�[�W�� Web �u���E�U�[�ɕ\������邱�Ƃ��Ӗ����܂��B
-        ���̃g���t�B�b�N���L���v�`�����邱�ƂɌ��肵�āA���̃u���E�U�[�ɕ\�������x���𖳎����Ă��������B
-        ```
-
-    3. �ȉ��̓��e�̃Z�L�����e�B�x�����\�����ꂽ��A[�͂�] ���N���b�N���܂�
+    1. [HTTPS 通信を解読] にチェックを入れます。
+    2. 以下の説明が表示されたら、内容を確認して [OK] をクリックします。
 
         ```
-        ���s�҂����ł���Ǝ咣����ؖ��@�� (CA) ����ؖ������C���X�g�[�����悤�Ƃ��Ă��܂�:
+        HTTPS の解読は、HTTPS プロトコル経由で送られる Raw トラフィックを見るためにデバッグしやすくしてくれます。
+        この機能は SSL トラフィックを解読し、ローカルに生成された証明書を用いて再度暗号化します。よって、この機能を使うと、不明な発行元からの証明書を使っているリモートサイトであること表示する、赤い警告ページが Web ブラウザーに表示されることを意味します。
+        このトラフィックをキャプチャすることに限定して、このブラウザーに表示される警告を無視してください。
+        ```
+
+    3. 以下の内容のセキュリティ警告が表示されたら、[はい] をクリックします。
+
+        ```
+        発行者が次であると主張する証明機関 (CA) から証明書をインストールしようとしています:
 
         DO_NOT_TRUST_FiddlerRoot
 
-        �ؖ��������ۂ� "DO_NOT_TRUST_FiddlerRoot" ����̂��̂ł��邩�ǂ��������؂ł��܂���B"DO_NOT_TRUST_FiddlerRoot" �ɘA�����Ĕ��s�҂��m�F����K�v������܂��B ���̔ԍ��͂��̉ߒ��Ŗ𗧂��܂�:
+        証明書が実際に "DO_NOT_TRUST_FiddlerRoot" からのものであるかどうかを検証できません。"DO_NOT_TRUST_FiddlerRoot" に連絡して発行者を確認する必要があります。 次の番号はこの過程で役立ちます:
 
-        �d�� (sha1): ***
+        拇印 (sha1): ***
 
-        �x��:
-        ���̃��[�g�ؖ������C���X�g�[������ƁA���� CA �ɂ���Ĕ��s���ꂽ�ؖ����͎����I�ɐM������܂��B�m�F����Ă��Ȃ��d��t���̏ؖ������C���X�g�[�����邱�Ƃ́A�Z�L�����e�B��A�댯�ł��B [�͂�] ���N���b�N����ƁA���̊댯��F���������ƂɂȂ�܂��B
+        警告:
+        このルート証明書をインストールすると、この CA によって発行された証明書は自動的に信頼されます。確認されていない拇印付きの証明書をインストールすることは、セキュリティ上、危険です。 [はい] をクリックすると、この危険を認識したことになります。
 
-        ���̏ؖ������C���X�g�[�����܂���?
+        この証明書をインストールしますか?
         ```
 
-    4. [1. �L���v�`���J�n] ���N���b�N���܂�
-        �����I�Ƀu���E�U���N�����ꂽ��A���̃u���E�U�̓N���[�Y���������Č��\�ł��B
+    4. [1. キャプチャ開始] をクリックします。
+        自動的にブラウザが起動されたら、そのブラウザはクローズいただいて結構です。
 
-7. �Č���A�R���\�[���� Enter �L�[����͂��g���[�X���~���܂��B
-8. �̎悷��R���|�[�l���g�� Fiddler ���܂߂��ꍇ�A�ȉ��̎菇�Œ�~���ĕۑ����܂��B
+7. 再現後、コンソールに Enter キーを入力しトレースを停止します。
+8. 採取するコンポーネントに Fiddler を含めた場合、以下の手順で停止して保存します。
 
-    1. [2. �L���v�`����~] ���N���b�N���܂��B
-    2. [3. �L���v�`���ۑ�] ���N���b�N���܂��B
-    3. �t�@�C����C�ӂ̏ꏊ�ɕۑ����܂��B
-    4. [FiddlerCap Web Recordder] �_�C�A���O�{�b�N�X���N���[�Y���܂��B  
-        ���̎��ȉ��̓��e���\�����ꂽ��A[�͂�] ���N���b�N���܂��B
+    1. [2. キャプチャ停止] をクリックします。
+    2. [3. キャプチャ保存] をクリックします。
+    3. ファイルを任意の場所に保存します。
+    4. [FiddlerCap Web Recordder] ダイアログボックスをクローズします。  
+        この時以下の内容が表示されたら、[はい] をクリックします。
 
         ```
-        ���̏ؖ��������[�g �X�g�A����폜���܂���?
+        次の証明書をルート ストアから削除しますか?
 
-        �T�u�W�F�N�g: DO_NOT_TRUST_FiddlerRoot, DO_NOT_TRUST, Created by http://www.fiddler2.com
-        ���s��: ���Ȕ��s
-        �L������: ***
-        �V���A���ԍ� : ***
-        �d�� (sha1): ***
-        �d�� (md5):***
+        サブジェクト: DO_NOT_TRUST_FiddlerRoot, DO_NOT_TRUST, Created by http://www.fiddler2.com
+        発行者: 自己発行
+        有効期間: ***
+        シリアル番号 : ***
+        拇印 (sha1): ***
+        拇印 (md5):***
         ```
 
-�ȉ��̃t�@�C�������񂹂��������B
+9. 手順 3 で Set-ExecutionPolicy で変更した場合には元の値へ戻します。
 
-- �菇 5 �ŏo�͐�Ɏw�肵���t�H���_�ɍ쐬���ꂽ "Outlook_<�T�[�o�[��>_<�擾����>.zip" �Ƃ������O�� ZIP �t�@�C��
-- �̎悷��R���|�[�l���g�� Fiddler ���܂߂��ꍇ�ɂ́A�菇 8 �ŕۑ������t�@�C�� (FiddlerCap_***.saz) 
+    ```PowerShell
+    Set-ExecutionPolicy -ExecutionPolicy <元の値>
+    ```
+    
+以下のファイルをお寄せください。
+
+- 手順 5 で出力先に指定したフォルダに作成された "Outlook_<サーバー名>_<取得日時>.zip" という名前の ZIP ファイル
+- 採取するコンポーネントに Fiddler を含めた場合には、手順 8 で保存したファイル (FiddlerCap_***.saz) 
 
