@@ -81,7 +81,7 @@ OutlookTrace.ps1 は Outlook に関する情報採取用の PowerShell スクリ
     1. [2. キャプチャ停止] をクリックします。
     2. [3. キャプチャ保存] をクリックします。
     3. ファイルを任意の場所に保存します。
-    4. [FiddlerCap Web Recordder] ダイアログボックスをクローズします。  
+    4. [FiddlerCap Web Recorder] ダイアログボックスをクローズします。  
         この時以下の内容が表示されたら、[はい] をクリックします。
 
         ```
