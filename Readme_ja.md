@@ -31,7 +31,7 @@ OutlookTrace.ps1 は Outlook に関する情報採取用の PowerShell スクリ
 
 5. Collect-OutlookInfo を実行します  
 
-    ※ 採取するコンポーネントとタグについてはエンジニアからの案内をご確認ください。
+    ※ 採取するコンポーネントについてはエンジニアからの案内をご確認ください。
 
     ```
     Collect-OutlookInfo -Path <出力先フォルダ> -Component <採取するコンポーネント>
