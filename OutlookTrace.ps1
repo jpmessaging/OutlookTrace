@@ -442,7 +442,7 @@ function Get-MicrosoftUpdate {
     $productsKey = Get-ChildItem -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products
 
     if ($OfficeOnly) {
-        $productsKey = Get-ChildItem -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products | where {$_.Name -match "F01FEC"}
+        $productsKey = Get-ChildItem -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products | Where-Object {$_.Name -match "F01FEC"}
     }
 
     $result = @(
@@ -620,15 +620,32 @@ function Save-OfficeModuleInfo {
     }
 
     $officeInfo = Get-OfficeInfo
-    $officePath = $officeInfo.InstallPath
-    Write-Verbose "officePath is `"$officePath`""
+
+    $officePaths = @(
+        $officeInfo.InstallPath
+
+        if ($env:CommonProgramFiles) {
+            Join-Path $env:CommonProgramFiles 'microsoft shared'
+        }
+
+        if (${env:CommonProgramFiles(x86)}) {
+            Join-Path ${env:CommonProgramFiles(x86)} 'microsoft shared'
+        }
+    )
+
+    Write-Verbose "officePaths are $officePaths"
 
     # Get exe and dll
-    if (-not $PSCmdlet.ShouldProcess($officePath, "Exporting module info")) {
+    if (-not $PSCmdlet.ShouldProcess($officePaths[0], "Exporting module info")) {
         return
     }
 
-    $items = Get-ChildItem -Path $officePath\* -Include *.dll,*.exe -Recurse
+    $items = @(
+        foreach ($officePath in $officePaths) {
+            Get-ChildItem -Path $officePath\* -Include *.dll,*.exe -Recurse
+        }
+    )
+
     $result = @(
         foreach ($item in $items) {
             if ($item.VersionInfo.FileVersionRaw) {
@@ -686,7 +703,7 @@ function Start-CAPITrace {
         throw "logman failed to create a session. exit code = $LASTEXITCODE. $logmanResult"
     }
 
-    # Note: Depending on the version OS, not all providers are available.
+    # Note: Depending on the OS version, not all providers are available.
     $logmanResult = Invoke-Expression "logman update trace $SessionName -p `"Schannel`" 0xffffffffffffffff 0xff -ets"
     $logmanResult = Invoke-Expression "logman update trace $SessionName -p `"{44492B72-A8E2-4F20-B0AE-F1D437657C92}`" 0xffffffffffffffff 0xff -ets"
     $logmanResult = Invoke-Expression "logman update trace $SessionName -p `"Microsoft-Windows-Schannel-Events`" 0xffffffffffffffff 0xff -ets"
@@ -810,7 +827,7 @@ function Get-OfficeInfo {
 
     # Use the cache if it's available
     if ($Script:OfficeInfoCache) {
-        return $Script:OfficeInfoCache        
+        return $Script:OfficeInfoCache
     }
 
     # There might be more than one version of Office installed.
@@ -834,7 +851,7 @@ function Get-OfficeInfo {
     }
 
     # Use the latest
-    $latestOffice = $officeInstallations | Sort-Object -Property Version -Descending | select -First 1
+    $latestOffice = $officeInstallations | Sort-Object -Property Version -Descending | Select-Object -First 1
 
     $outlookReg = Get-ItemProperty HKLM:'\SOFTWARE\Clients\Mail\Microsoft Outlook' -ErrorAction Stop
     $mapiDll = Get-ItemProperty $outlookReg.DLLPathEx -ErrorAction Stop
@@ -871,19 +888,20 @@ function Collect-OutlookInfo {
     Write-Verbose "Starting traces"
     try {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete -1
             Save-EventLog -Path $tempPath
             Get-MicrosoftUpdate | Export-Clixml -Depth 4 -Path $(Join-Path $tempPath -ChildPath 'MicrosoftUpdate.xml')
             Save-OfficeRegistry -Path $tempPath
             Save-OfficeModuleInfo -Path $tempPath
             Save-OSConfiguration -Path $tempPath
-
+            Write-Progress -Activity "Saving configuration" -Status "Done" -Completed
             # Do we need MSInfo32?
             # Save-MSInfo32 -Path $tempPath
         }
 
         if ($Component -contains 'Fiddler' -or $Component -contains 'All') {
-            $fiddlerCap = Start-FiddlerCap -Path $Path
-            $fiddlerCapStated = $true
+            Start-FiddlerCap -Path $Path | Out-Null
+            $fiddlerCapStarted = $true
 
             Write-Warning "FiddlerCap has started. Please manually configure and start capture."
         }
@@ -918,7 +936,7 @@ function Collect-OutlookInfo {
             $tcoTraceStarted = $true
         }
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStated){
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted){
             Read-Host "Hit enter to stop tracing"
         }
     }
@@ -947,7 +965,7 @@ function Collect-OutlookInfo {
             Stop-TcoTrace -Path $tempPath
         }
 
-        if ($fiddlerCapStated) {
+        if ($fiddlerCapStarted) {
             Write-Warning "Please stop FiddlerCap and save the capture manually."
         }
     }
