@@ -484,6 +484,18 @@ function Get-MicrosoftUpdate {
     $result
 }
 
+function Save-MicrosoftUpdate {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        $Path
+    )
+
+    $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
+    $name = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
+    Get-MicrosoftUpdate | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
+}
+
 function Save-OfficeRegistry {
     [CmdletBinding()]
     param (
@@ -663,8 +675,10 @@ function Save-OfficeModuleInfo {
             }
         }
     )
-
-    $result | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$($PSCmdlet.MyInvocation.MyCommand.Noun).xml")
+    
+    $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
+    $name = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
+    $result | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
 }
 
 function Save-MSInfo32 {
@@ -890,7 +904,7 @@ function Collect-OutlookInfo {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete -1
             Save-EventLog -Path $tempPath
-            Get-MicrosoftUpdate | Export-Clixml -Depth 4 -Path $(Join-Path $tempPath -ChildPath 'MicrosoftUpdate.xml')
+            Save-MicrosoftUpdate -Path $tempPath
             Save-OfficeRegistry -Path $tempPath
             Save-OfficeModuleInfo -Path $tempPath
             Save-OSConfiguration -Path $tempPath
