@@ -1,4 +1,4 @@
-﻿## Overview
+## Overview
 OutlookTrace.ps1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
 [Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2019-12-17/OutlookTrace.ps1)
@@ -113,7 +113,7 @@ Send the following files:
 ## License
 Copyright (c) 2020 Ryusuke Fujita
 
-This software is released under the MIT License.
+This software is released under the MIT License.  
 http://opensource.org/licenses/mit-license.php
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
