@@ -1,7 +1,7 @@
-## Overview
+﻿## Overview
 OutlookTrace.ps1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2019-12-17/OutlookTrace.ps1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-01-09/OutlookTrace.ps1)
 
 ## How to use
 1. Download OutlookTrace.ps1 and unblock the file.
