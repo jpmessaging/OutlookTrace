@@ -1,3 +1,17 @@
+<#
+.NOTES
+Copyright (c) 2020 Ryusuke Fujita
+
+This software is released under the MIT License.
+http://opensource.org/licenses/mit-license.php
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#>
+
 # Outlook's ETW pvoviders
 $outlook2016Providers =
 @"
@@ -491,6 +505,10 @@ function Save-MicrosoftUpdate {
         $Path
     )
 
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+    }
+
     $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
     $name = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
     Get-MicrosoftUpdate | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
@@ -502,6 +520,10 @@ function Save-OfficeRegistry {
         [parameter(Mandatory = $true)]
         $Path
     )
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+    }
 
     $registryKeys = @(
         "HKCU\Software\Microsoft\Office",
@@ -517,7 +539,10 @@ function Save-OfficeRegistry {
         $err = $(reg export $key $filePath) 2>&1
 
         if ($LASTEXITCODE -ne 0) {
-            Write-Verbose "$key is not exported. exit code = $LASTEXITCODE. $err"
+            # keys under Policies may not exist. So ignore.
+            if ($key -notlike "*Policies*") {
+                Write-Error "$key is not exported. exit code = $LASTEXITCODE. $err"
+            }
         }
     }
 }
@@ -528,6 +553,10 @@ function Save-OSConfiguration {
         [parameter(Mandatory = $true)]
         $Path
     )
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+    }
 
     Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_ComputerSystem.xml")
     Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_OperatingSystem.xml")
@@ -542,6 +571,9 @@ function Get-ProxySetting {
 
     # Get Users's Internet Settings
     $internetSettings = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+
+    # Get WebProxy class to get IE config
+    $webProxyDefault = [System.Net.WebProxy]::GetDefaultProxy()
 
     # Get Machine's Winhttp Settings
     $netshRaw = & netsh winhttp show proxy
@@ -561,6 +593,9 @@ function Get-ProxySetting {
         ProxyEnabled = $($internetSettings.ProxyEnable -eq 1)
         ProxyServer = $internetSettings.ProxyServer
         ProxyOverride = $internetSettings.ProxyOverride
+
+        WebProxyDefault = $webProxyDefault
+
         WinHttpDirectAccess = $winHttpDirectAccess -eq $true
         WinHttpProxyServer = $winHttpProxyServer
         WinHttpBypassList = $winHttpBypassList
@@ -675,7 +710,7 @@ function Save-OfficeModuleInfo {
             }
         }
     )
-    
+
     $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
     $name = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
     $result | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
