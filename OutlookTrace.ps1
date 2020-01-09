@@ -805,6 +805,22 @@ function Start-FiddlerCap {
 
         # Silently extract. Path must be absolute.
         Invoke-Expression  "$fiddlerSetupFile /S /D=$fiddlerPath"
+
+        # Extraction might take a little while. Wait upto 10 seconds
+        $maxWaitSeconds = 10
+        for ($i = 0; $i -lt $maxWaitSeconds; ++$i) {
+            if (Test-Path $fiddlerExe) {
+                break
+            }
+            else {
+                Start-Sleep -Seconds 1
+            }
+        }
+
+        # If still not available, bail.
+        if ($i -eq $maxWaitSeconds) {
+            throw "$fiddlerExe is not available after $maxWaitSeconds seconds"
+        }
     }
 
     # Start FiddlerCap.exe
@@ -1031,4 +1047,3 @@ function Collect-OutlookInfo {
     Write-Host "The collected data is in `"$(Join-Path $Path $zipFileName).zip`"" -ForegroundColor Green
     Invoke-Item $Path
 }
-
