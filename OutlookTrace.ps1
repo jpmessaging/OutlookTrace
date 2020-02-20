@@ -75,6 +75,84 @@ $outlook2010Providers =
 "{e3c8312d-b20c-4831-995e-5ec5f5522215}" 0x00124586 64
 "@
 
+$wamProviders =
+@"
+{077b8c4a-e425-578d-f1ac-6fdf1220ff68}
+{5836994d-a677-53e7-1389-588ad1420cc5}
+{05f02597-fe85-4e67-8542-69567ab8fd4f}
+{d0034f5e-3686-5a74-dc48-5a22dd4f3d5b}
+{4DE9BC9C-B27A-43C9-8994-0915F1A5E24F}
+{556045FD-58C5-4A97-9881-B121F68B79C5}
+{EC3CA551-21E9-47D0-9742-1195429831BB}
+{63b6c2d2-0440-44de-a674-aa51a251b123}
+{4180c4f7-e238-5519-338f-ec214f0b49aa}
+{EB65A492-86C0-406A-BACE-9912D595BD69}
+{d49918cf-9489-4bf1-9d7b-014d864cf71f}
+{7acf487e-104b-533e-f68a-a7e9b0431edb}
+{4E749B6A-667D-4C72-80EF-373EE3246B08}
+{bfed9100-35d7-45d4-bfea-6c1d341d4c6b}
+{ac01ece8-0b79-5cdb-9615-1b6a4c5fc871}
+{1941f2b9-0939-5d15-d529-cd333c8fed83}
+{0001376b-930d-50cd-2b29-491ca938cd54}
+{072665fb-8953-5a85-931d-d06aeab3d109}
+{f6a774e5-2fc7-5151-6220-e514f1f387b6}
+{a48e7274-bb8f-520d-7e6f-1737e9d68491}
+{88cd9180-4491-4640-b571-e3bee2527943}
+{833e7812-d1e2-5172-66fd-4dd4b255a3bb}
+{30ad9f59-ec19-54b2-4bdf-76dbfc7404a6}
+{d229987f-edc3-5274-26bf-82be01d6d97e}
+{8cde46fc-ca33-50ff-42b3-c64c1c731037}
+{25756703-e23b-4647-a3cb-cb24d473c193}
+{569cf830-214c-5629-79a8-4e9b58ea24bc}
+{8BFE6B98-510E-478D-B868-142CD4DEDC1A}
+"@
+
+function Start-WamTrace {
+    [CmdletBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        $Path,
+        $FileName = 'wam.etl',
+        $SessionName = 'WamTrace'
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+    $Path = Resolve-Path $Path
+
+    # Create a provider listing
+    $providerFile = Join-Path $Path -ChildPath 'wam.prov'
+    Set-Content $wamProviders -Path $providerFile -ErrorAction Stop
+
+    if ($FileName -notlike "*%d*") {
+        $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
+    }
+    $traceFile = Join-Path $Path -ChildPath $FileName
+
+    $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
+    $logmanCommand = "logman start trace $SessionName -pf `"$providerFile`" -o `"$traceFile`" -bs 128 -max 256 -mode `"$logFileMode`" -ets"
+    $logmanResult = Invoke-Expression $logmanCommand
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "logman failed to start. exit code = $LASTEXITCODE.`n$logmanResult"
+    }
+}
+
+function Stop-WamTrace {
+    [CmdletBinding()]
+    param(
+        $SessionName = 'WamTrace'
+    )
+
+    Write-Verbose "Stopping WAM trace"
+    $logmanResult = & logman stop $SessionName -ets
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "logman failed to stop. exit code = $LASTEXITCODE.`n$logmanResult"
+    }
+}
+
+
 function Start-OutlookTrace {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
@@ -346,7 +424,8 @@ function Compress-Folder {
     $NETFileSystemAvailable = $false
 
     try {
-        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+        Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
+        # Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
         $NETFileSystemAvailable = $true
     }
     catch {
@@ -354,7 +433,54 @@ function Compress-Folder {
     }
 
     if ($NETFileSystemAvailable -and $UseShellApplication -eq $false) {
-        [System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $zipFilePath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+        # Note: [System.IO.Compression.ZipFile]::CreateFromDirectory() fails when one or more files in the directory is locked.
+        #[System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $zipFilePath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+
+        try {
+            New-Item $zipFilePath -ItemType file | Out-Null
+
+            $zipStream = New-Object System.IO.FileStream -ArgumentList $zipFilePath, ([IO.FileMode]::Open)
+            $zipArchive = New-Object System.IO.Compression.ZipArchive -ArgumentList $zipStream, ([IO.Compression.ZipArchiveMode]::Create)
+
+            $files = @(Get-ChildItem $Path -Recurse | Where-Object {-not $_.PSIsContainer})
+            $count = 0
+
+            foreach ($file in $files) {
+                Write-Progress -Activity "Creating a zip file $zipFilePath" -Status "Adding $($file.FullName)" -PercentComplete (100 * $count / $files.Count)
+
+                try {
+                    $fileStream = New-Object System.IO.FileStream -ArgumentList $file.FullName, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::ReadWrite)
+                    $zipEntry = $zipArchive.CreateEntry($file.FullName.Substring($Path.Length + 1))
+                    $zipEntryStream = $zipEntry.Open()
+                    $fileStream.CopyTo($zipEntryStream)
+
+                    ++$count
+                }
+                catch {
+                    Write-Error "Failed to add $($file.FullName). $_"
+                }
+                finally {
+                    if ($fileStream) {
+                        $fileStream.Dispose()
+                    }
+
+                    if ($zipEntryStream) {
+                        $zipEntryStream.Dispose()
+                    }
+                }
+            }
+        }
+        finally {
+            if ($zipArchive) {
+                $zipArchive.Dispose()
+            }
+
+            if ($zipStream) {
+                $zipStream.Dispose()
+            }
+
+            Write-Progress -Activity "Creating a zip file $zipFilePath" -Completed
+        }
     }
     else {
         # Use Shell.Application COM
@@ -404,7 +530,7 @@ function Compress-Folder {
         }
 
         New-Object PSCustomObject -Property @{
-            ZipFilePath = $zipFilePath #Join-Path $zipFilePath -ChildPath $zipFileName
+            ZipFilePath = $zipFilePath.ToString()
             FilesRemoved = $filesRemoved -eq $true
         }
     }
@@ -600,6 +726,28 @@ function Get-ProxySetting {
         WinHttpProxyServer = $winHttpProxyServer
         WinHttpBypassList = $winHttpBypassList
     }
+}
+
+function Save-CachedAutodiscover {
+    [CmdletBinding()]
+    param(
+        $Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+    }
+
+    # Check %LOCALAPPDATA%\Microsoft\Outlook
+    $localAppdata = [System.Environment]::ExpandEnvironmentVariables('%LOCALAPPDATA%')
+    $cachePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
+    if (-not (Test-Path $cachePath)) {
+        return
+    }
+
+    # Get Autodiscover XML files and copy them to Path
+    $files = @(Get-ChildItem $cachePath\* -Include *Autod*.xml -Force -Recurse)
+    $files | Copy-Item -Destination $Path
 }
 
 function Start-LdapTrace {
@@ -826,16 +974,143 @@ function Start-FiddlerCap {
     # Start FiddlerCap.exe
     $process = Start-Process $fiddlerExe -PassThru
 
-    <#
-    [PSCustomObject]@{
-        Process = $process
-        FiddlerPath = $fiddlerPath
-    }
-    #>
     New-Object PSCustomObject -Property @{
         Process = $process
         FiddlerPath = $fiddlerPath
     }
+}
+
+function Start-Procmon {
+    [CmdletBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        $Path,
+        $PmlFileName = "Procmon.pml"
+    )
+
+    # Explicitly check admin rights
+    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+        Write-Warning "Please run as administrator."
+        return
+    }
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+
+    $Path = Resolve-Path $Path
+
+    # Search procmon.exe or procmon64.exe under $Path (including subfolders).
+    $findResult = @(Get-ChildItem -Path $Path\* -Include 'procmon*.exe' -Recurse)
+    if ($findResult.Count -ge 1) {
+        $procmonFile = $findResult[0].FullName
+        if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
+            $procmon64 = $findResult | Where-Object {$_.Name -eq 'procmon64.exe'} | Select-Object -First 1
+            if ($procmon64) {
+                $procmonFile = $procmon64.FullName
+            }
+        }
+    }
+
+    $procmonZipDownloaded = $false
+
+    if (-not ($procmonFile -and (Test-Path $procmonFile))) {
+
+        # If 'ProcessMonitor.zip' isn't there, download.
+        $procmonDownloadUrl = 'https://download.sysinternals.com/files/ProcessMonitor.zip'
+        $procmonFolderPath = Join-Path $Path -ChildPath 'procmon_temp'
+        $procmonZipFile = Join-Path $procmonFolderPath -ChildPath 'ProcessMonitor.zip'
+
+        if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
+            $procmonFile = Join-Path $procmonFolderPath -ChildPath 'Procmon64.exe'
+        }
+        else {
+            $procmonFile = Join-Path $procmonFolderPath -ChildPath 'Procmon.exe'
+        }
+
+        if (-not (Test-Path $procmonFolderPath)) {
+            New-Item $procmonFolderPath -ItemType Directory -ErrorAction Stop | Out-Null
+        }
+
+        if (-not (Test-Path $procmonZipFile)) {
+            Write-Progress -Activity "Downloading procmon from $procmonDownloadUrl" -Status "Please wait" -PercentComplete -1
+
+            try {
+                $webClient = New-Object System.Net.WebClient
+                $webClient.DownloadFile($procmonDownloadUrl, $procmonZipFile)
+            }
+            catch {
+                throw "Failed to download procmon from $procmonDownloadUrl. $_"
+            }
+            finally {
+                if ($webClient) {
+                    $webClient.Dispose()
+                }
+
+                Write-Progress -Activity "Downloading procmon from $procmonDownloadUrl" -Status "Done" -Completed
+                $procmonZipDownloaded = $true
+            }
+        }
+
+        # Unzip ProcessMonitor.zip
+        try {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+            $NETFileSystemAvailable = $true
+        }
+        catch {
+            Write-Warning "System.IO.Compression.FileSystem isn't found. Using alternate method"
+        }
+
+        if ($NETFileSystemAvailable) {
+            # .NET 4 or later
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($procmonZipFile, $procmonFolderPath)
+        }
+        else {
+            # Use Shell.Application COM
+            # see https://docs.microsoft.com/en-us/previous-versions/windows/desktop/sidebar/system-shell-folder-copyhere
+            $shell = New-Object -ComObject Shell.Application
+            $shell.NameSpace($procmonFolderPath).CopyHere($shell.NameSpace($procmonZipFile).Items(), 4)
+        }
+    }
+
+    if (-not $PmlFileName.EndsWith('.pml')) {
+        $PmlFileName = "$PmlFileName.pml"
+    }
+
+    $pmlFile = Join-Path $Path -ChildPath $PmlFileName
+
+    # Start procmon.exe or procmon64.exe depending on the native arch.
+    $process = Start-Process $procmonFile -ArgumentList "/AcceptEula /Minimized /Quiet /NoFilter /BackingFile `"$pmlFile`"" -PassThru
+    if ($process -and -not $process.HasExited) {
+        Write-Verbose "Procmon successfully started"
+        New-Object PSObject -Property @{
+            ProcmonPath = $procmonFile
+            ProcmonProcessId = $process.Id
+            PMLFile = $pmlFile
+            ProcmonZipDownloaded = $procmonZipDownloaded
+            ProcmonFolderPath = $procmonFolderPath
+        }
+    }
+    else {
+        throw "procmon failed to start. $_"
+    }
+}
+
+function Stop-Procmon {
+    [CmdletBinding()]
+    param(
+    )
+
+    $process = @(Get-Process -Name Procmon*)
+    if ($process.Count -eq 0) {
+        throw "Cannot find procmon or procmon64"
+    }
+
+    # Stop procmon
+    Write-Progress -Activity "Stopping procmon" -Status "Please wait" -PercentComplete -1
+    $procmonFile = $process[0].Path
+    Start-Process $procmonFile -ArgumentList "/Terminate" -Wait
+    Write-Progress -Activity "Stopping procmon" -Status "Done" -Completed
 }
 
 function Start-TcoTrace {
@@ -867,6 +1142,11 @@ function Stop-TcoTrace {
         $Path
     )
 
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+    $Path = Resolve-Path $Path
+
     $officeInfo = Get-OfficeInfo
     $majorVersion = $officeInfo.Version.Split('.')[0]
 
@@ -897,18 +1177,18 @@ function Get-OfficeInfo {
 
     # There might be more than one version of Office installed.
     $officeInstallations = @(
-    foreach ($install in @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall)){
-        $prop = Get-ItemProperty $install.PsPath
-        if ($prop.DisplayName -like "Microsoft Office*" -and $prop.DisplayIcon -and $prop.ModifyPath -notlike "*OMUI*") {
-            New-Object PSObject -Property @{
-                Version = $prop.DisplayVersion
-                Location = $prop.InstallLocation
-                DisplayName = $prop.DisplayName
-                ModifyPath = $prop.ModifyPath
-                DisplayIcon = $prop.DisplayIcon
+        foreach ($install in @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall) + @(Get-ChildItem HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall)){
+            $prop = Get-ItemProperty $install.PsPath
+            if ($prop.DisplayName -like "Microsoft Office*" -and $prop.DisplayIcon -and $prop.ModifyPath -notlike "*OMUI*") {
+                New-Object PSObject -Property @{
+                    Version = $prop.DisplayVersion
+                    Location = $prop.InstallLocation
+                    DisplayName = $prop.DisplayName
+                    ModifyPath = $prop.ModifyPath
+                    DisplayIcon = $prop.DisplayIcon
+                }
             }
         }
-    }
     )
 
     if (-not $officeInstallations) {
@@ -932,15 +1212,253 @@ function Get-OfficeInfo {
     $Script:OfficeInfoCache
 }
 
+function Add-WerDumpKey {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory=$true)]
+        [string]$TargetProcess, # Target Process (e.g. Outlook.exe)
+        [parameter(Mandatory=$true)]
+        $Path # Folder to save dump files
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+
+    $Path = (Resolve-Path $Path -ErrorAction Stop).Path
+
+    # Check if $TargetProcess ends with ".exe".
+    if (-not $TargetProcess.EndsWith(".exe")) {
+        Write-Verbose "$TargetProcess does not end with '.exe'.  Adding '.exe'"
+        $TargetProcess += '.exe'
+    }
+
+    # Create a key 'LocalDumps' under HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps, if it doesn't exist
+    $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
+    if (-not(Test-Path (Join-Path $werKey 'LocalDumps'))) {
+        New-Item $werKey -Name 'LocalDumps' -ErrorAction Stop | Out-Null
+    }
+
+    # Create a ProcessName key under LocalDumps, if it doesn't exist
+    $localDumpsKey = Join-Path $werKey 'LocalDumps'
+    if (-not (Test-Path (Join-Path $localDumpsKey $TargetProcess))) {
+        New-Item $localDumpsKey -Name $TargetProcess -ErrorAction Stop | Out-Null
+    }
+
+    # Create "CustomDumpFlags", "DumpType", and "DumpFolder" values in ProcessName key
+    $ProcessKey = Join-Path $localDumpsKey $TargetProcess
+    # -Force will overwrite existing value
+    # 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4)| MiniDumpWithFullMemory (2)
+    New-ItemProperty $ProcessKey -Name 'CustomDumpFlags' -Value 0x00061826 -Force -ErrorAction Stop | Out-Null
+    New-ItemProperty $ProcessKey -Name 'DumpType' -Value 0 -PropertyType DWORD -Force -ErrorAction Stop | Out-Null
+    New-ItemProperty $ProcessKey -Name 'DumpFolder' -Value $Path -PropertyType String -Force -ErrorAction Stop | Out-Null
+
+    # Rename DW Installed keys to "_Installed" to temporarily disable
+    $pcHealth = @(
+        # For C2R
+        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+
+        # For MSI
+        'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+        'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+    )
+
+    foreach ($installedKey in $pcHealth) {
+        if (Test-Path $installedKey) {
+            Rename-Item $installedKey -NewName '_Installed'
+        }
+    }
+}
+
+function Remove-WerDumpKey {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory=$true)]
+        [string]$TargetProcess # Target Process (e.g. Outlook.exe)
+    )
+
+    # Check if $TargetProcess ends with ".exe".
+    if (-not $TargetProcess.EndsWith(".exe")) {
+        Write-Verbose "$TargetProcess does not end with '.exe'.  Adding '.exe'"
+        $TargetProcess += '.exe'
+    }
+
+    $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
+    $localDumpsKey = Join-Path $werKey 'LocalDumps'
+    $ProcessKey = Join-Path $localDumpsKey $TargetProcess
+
+    if (Test-Path $ProcessKey) {
+        Remove-Item $ProcessKey
+    }
+    else {
+        Write-Error "$ProcessKey does not exist"
+    }
+
+    # Rename DW "_Installed" keys back to "Installed"
+    $pcHealth = @(
+        # For C2R
+        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+
+        # For MSI
+        'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+        'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+    )
+
+    foreach ($installedKey in $pcHealth) {
+        if (Test-Path $installedKey) {
+            Rename-Item $installedKey -NewName 'Installed'
+        }
+    }
+}
+
+function Save-Dump {
+    [CmdletBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        $Path, # Folder to save a dump file
+        [parameter(Mandatory = $true)]
+        $ProcessId
+    )
+
+    # Define a class to import MiniDumpWriteDump.
+   <#
+    The Native signature:
+    see https://docs.microsoft.com/en-us/windows/win32/api/minidumpapiset/nf-minidumpapiset-minidumpwritedump
+
+    BOOL MiniDumpWriteDump(
+    HANDLE                            hProcess,
+    DWORD                             ProcessId,
+    HANDLE                            hFile,
+    MINIDUMP_TYPE                     DumpType,
+    PMINIDUMP_EXCEPTION_INFORMATION   ExceptionParam,
+    PMINIDUMP_USER_STREAM_INFORMATION UserStreamParam,
+    PMINIDUMP_CALLBACK_INFORMATION    CallbackParam
+    );
+    #>
+    $Dbghelp = @"
+    using System;
+    using System.Diagnostics;
+    using System.Runtime.InteropServices;
+    using Microsoft.Win32.SafeHandles;
+
+    public class DbgHelp
+    {
+        [DllImport("Dbghelp.dll", SetLastError=true)]
+        public static extern bool MiniDumpWriteDump(
+            IntPtr hProcess,
+            uint ProcessId,
+            IntPtr hFile,
+            uint DumpType,
+            IntPtr ExceptionParam,
+            IntPtr UserStreamParam,
+            IntPtr CallbackParam);
+
+        // Wrapper to return GetLastError() in case of failure (HRESULT)
+        public static int MiniDumpWriteDumpWrapper(
+            IntPtr hProcess,
+            uint ProcessId,
+            IntPtr hFile,
+            uint DumpType,
+            IntPtr ExceptionParam,
+            IntPtr UserStreamParam,
+            IntPtr CallbackParam)
+        {
+            if (MiniDumpWriteDump(hProcess, ProcessId, hFile, DumpType, ExceptionParam, UserStreamParam, CallbackParam))
+            {
+                return 0;
+            }
+            else
+            {
+                return Marshal.GetLastWin32Error();
+            }
+        }
+    }
+"@
+
+    if (-not ('DbgHelp' -as [type])) {
+        Add-Type -TypeDefinition $Dbghelp
+    }
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+
+    $Path = Resolve-Path $Path
+
+    try{
+        $process = Get-Process -Id $ProcessId -ErrorAction Stop
+
+        $dumpFile = Join-Path $Path "$($process.Name)_$(Get-Date -Format 'yyyy-MM-dd-HHmmss').dmp"
+        $dumpFileStream = [System.IO.File]::Create($dumpFile)
+
+        Write-Progress -Activity "Saving a memory dump file $dumpFile" -Status "Please wait" -PercentComplete -1
+        # Note: 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4) | MiniDumpWithFullMemory (2)
+        $hr = [Dbghelp]::MiniDumpWriteDumpWrapper($process.Handle,$ProcessId,$dumpFileStream.Handle,0x61826,[IntPtr]::Zero,[IntPtr]::Zero,[IntPtr]::Zero)
+
+        if ($hr -eq 0) {
+            New-Object PSObject -Property @{DumpFile = $dumpFile;}
+        }
+        else {
+            Write-Error $("Failed to save a memory dump of $Process. Error = 0x{0:x}" -f $hr)
+        }
+    }
+    finally {
+        Write-Progress -Activity "Saving a memory dump file $dumpFile" -Status "Done" -Completed
+
+        if ($dumpFileStream) {
+            $dumpFileStream.Close()
+        }
+    }
+}
+
+function Save-MSIPC {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory=$true)]
+        $Path
+    )
+
+    if (-not (Test-Path $Path -ErrorAction Stop)){
+        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+    }
+
+    # MSIPC info is in %LOCALAPPDATA%\Microsoft\MSIPC
+    $msipcPath = [Environment]::ExpandEnvironmentVariables('%LOCALAPPDATA%\Microsoft\MSIPC')
+
+    if (-not (Test-Path $msipcPath)) {
+        Write-Error "$msipcPath does not exist"
+        return
+    }
+
+    # Copy only folders (i.e. skip drm files)
+    # Copy-Item (Join-Path $msipcPath '*') -Destination $Path -Recurse
+
+    # gci -Directory is only available for PowerShell V3 and above. To support PowerShell V2 clients, Where-Object is used here.
+    foreach ($folder in @(Get-ChildItem $msipcPath | Where-Object {$_.PSIsContainer})) {
+        $dest = Join-Path $Path $folder.Name
+
+        if (-not (Test-Path $dest -ErrorAction Stop)){
+            New-Item -ItemType Directory $dest -ErrorAction Stop | Out-Null
+        }
+
+        Copy-Item (Join-Path $folder.FullName '*') -Destination $dest -Recurse
+    }
+}
+
 function Collect-OutlookInfo {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param (
         [parameter(Mandatory=$true)]
         $Path,
         [parameter(Mandatory=$true)]
-        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration','Fiddler', 'TCO', 'All')]
+        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'All')]
         [array]$Component,
-        [switch]$SkipCabFile
+        [switch]$SkipCabFile,
+        [int]$DumpCount = 3,
+        [int]$DumpIntervalSeconds = 60,
+        [switch]$StartOutlook
     )
 
     if (-not (Test-Path $Path -ErrorAction Stop)){
@@ -954,11 +1472,13 @@ function Collect-OutlookInfo {
     try {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete -1
-            Save-EventLog -Path $tempPath
+            Save-EventLog -Path (Join-Path $tempPath 'EventLog')
             Save-MicrosoftUpdate -Path $tempPath
             Save-OfficeRegistry -Path $tempPath
             Save-OfficeModuleInfo -Path $tempPath
             Save-OSConfiguration -Path $tempPath
+            Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
+            Save-MSIPC -Path (Join-Path $tempPath 'MSIPC')
             Write-Progress -Activity "Saving configuration" -Status "Done" -Completed
             # Do we need MSInfo32?
             # Save-MSInfo32 -Path $tempPath
@@ -1001,8 +1521,62 @@ function Collect-OutlookInfo {
             $tcoTraceStarted = $true
         }
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted){
-            Read-Host "Hit enter to stop tracing"
+        if ($Component -contains 'WAM' -or $Component -contains 'All') {
+            Start-WamTrace -Path $tempPath
+            $wamTraceStarted = $true
+        }
+
+        if ($Component -contains 'Procmon' -or $Component -contains 'All') {
+            $procmonResult = Start-Procmon -Path $tempPath
+            $procmonStared = $true
+        }
+
+        if ($Component -contains 'CrashDump' -or $Component -contains 'All') {
+            Add-WerDumpKey -Path $tempPath -TargetProcess 'Outlook.exe'
+            $crashDumpStarted = $true
+        }
+
+        if ($Component -contains 'Dump') {
+            $process = Get-Process -Name 'Outlook' -ErrorAction Stop
+
+            for ($i = 0; $i -lt $DumpCount; $i++) {
+                Write-Progress -Activity "Saving a memory dump of Outlook" -Status "($i/$DumpCount)" -PercentComplete ($i/$DumpCount*100)
+                $dumpResult = Save-Dump -Path $tempPath -ProcessId $process.Id
+                Write-Verbose "Saved dump file: $($dumpResult.DumpFile)"
+
+                # If there are more dumps to save, wait.
+                if ($i -lt ($DumpCount - 1)) {
+                    $secondsRemaining = $DumpIntervalSeconds
+                    while ($secondsRemaining -gt 0) {
+                        Write-Progress -Activity "Waiting $DumpIntervalSeconds seconds till next dump" -Status "Waiting" -SecondsRemaining $secondsRemaining
+                        Start-Sleep -Seconds 1
+                        $secondsRemaining-=1
+                    }
+                }
+            }
+        }
+
+        if ($StartOutlook) {
+            # Does Outlook.exe already exist?
+            $existingProcesss = Get-Process 'Outlook' -ErrorAction SilentlyContinue
+            if ($existingProcesss) {
+                Write-Warning "Outlook is already running. PID = $($existingProcesss.Id)"
+                $response = Read-Host "Is it ok to close Outlook.exe and start again? [Yes|No]"
+                if ($response -like "Y*") {
+                    Stop-Process -InputObject $existingProcesss -Force
+                }
+                else {
+                    throw "StartOutlook parameter is specified, but Outlook is already running.Stop Outlook and run again, or run without StartOutlook parameter."
+                }
+            }
+
+            $process = Start-Process 'Outlook.exe' -ErrorAction Stop -PassThru
+            Write-Host "Outlook has started. PID = $($process.Id)"
+
+        }
+
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted){
+            Read-Host "Hit enter to stop"
         }
     }
     finally {
@@ -1028,6 +1602,22 @@ function Collect-OutlookInfo {
 
         if ($tcoTraceStarted) {
             Stop-TcoTrace -Path $tempPath
+        }
+
+        if ($wamTraceStarted) {
+            Stop-WamTrace
+        }
+
+        if ($procmonStared) {
+            Stop-Procmon
+            # Remove procmon
+            if ($procmonResult -and $procmonResult.ProcmonZipDownloaded) {
+                Remove-Item $procmonResult.ProcmonFolderPath -Force -Recurse
+            }
+        }
+
+        if ($crashDumpStarted) {
+            Remove-WerDumpKey -TargetProcess 'Outlook.exe'
         }
 
         if ($fiddlerCapStarted) {
