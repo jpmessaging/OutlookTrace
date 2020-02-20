@@ -1,7 +1,7 @@
 ﻿## Overview
 OutlookTrace.ps1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-01-09/OutlookTrace.ps1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-02-13/OutlookTrace.ps1)
 
 ## How to use
 1. Download OutlookTrace.ps1 and unblock the file.
@@ -42,7 +42,7 @@ OutlookTrace.ps1 is a PowerShell script to collect several traces related to Mic
     Collect-OutlookInfo -Path c:\temp -Component Configuration, Netsh, Outlook
     ```
 
-6. When traces have started successfully, it shows "Hit enter to stop tracing". Reproduce the issue.
+6. When traces have started successfully, it shows "Hit enter to stop". Reproduce the issue.
    
     Note: When "Fiddler" is included in Component parameter, a dialog box [FiddlerCap Web Recorder] appears. Use the following instructions to start capture, and then reproduce the issue.
 

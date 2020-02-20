@@ -1,7 +1,7 @@
 ﻿## 概要
 OutlookTrace.ps1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
-[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-01-09/OutlookTrace.ps1)
+[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-02-13/OutlookTrace.ps1)
 
 ## 利用方法
 1. OutlookTrace.ps1 をダウンロードし、ブロックを解除します。
@@ -42,7 +42,7 @@ OutlookTrace.ps1 は Outlook に関する情報採取用の PowerShell スクリ
     Collect-OutlookInfo -Path c:\temp -Component Configuration, Netsh, Outlook
     ```
 
-6. 正常にトレースが開始されると、"Hit enter to stop tracing" と表示されるので、事象を再現します。
+6. 正常にトレースが開始されると、"Hit enter to stop" と表示されるので、事象を再現します。
    
     ※ 採取するコンポーネントに Fiddler を含めた場合、[FiddlerCap Web Recorder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
 
