@@ -107,6 +107,39 @@ $wamProviders =
 {8BFE6B98-510E-478D-B868-142CD4DEDC1A}
 "@
 
+function Write-Log {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true,ValueFromPipeline=$true)]
+        [string]$Text,
+        [string]$Path = $Script:logPath
+    )
+
+    $currentTime = Get-Date
+    $currentTimeFormatted = $currentTime.ToString("yyyy/MM/dd HH:mm:ss.fffffff(K)")
+
+    if (-not $Script:logWriter) {
+        # For the first time, open file & add header
+        [IO.StreamWriter]$Script:logWriter = [IO.File]::AppendText($Path)
+        $Script:logWriter.WriteLine("date-time,delta(ms),info")
+    }
+
+    [TimeSpan]$delta = 0;
+    if ($Script:lastLogTime) {
+        $delta = $currentTime.Subtract($Script:lastLogTime)
+    }
+
+    $Script:logWriter.WriteLine("$currentTimeFormatted,$($delta.TotalMilliseconds),$text")
+    $Script:lastLogTime = $currentTime
+}
+
+function Close-Log {
+    if ($Script:logWriter) {
+        $Script:logWriter.Close()
+        $Script:logWriter = $null
+    }
+}
+
 function Start-WamTrace {
     [CmdletBinding()]
     param(
@@ -147,6 +180,7 @@ function Stop-WamTrace {
 
     Write-Verbose "Stopping WAM trace"
     $logmanResult = & logman stop $SessionName -ets
+
     if ($LASTEXITCODE -ne 0) {
         Write-Error "logman failed to stop. exit code = $LASTEXITCODE.`n$logmanResult"
     }
@@ -291,6 +325,7 @@ function Stop-NetshTrace {
             throw "Cannot find a netsh trace session"
         }
     }
+
     if ($SkipCabFile) {
         # Manually stop the session
         Write-Verbose "Stopping $SessionName"
@@ -315,7 +350,8 @@ function Stop-NetshTrace {
     }
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to stop netsh trace. exit code = $LASTEXITCODE.`n$result"
+        Write-Error "Failed to stop netsh trace. exit code = $LASTEXITCODE.`n$local:result"
+        return
     }
 }
 
@@ -460,22 +496,22 @@ function Compress-Folder {
                     Write-Error "Failed to add $($file.FullName). $_"
                 }
                 finally {
-                    if ($fileStream) {
+                    if ($local:fileStream) {
                         $fileStream.Dispose()
                     }
 
-                    if ($zipEntryStream) {
+                    if ($local:zipEntryStream) {
                         $zipEntryStream.Dispose()
                     }
                 }
             }
         }
         finally {
-            if ($zipArchive) {
+            if ($local:zipArchive) {
                 $zipArchive.Dispose()
             }
 
-            if ($zipStream) {
+            if ($local:zipStream) {
                 $zipStream.Dispose()
             }
 
@@ -662,6 +698,7 @@ function Save-OfficeRegistry {
         if (Test-Path $filePath) {
             Remove-Item $filePath -Force
         }
+
         $err = $(reg export $key $filePath) 2>&1
 
         if ($LASTEXITCODE -ne 0) {
@@ -796,6 +833,7 @@ function Stop-LdapTrace {
 
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Failed to stop LDAP trace. exit code = $LASTEXITCODE. $logmanResult"
+        # no return here intended.
     }
 
     # Remove a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing (ignore any errors)
@@ -876,11 +914,11 @@ function Save-MSInfo32 {
     }
 
     $filePath = Join-Path $Path -ChildPath "$($env:COMPUTERNAME).nfo"
-    Start-Process "msinfo32.exe" -ArgumentList "/nfo $filePath" -Wait
+    $process = $null # if Start-Process fails, $process is not even set. So initialize here.
+    $err = $($process = Start-Process "test.exe" -ArgumentList "/nfo $filePath" -Wait -PassThru) 2>&1
 
-    # It seems msinfo32.exe return 1 on success
-    if ($LASTEXITCODE -ne 1) {
-        Write-Error "msinfo32.exe failed. exit code = $LASTEXITCODE. $result"
+    if ($process.ExitCode -ne 0) {        
+        Write-Error "msinfo32.exe failed. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
     }
 }
 
@@ -898,6 +936,7 @@ function Start-CAPITrace {
 
     if ($LASTEXITCODE -ne 0) {
         throw "logman failed to create a session. exit code = $LASTEXITCODE. $logmanResult"
+        return
     }
 
     # Note: Depending on the OS version, not all providers are available.
@@ -940,39 +979,42 @@ function Start-FiddlerCap {
 
         try {
             $webClient = New-Object System.Net.WebClient
+            Write-Progress -Activity "Downloading FiddlerCap" -Status "Please wait" -PercentComplete -1
             $webClient.DownloadFile($fiddlerCapUrl, $fiddlerSetupFile)
+            $fiddlerCapDownloaded = $true
         }
         catch {
             throw "Failed to download FiddlerCapSetup from $fiddlerCapUrl. $_"
         }
         finally {
-            if ($webClient) {
+            Write-Progress -Activity "Downloading FiddlerCap" -Status "Done" -Completed
+
+            if ($local:webClient) {
                 $webClient.Dispose()
             }
         }
 
-        # Silently extract. Path must be absolute.
-        Invoke-Expression  "$fiddlerSetupFile /S /D=$fiddlerPath"
-
-        # Extraction might take a little while. Wait upto 10 seconds
-        $maxWaitSeconds = 10
-        for ($i = 0; $i -lt $maxWaitSeconds; ++$i) {
-            if (Test-Path $fiddlerExe) {
-                break
-            }
-            else {
-                Start-Sleep -Seconds 1
-            }
+        # This is to exit the execution even when the caller uses "-ErrorAction SilentlyContinue". In this case, "throw" does not terminiate.
+        if (-not $fiddlerCapDownloaded) {
+            return
         }
 
-        # If still not available, bail.
-        if ($i -eq $maxWaitSeconds) {
-            throw "$fiddlerExe is not available after $maxWaitSeconds seconds"
+        # Silently extract. Path must be absolute.
+        $process = $null        
+        $err = $($process = Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru) 2>&1
+        if ($process.ExitCode -ne 0) {
+            throw "Failed to extract $fiddlerExe. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
+            return
         }
     }
 
     # Start FiddlerCap.exe
-    $process = Start-Process $fiddlerExe -PassThru
+    $process = $null
+    $err = $($process = Start-Process $fiddlerExe -PassThru) 2>&1
+    if (-not $process -or $process.HasExited) {
+        throw "FiddlerCap failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
+        return
+    }
 
     New-Object PSCustomObject -Property @{
         Process = $process
@@ -1014,7 +1056,7 @@ function Start-Procmon {
 
     $procmonZipDownloaded = $false
 
-    if (-not ($procmonFile -and (Test-Path $procmonFile))) {
+    if (-not ($local:procmonFile -and (Test-Path $local:procmonFile))) {
 
         # If 'ProcessMonitor.zip' isn't there, download.
         $procmonDownloadUrl = 'https://download.sysinternals.com/files/ProcessMonitor.zip'
@@ -1038,18 +1080,23 @@ function Start-Procmon {
             try {
                 $webClient = New-Object System.Net.WebClient
                 $webClient.DownloadFile($procmonDownloadUrl, $procmonZipFile)
+                $procmonZipDownloaded = $true
             }
             catch {
                 throw "Failed to download procmon from $procmonDownloadUrl. $_"
             }
             finally {
-                if ($webClient) {
+                if ($local:webClient) {
                     $webClient.Dispose()
                 }
 
                 Write-Progress -Activity "Downloading procmon from $procmonDownloadUrl" -Status "Done" -Completed
-                $procmonZipDownloaded = $true
             }
+        }
+
+        # This is just in case the caller used "-ErrorAction SilientlyContinue".
+        if (-not $procmonZipDownloaded) {
+            return
         }
 
         # Unzip ProcessMonitor.zip
@@ -1080,19 +1127,21 @@ function Start-Procmon {
     $pmlFile = Join-Path $Path -ChildPath $PmlFileName
 
     # Start procmon.exe or procmon64.exe depending on the native arch.
-    $process = Start-Process $procmonFile -ArgumentList "/AcceptEula /Minimized /Quiet /NoFilter /BackingFile `"$pmlFile`"" -PassThru
-    if ($process -and -not $process.HasExited) {
-        Write-Verbose "Procmon successfully started"
-        New-Object PSObject -Property @{
-            ProcmonPath = $procmonFile
-            ProcmonProcessId = $process.Id
-            PMLFile = $pmlFile
-            ProcmonZipDownloaded = $procmonZipDownloaded
-            ProcmonFolderPath = $procmonFolderPath
-        }
+    $process = $null
+    $err = $($process = Start-Process $procmonFile -ArgumentList "/AcceptEula /Minimized /Quiet /NoFilter /BackingFile `"$pmlFile`"" -PassThru) 2>&1
+
+    if (-not $process -or $process.HasExited) {
+        throw "procmon failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
+        return
     }
-    else {
-        throw "procmon failed to start. $_"
+
+    Write-Verbose "Procmon successfully started"
+    New-Object PSObject -Property @{
+        ProcmonPath = $procmonFile
+        ProcmonProcessId = $process.Id
+        PMLFile = $pmlFile
+        ProcmonZipDownloaded = $procmonZipDownloaded
+        ProcmonFolderPath = $procmonFolderPath
     }
 }
 
@@ -1109,7 +1158,13 @@ function Stop-Procmon {
     # Stop procmon
     Write-Progress -Activity "Stopping procmon" -Status "Please wait" -PercentComplete -1
     $procmonFile = $process[0].Path
-    Start-Process $procmonFile -ArgumentList "/Terminate" -Wait
+    $process = $null
+    $err = $($process = Start-Process $procmonFile -ArgumentList "/Terminate" -Wait -PassThru) 2>&1
+
+    if ($process.ExitCode -ne 0) {
+        Write-Error "procmon failed to stop. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
+    }
+
     Write-Progress -Activity "Stopping procmon" -Status "Done" -Completed
 }
 
@@ -1428,7 +1483,7 @@ function Save-MSIPC {
     $msipcPath = [Environment]::ExpandEnvironmentVariables('%LOCALAPPDATA%\Microsoft\MSIPC')
 
     if (-not (Test-Path $msipcPath)) {
-        Write-Error "$msipcPath does not exist"
+        Write-Warning "$msipcPath does not exist"
         return
     }
 
@@ -1465,8 +1520,11 @@ function Collect-OutlookInfo {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
+    $Path = Resolve-Path $Path
     $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
     New-Item $tempPath -ItemType directory -ErrorAction Stop | Out-Null
+
+    # $logFile = Join-Path $tempPath -ChildPath "log.txt"
 
     Write-Verbose "Starting traces"
     try {
@@ -1479,6 +1537,7 @@ function Collect-OutlookInfo {
             Save-OSConfiguration -Path $tempPath
             Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
             Save-MSIPC -Path (Join-Path $tempPath 'MSIPC')
+
             Write-Progress -Activity "Saving configuration" -Status "Done" -Completed
             # Do we need MSInfo32?
             # Save-MSInfo32 -Path $tempPath
@@ -1570,9 +1629,14 @@ function Collect-OutlookInfo {
                 }
             }
 
-            $process = Start-Process 'Outlook.exe' -ErrorAction Stop -PassThru
-            Write-Host "Outlook has started. PID = $($process.Id)"
+            $process = $null
+            $err = $($process = Start-Process 'Outlook.exe' -PassThru) 2>&1
+            if (-not $process -or $process.HasExited) {
+                throw "StartOutlook parameter is specified, but Outlook failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
+                return
+            }
 
+            Write-Host "Outlook has started. PID = $($process.Id)" -ForegroundColor Green
         }
 
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted){
@@ -1623,6 +1687,8 @@ function Collect-OutlookInfo {
         if ($fiddlerCapStarted) {
             Write-Warning "Please stop FiddlerCap and save the capture manually."
         }
+
+        # Close-Log
     }
 
     Write-Verbose "Compressing $tempPath"
@@ -1634,6 +1700,6 @@ function Collect-OutlookInfo {
         Remove-Item $tempPath -Force
     }
 
-    Write-Host "The collected data is in `"$(Join-Path $Path $zipFileName).zip`"" -ForegroundColor Green
+    Write-Host "The collected data is `"$(Join-Path $Path $zipFileName).zip`"" -ForegroundColor Green
     Invoke-Item $Path
 }
