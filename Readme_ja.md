@@ -1,7 +1,7 @@
 ﻿## 概要
 OutlookTrace.ps1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
-[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-02-13/OutlookTrace.ps1)
+[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-04-29/OutlookTrace.ps1)
 
 ## 利用方法
 1. OutlookTrace.ps1 をダウンロードし、ブロックを解除します。
