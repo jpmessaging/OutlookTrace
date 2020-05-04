@@ -915,7 +915,7 @@ function Save-MSInfo32 {
 
     $filePath = Join-Path $Path -ChildPath "$($env:COMPUTERNAME).nfo"
     $process = $null # if Start-Process fails, $process is not even set. So initialize here.
-    $err = $($process = Start-Process "test.exe" -ArgumentList "/nfo $filePath" -Wait -PassThru) 2>&1
+    $err = $($process = Start-Process "msinfo32.exe" -ArgumentList "/nfo $filePath" -Wait -PassThru) 2>&1
 
     if ($process.ExitCode -ne 0) {        
         Write-Error "msinfo32.exe failed. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
