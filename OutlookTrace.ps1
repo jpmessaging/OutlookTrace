@@ -914,11 +914,23 @@ function Save-MSInfo32 {
     }
 
     $filePath = Join-Path $Path -ChildPath "$($env:COMPUTERNAME).nfo"
-    $process = $null # if Start-Process fails, $process is not even set. So initialize here.
-    $err = $($process = Start-Process "msinfo32.exe" -ArgumentList "/nfo $filePath" -Wait -PassThru) 2>&1
 
-    if ($process.ExitCode -ne 0) {        
-        Write-Error "msinfo32.exe failed. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
+    $processName = "msinfo32.exe"
+    $process = $null
+
+    try {
+        $process = Start-Process $processName -ArgumentList "/nfo $filePath" -Wait -PassThru
+        if ($process.ExitCode -ne 0) {
+            Write-Error "$processName failed. exit code = $($process.ExitCode)"
+        }
+    }
+    catch {
+        Write-Error "Failed to start $processName.`n$_"
+    }
+    finally {
+        if ($process) {
+            $process.Dispose()
+        }
     }
 }
 
@@ -1000,24 +1012,36 @@ function Start-FiddlerCap {
         }
 
         # Silently extract. Path must be absolute.
-        $process = $null        
+        $process = $null
         $err = $($process = Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru) 2>&1
-        if ($process.ExitCode -ne 0) {
-            throw "Failed to extract $fiddlerExe. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
-            return
+
+        try {
+            if ($process.ExitCode -ne 0) {
+                throw "Failed to extract $fiddlerExe. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+            }
+        }
+        finally {
+            if ($process) {
+                $process.Dispose()
+            }
         }
     }
 
     # Start FiddlerCap.exe
     $process = $null
     $err = $($process = Start-Process $fiddlerExe -PassThru) 2>&1
-    if (-not $process -or $process.HasExited) {
-        throw "FiddlerCap failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
-        return
+    try {
+        if (-not $process -or $process.HasExited) {
+            throw "FiddlerCap failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+        }
+    }
+    finally {
+        if ($process) {
+            $process.Dispose()
+        }
     }
 
     New-Object PSCustomObject -Property @{
-        Process = $process
         FiddlerPath = $fiddlerPath
     }
 }
@@ -1130,9 +1154,15 @@ function Start-Procmon {
     $process = $null
     $err = $($process = Start-Process $procmonFile -ArgumentList "/AcceptEula /Minimized /Quiet /NoFilter /BackingFile `"$pmlFile`"" -PassThru) 2>&1
 
-    if (-not $process -or $process.HasExited) {
-        throw "procmon failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
-        return
+    try {
+        if (-not $process -or $process.HasExited) {
+            throw "procmon failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+        }
+    }
+    finally {
+        if ($process) {
+            $process.Dispose()
+        }
     }
 
     Write-Verbose "Procmon successfully started"
@@ -1161,8 +1191,15 @@ function Stop-Procmon {
     $process = $null
     $err = $($process = Start-Process $procmonFile -ArgumentList "/Terminate" -Wait -PassThru) 2>&1
 
-    if ($process.ExitCode -ne 0) {
-        Write-Error "procmon failed to stop. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
+    try {
+        if ($process.ExitCode -ne 0) {
+            Write-Error "procmon failed to stop. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+        }
+    }
+    finally {
+        if ($process) {
+            $process.Dispose()
+        }
     }
 
     Write-Progress -Activity "Stopping procmon" -Status "Done" -Completed
@@ -1551,6 +1588,14 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Netsh' -or $Component -contains 'All') {
+            # When netsh trace is run for the first time, it does not capture packets (even with "capture=yes").
+            # To workaround, netsh is started and stopped immediately.
+            $tempNetshName = 'netsh_test'
+            Start-NetshTrace -Path $tempPath -FileName "$tempNetshName.etl"
+            Stop-NetshTrace -SkipCabFile:$true
+            Remove-Item (Join-Path $tempPath "$tempNetshName.etl") -Force -ErrorAction SilentlyContinue
+            Remove-Item (Join-Path $tempPath $tempNetshName) -Recurse -Force -ErrorAction SilentlyContinue
+
             Start-NetshTrace -Path $tempPath
             $netshTraceStarted = $true
         }
@@ -1631,12 +1676,19 @@ function Collect-OutlookInfo {
 
             $process = $null
             $err = $($process = Start-Process 'Outlook.exe' -PassThru) 2>&1
-            if (-not $process -or $process.HasExited) {
-                throw "StartOutlook parameter is specified, but Outlook failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"})`n$err"
-                return
-            }
 
-            Write-Host "Outlook has started. PID = $($process.Id)" -ForegroundColor Green
+            try {
+                if (-not $process -or $process.HasExited) {
+                    throw "StartOutlook parameter is specified, but Outlook failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+                }
+                Write-Host "Outlook has started. PID = $($process.Id)" -ForegroundColor Green
+            }
+            finally {
+                if ($process) {
+                    $process.Dispose()
+                }
+
+            }
         }
 
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted){
