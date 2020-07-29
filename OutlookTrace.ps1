@@ -783,9 +783,20 @@ function Save-CachedAutodiscover {
     }
 
     # Get Autodiscover XML files and copy them to Path
-    $files = @(Get-ChildItem $cachePath\* -Include *Autod*.xml -Force -Recurse)
+    $files = @(Get-ChildItem $cachePath -Filter *Autod*.xml -Force -Recurse)
     $files | Copy-Item -Destination $Path
+
+    # Remove Hidden attribute
+    foreach ($file in @(Get-ChildItem $Path -Force)) {
+        if ((Get-ItemProperty $file.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
+            Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden) 
+        }
+
+        # Unfortunately, this does not work in PowerShellV2.
+        # (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
+    }
 }
+
 
 function Start-LdapTrace {
     [CmdletBinding()]
@@ -798,6 +809,10 @@ function Start-LdapTrace {
         $SessionName = 'LdapTrace'
     )
 
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+    }
+
     # Process name must contain the extension such as "Outlook.exe", instead of "Outlook"
     if ([IO.Path]::GetExtension($TargetProcess)  -ne 'exe') {
         $TargetProcess = [IO.Path]::GetFileNameWithoutExtension($TargetProcess) + ".exe"
@@ -805,6 +820,10 @@ function Start-LdapTrace {
 
     # Create a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing
     $keypath = "HKLM:\SYSTEM\CurrentControlSet\Services\ldap\tracing"
+    if (-not (Test-Path $keypath)) {
+        New-Item (Split-Path $keypath) -Name 'tracing' -ErrorAction SilentlyContinue | Out-Null
+    }
+
     New-Item $keypath -Name $TargetProcess -ErrorAction SilentlyContinue | Out-Null
     $key = Get-Item (Join-Path $keypath -ChildPath $TargetProcess)
 
@@ -942,6 +961,10 @@ function Start-CAPITrace {
         $SessionName = 'CapiTrace'
     )
 
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+    }
+
     $traceFile = Join-Path $Path -ChildPath 'capi_%d.etl'
     $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
     $logmanResult = Invoke-Expression "logman create trace $SessionName -ow -o `"$traceFile`" -p `"Security: SChannel`" 0xffffffffffffffff 0xff -bs 1024 -mode `"$logFileMode`" -max 256 -ets"
@@ -1051,7 +1074,8 @@ function Start-Procmon {
     param(
         [parameter(Mandatory = $true)]
         $Path,
-        $PmlFileName = "Procmon.pml"
+        $PmlFileName = "Procmon.pml",
+        $ProcmonSearchPath # Look for existing procmon.exe before downloading
     )
 
     # Explicitly check admin rights
@@ -1067,13 +1091,15 @@ function Start-Procmon {
     $Path = Resolve-Path $Path
 
     # Search procmon.exe or procmon64.exe under $Path (including subfolders).
-    $findResult = @(Get-ChildItem -Path $Path\* -Include 'procmon*.exe' -Recurse)
-    if ($findResult.Count -ge 1) {
-        $procmonFile = $findResult[0].FullName
-        if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
-            $procmon64 = $findResult | Where-Object {$_.Name -eq 'procmon64.exe'} | Select-Object -First 1
-            if ($procmon64) {
-                $procmonFile = $procmon64.FullName
+    if ($ProcmonSearchPath -and (Test-Path $ProcmonSearchPath)) {
+        $findResult = @(Get-ChildItem -Path $ProcmonSearchPath -Filter 'procmon*.exe' -Recurse)
+        if ($findResult.Count -ge 1) {
+            $procmonFile = $findResult[0].FullName
+            if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
+                $procmon64 = $findResult | Where-Object {$_.Name -eq 'procmon64.exe'} | Select-Object -First 1
+                if ($procmon64) {
+                    $procmonFile = $procmon64.FullName
+                }
             }
         }
     }
@@ -1405,6 +1431,59 @@ function Remove-WerDumpKey {
     }
 }
 
+function Start-WfpTrace {
+    [CmdletBinding()]
+    param(
+    [Parameter(Mandatory = $true)]
+    $Path,
+    [Parameter(Mandatory = $true)]
+    [int]$InternalSeconds,
+    [TimeSpan]$MaxDuration = [TimeSpan]::FromHours(1)  # Just for safety, make sure to stop after a period
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item -ItemType directory $Path -ErrorAction Stop | Out-Null
+    }
+    $Path = Resolve-Path $Path
+
+    $job = Start-Job -ScriptBlock {
+        param($Path, $InternalSeconds, $MaxDuration)
+
+        $expiration = [DateTime]::Now.Add($MaxDuration)
+
+        while ($true) {
+            if ([DateTime]::Now -gt $expiration) {
+                Write-Output "WfpTrace expired after $MaxDuration"
+                break
+            }
+
+            # dump filters
+            $filterFilePath = Join-Path $Path "filters_$(Get-Date -Format 'yyyyMMdd_HHmmss').xml"
+            netsh wfp show filters file=$filterFilePath verbose=on | Out-Null
+
+            # dump netevents
+            $eventFilePath = Join-Path $Path "netevents_$(Get-Date -Format 'yyyyMMdd_HHmmss').xml"
+            netsh wfp show netevents file="$eventFilePath" <#timewindow=$InternalSeconds#> | Out-Null
+            Start-Sleep -Seconds $InternalSeconds
+
+        }
+    } -ArgumentList $Path, $InternalSeconds, $MaxDuration
+
+    $job
+}
+
+function Stop-WfpTrace {
+    [CmdletBinding()]
+    [Parameter(Mandatory = $true)]
+    param (
+    $WfpJob
+    )
+
+    Stop-Job -Job $WfpJob
+    Remove-Job -Job $WfpJob
+}
+
+
 function Save-Dump {
     [CmdletBinding()]
     param(
@@ -1545,7 +1624,7 @@ function Collect-OutlookInfo {
         [parameter(Mandatory=$true)]
         $Path,
         [parameter(Mandatory=$true)]
-        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'All')]
+        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'WFP', 'All')]
         [array]$Component,
         [switch]$SkipCabFile,
         [int]$DumpCount = 3,
@@ -1568,10 +1647,10 @@ function Collect-OutlookInfo {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete -1
             Save-EventLog -Path (Join-Path $tempPath 'EventLog')
-            Save-MicrosoftUpdate -Path $tempPath
-            Save-OfficeRegistry -Path $tempPath
-            Save-OfficeModuleInfo -Path $tempPath
-            Save-OSConfiguration -Path $tempPath
+            Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')
+            Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration')
+            Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration')
+            Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
             Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
             Save-MSIPC -Path (Join-Path $tempPath 'MSIPC')
 
@@ -1596,12 +1675,12 @@ function Collect-OutlookInfo {
             Remove-Item (Join-Path $tempPath "$tempNetshName.etl") -Force -ErrorAction SilentlyContinue
             Remove-Item (Join-Path $tempPath $tempNetshName) -Recurse -Force -ErrorAction SilentlyContinue
 
-            Start-NetshTrace -Path $tempPath
+            Start-NetshTrace -Path (Join-Path $tempPath 'Netsh')
             $netshTraceStarted = $true
         }
 
         if ($Component -contains 'Outlook' -or $Component -contains 'All') {
-            Start-OutlookTrace -Path $tempPath
+            Start-OutlookTrace -Path (Join-Path $tempPath 'Outlook')
             $outlookTraceStarted = $true
         }
 
@@ -1611,12 +1690,12 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'LDAP' -or $Component -contains 'All') {
-            Start-LDAPTrace -Path $tempPath -TargetProcess 'Outlook.exe'
+            Start-LDAPTrace -Path (Join-Path $tempPath 'LDAP') -TargetProcess 'Outlook.exe'
             $ldapTraceStarted = $true
         }
 
         if ($Component -contains 'CAPI' -or $Component -contains 'All') {
-            Start-CAPITrace -Path $tempPath
+            Start-CAPITrace -Path (Join-Path $tempPath 'CAPI')
             $capiTraceStarted = $true
         }
 
@@ -1626,13 +1705,20 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'WAM' -or $Component -contains 'All') {
-            Start-WamTrace -Path $tempPath
+            Start-WamTrace -Path (Join-Path $tempPath 'WAM')
             $wamTraceStarted = $true
         }
 
         if ($Component -contains 'Procmon' -or $Component -contains 'All') {
-            $procmonResult = Start-Procmon -Path $tempPath
+            $procmonResult = Start-Procmon -Path (Join-Path $tempPath 'Procmon') -ProcmonSearchPath $Path
             $procmonStared = $true
+        }
+
+        if ($Component -contains 'WFP' -or $Component -contains 'All') {
+            $wfpPath = Join-Path $tempPath -ChildPath 'WFP'
+            New-Item $wfpPath -ItemType Directory | Out-Null
+            $wfpJob = Start-WfpTrace -Path $wfpPath -InternalSeconds 15
+            $wfpStarted = $true
         }
 
         if ($Component -contains 'CrashDump' -or $Component -contains 'All') {
@@ -1691,11 +1777,13 @@ function Collect-OutlookInfo {
             }
         }
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted){
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted){
             Read-Host "Hit enter to stop"
         }
     }
     finally {
+        Write-Progress -Activity 'Stopping' -Status "Please wait." -PercentComplete -1
+
         if ($psrStarted) {
             Stop-PSR
         }
@@ -1717,7 +1805,7 @@ function Collect-OutlookInfo {
         }
 
         if ($tcoTraceStarted) {
-            Stop-TcoTrace -Path $tempPath
+            Stop-TcoTrace -Path (Join-Path $tempPath 'TCO')
         }
 
         if ($wamTraceStarted) {
@@ -1732,6 +1820,10 @@ function Collect-OutlookInfo {
             }
         }
 
+        if ($wfpStarted) {
+            Stop-WfpTrace $wfpJob
+        }
+
         if ($crashDumpStarted) {
             Remove-WerDumpKey -TargetProcess 'Outlook.exe'
         }
@@ -1740,12 +1832,10 @@ function Collect-OutlookInfo {
             Write-Warning "Please stop FiddlerCap and save the capture manually."
         }
 
-        # Close-Log
+        Write-Progress -Activity 'Stopping' -Status 'Please wait.' -Completed
     }
 
-    Write-Verbose "Compressing $tempPath"
     $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
-
     Compress-Folder -Path $tempPath -ZipFileName $zipFileName -Destination $Path -RemoveFiles | Out-Null
 
     if (Test-Path $tempPath) {
