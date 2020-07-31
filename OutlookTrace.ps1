@@ -1300,7 +1300,7 @@ function Get-OfficeInfo {
     $officeInstallations = @(
         foreach ($install in @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall) + @(Get-ChildItem HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall)){
             $prop = Get-ItemProperty $install.PsPath
-            if ($prop.DisplayName -like "Microsoft Office*" -and $prop.DisplayIcon -and $prop.ModifyPath -notlike "*OMUI*") {
+            if (($prop.DisplayName -like "Microsoft Office*" -or $prop.DisplayName -like "Microsoft 365 Apps*") -and $prop.DisplayIcon -and $prop.ModifyPath -notlike "*MUI*") {
                 New-Object PSObject -Property @{
                     Version = $prop.DisplayVersion
                     Location = $prop.InstallLocation
