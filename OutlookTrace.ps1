@@ -588,7 +588,7 @@ function Save-EventLog {
 
     $logs = @("Application","System")
     $logs += (wevtutil el) -like '*AAD*'
-    
+
     foreach ($log in $logs) {
         $fileName = $log.Replace('/', '_') + '.evtx'
         $filePath = Join-Path $Path -ChildPath $fileName
@@ -790,7 +790,7 @@ function Save-CachedAutodiscover {
     # Remove Hidden attribute
     foreach ($file in @(Get-ChildItem $Path -Force)) {
         if ((Get-ItemProperty $file.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
-            Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden) 
+            Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
         }
 
         # Unfortunately, this does not work in PowerShellV2.
@@ -895,7 +895,9 @@ function Save-OfficeModuleInfo {
 
     $items = @(
         foreach ($officePath in $officePaths) {
-            Get-ChildItem -Path $officePath\* -Include *.dll,*.exe -Recurse
+            # ignore errs here.
+            $errs = $($o = Get-ChildItem -Path $officePath\* -Include *.dll,*.exe -Recurse) 2>&1
+            $o
         }
     )
 
@@ -1632,6 +1634,12 @@ function Collect-OutlookInfo {
         [int]$DumpIntervalSeconds = 60,
         [switch]$StartOutlook
     )
+
+    # Explicitly check admin rights
+    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+        Write-Warning "Please run as administrator."
+        return
+    }
 
     if (-not (Test-Path $Path -ErrorAction Stop)){
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
