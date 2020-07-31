@@ -587,7 +587,8 @@ function Save-EventLog {
     }
 
     $logs = @("Application","System")
-
+    $logs += (wevtutil el) -like '*AAD*'
+    
     foreach ($log in $logs) {
         $fileName = $log.Replace('/', '_') + '.evtx'
         $filePath = Join-Path $Path -ChildPath $fileName
