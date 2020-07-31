@@ -202,7 +202,7 @@ function Start-OutlookTrace {
 
     Write-Verbose "Creating a provider listing according to the version"
     $providerFile = Join-Path $Path -ChildPath 'Office.prov'
-    $officeInfo = Get-OfficeInfo
+    $officeInfo = Get-OfficeInfo -ErrorAction Stop
     $major = $officeInfo.Version.Split('.')[0] -as [int]
 
     switch ($major) {
@@ -625,7 +625,7 @@ function Get-MicrosoftUpdate {
     $result = @(
         foreach ($key in $productsKey)
         {
-            $patches = Get-ChildItem -pa Registry::$($key.Name) | Where-Object {$_.PSChildName -eq 'Patches' -and $_.SubKeyCount -gt 0} | Get-ChildItem | Get-ItemProperty
+            $patches = Get-ChildItem -Path Registry::$($key.Name) | Where-Object {$_.PSChildName -eq 'Patches' -and $_.SubKeyCount -gt 0} | Get-ChildItem | Get-ItemProperty
 
             if (-not $patches) {
                 continue
@@ -651,7 +651,7 @@ function Get-MicrosoftUpdate {
                     PatchState = $PatchState[$patch.State]
                 }
             }
-        } # end of foreach ($key in $productsKey)
+        }
     )
 
     if ($AppliedOnly) {
@@ -872,7 +872,12 @@ function Save-OfficeModuleInfo {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
-    $officeInfo = Get-OfficeInfo
+    # If MS Office is not installed, bail.
+    $officeInfo = Get-OfficeInfo -ErrorAction SilentlyContinue
+    if (-not $officeInfo) {
+        Write-Error "It seems that Microsoft Office (Microsoft 365 Apps) is not installed."
+        return
+    }
 
     $officePaths = @(
         $officeInfo.InstallPath
@@ -1239,7 +1244,7 @@ function Start-TcoTrace {
     param(
     )
 
-    $officeInfo = Get-OfficeInfo
+    $officeInfo = Get-OfficeInfo -ErrorAction Stop
     $majorVersion = $officeInfo.Version.Split('.')[0]
 
     # Create registry key & values. Ignore errors (might fail due to existing values)
@@ -1268,7 +1273,7 @@ function Stop-TcoTrace {
     }
     $Path = Resolve-Path $Path
 
-    $officeInfo = Get-OfficeInfo
+    $officeInfo = Get-OfficeInfo -ErrorAction Stop
     $majorVersion = $officeInfo.Version.Split('.')[0]
 
     # Remove registry values
@@ -1313,7 +1318,8 @@ function Get-OfficeInfo {
     )
 
     if (-not $officeInstallations) {
-        throw "Microsoft Office is not installed"
+        Write-Error "Microsoft Office is not installed"
+        return
     }
 
     # Use the latest
@@ -1602,7 +1608,7 @@ function Save-MSIPC {
     $msipcPath = [Environment]::ExpandEnvironmentVariables('%LOCALAPPDATA%\Microsoft\MSIPC')
 
     if (-not (Test-Path $msipcPath)) {
-        Write-Warning "$msipcPath does not exist"
+        Write-Error "$msipcPath does not exist"
         return
     }
 
@@ -1641,6 +1647,14 @@ function Collect-OutlookInfo {
         return
     }
 
+    # MS Office must be installed to collect Outlook & TCO.
+    # This is just a fail fast. Start-OutlookTrace/TCOTrace fail anyany.
+    if ($Component -contains 'Outlook' -or $Component -contains 'TCO' -or $Component -contains 'All') {
+        if (-not (Get-OfficeInfo -ErrorAction SilentlyContinue)) {
+            throw "Component `"Outlook`" and/or `"TCO`" is specified, but Microsoft Office is not installed."
+        }
+    }
+
     if (-not (Test-Path $Path -ErrorAction Stop)){
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
@@ -1657,11 +1671,11 @@ function Collect-OutlookInfo {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete -1
             Save-EventLog -Path (Join-Path $tempPath 'EventLog')
             Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')
-            Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration')
-            Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration')
+            Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
+            Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
             Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
             Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
-            Save-MSIPC -Path (Join-Path $tempPath 'MSIPC')
+            Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
 
             Write-Progress -Activity "Saving configuration" -Status "Done" -Completed
             # Do we need MSInfo32?
