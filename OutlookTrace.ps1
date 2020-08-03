@@ -273,6 +273,7 @@ function Start-NetshTrace {
 
     # Win10's netsh supports sessionname parameter.
     # Without explicit session name, netsh creates "-NetTrace-***".  This prefix "-" prevents logman from stopping the session.
+    $SessionName = $null
     if ($osMajor -ge 10) {
         $SessionName = "NetshTrace"
     }
@@ -304,26 +305,43 @@ function Stop-NetshTrace {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param (
         [switch]$SkipCabFile,
-        $SessionName
+        $SessionName = "NetTrace"
     )
 
     if (-not $PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Stopping netsh trace")) {
         return
     }
 
-    if (-not $SessionName)  {
-        # Find an etw session
+    # Netsh session might not be found right after it started. So repeat with some delay (currently 1 + 2 + 3 = 6 seconds max).
+    $maxRetry = 3
+    $retry = 0
+    $sessionFound = $false    
+    
+    while ($retry -le $maxRetry -and -not $sessionFound) {
+        if ($retry) {
+            Write-Verbose "$SessionName was not found. Retrying after $retry seconds."
+            Start-Sleep -Seconds $retry
+        }
+
         $sessions = & logman -ets
         foreach ($session in $sessions) {
-            if ($session -like '*NetTrace*') {
-                $SessionName = $session.Substring(0, $session.IndexOf(' '))
+            if ($session -like "*$SessionName*") {                
+                if ($session -match "[a-z,A-Z,0-9,-]+") {
+                    $SessionName = $Matches[0]
+                }
+                else {
+                    throw "Found a Netsh session, but cannot extract the name"
+                }
+                $sessionFound = $true
                 break
             }
         }
 
-        if (-not $SessionName){
-            throw "Cannot find a netsh trace session"
-        }
+        ++$retry          
+    }
+
+    if (-not $sessionFound){
+        throw "Cannot find a netsh trace session"
     }
 
     if ($SkipCabFile) {
@@ -354,6 +372,7 @@ function Stop-NetshTrace {
         return
     }
 }
+
 
 function Start-PSR {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -1694,7 +1713,7 @@ function Collect-OutlookInfo {
             # To workaround, netsh is started and stopped immediately.
             $tempNetshName = 'netsh_test'
             Start-NetshTrace -Path $tempPath -FileName "$tempNetshName.etl"
-            Stop-NetshTrace -SkipCabFile:$true
+            Stop-NetshTrace -SkipCabFile
             Remove-Item (Join-Path $tempPath "$tempNetshName.etl") -Force -ErrorAction SilentlyContinue
             Remove-Item (Join-Path $tempPath $tempNetshName) -Recurse -Force -ErrorAction SilentlyContinue
 
