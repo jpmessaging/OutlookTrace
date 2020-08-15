@@ -1,15 +1,15 @@
 ﻿## 概要
-OutlookTrace.ps1 は Outlook に関する情報採取用の PowerShell スクリプトです。
+OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
-[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-07-31/OutlookTrace.ps1)
+[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-07-31/OutlookTrace.psm1)
 
 ## 利用方法
-1. OutlookTrace.ps1 をダウンロードし、ブロックを解除します。
+1. OutlookTrace.psm1 をダウンロードし、ブロックを解除します。
 
-    1. ファイルを右クリックして、プロパティを開きます。  
-    2. [全般] タブにて、「このファイルは他のコンピューターから取得したものです。このコンピューターを保護するため、このファイルへのアクセスはブロックされる可能性があります。」というメッセージが表示されている場合には、[許可する] にチェックを入れます。  
+    1. ファイルを右クリックして、プロパティを開きます。
+    2. [全般] タブにて、「このファイルは他のコンピューターから取得したものです。このコンピューターを保護するため、このファイルへのアクセスはブロックされる可能性があります。」というメッセージが表示されている場合には、[許可する] にチェックを入れます。
 
-2. 対象のマシン上に OutlookTrace.ps1 をコピーします。
+2. 対象のマシン上に OutlookTrace.psm1 をコピーします。
 3. 管理者権限で PowerShell を起動します。
 
    Get-ExecutionPolicy を実行して RemoteSigned となっていない場合には以下のように設定します。
@@ -17,19 +17,19 @@ OutlookTrace.ps1 は Outlook に関する情報採取用の PowerShell スクリ
     ```PowerShell
     Set-ExecutionPolicy -ExecutionPolicy RemoteSigned
     ```
-       
-4. ドット ソースで OutlookTrace.ps1 をインポートします。
+
+4. OutlookTrace.psm1 をインポートします。
 
     ```
-    . <OutlookTrace.ps1 へのパス>
+    Import-Module <OutlookTrace.psm1 へのパス> -DisableNameChecking
     ```
 
-    例: 
+    例:
     ```
-    . C:\temp\OutlookTrace.ps1
+    Import-Module C:\temp\OutlookTrace.psm1 -DisableNameChecking
     ```
 
-5. Collect-OutlookInfo を実行します  
+5. Collect-OutlookInfo を実行します
 
     ※ 採取するコンポーネントについてはエンジニアからの案内をご確認ください。
 
@@ -43,7 +43,7 @@ OutlookTrace.ps1 は Outlook に関する情報採取用の PowerShell スクリ
     ```
 
 6. 正常にトレースが開始されると、"Hit enter to stop" と表示されるので、事象を再現します。
-   
+
     ※ 採取するコンポーネントに Fiddler を含めた場合、[FiddlerCap Web Recorder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
 
     1. [HTTPS 通信を解読] にチェックを入れます。
@@ -81,7 +81,7 @@ OutlookTrace.ps1 は Outlook に関する情報採取用の PowerShell スクリ
     1. [2. キャプチャ停止] をクリックします。
     2. [3. キャプチャ保存] をクリックします。
     3. ファイルを任意の場所に保存します。
-    4. [FiddlerCap Web Recorder] ダイアログボックスをクローズします。  
+    4. [FiddlerCap Web Recorder] ダイアログボックスをクローズします。
         この時以下の内容が表示されたら、[はい] をクリックします。
 
         ```
@@ -100,17 +100,17 @@ OutlookTrace.ps1 は Outlook に関する情報採取用の PowerShell スクリ
     ```PowerShell
     Set-ExecutionPolicy -ExecutionPolicy <元の値>
     ```
-    
+
 以下のファイルをお寄せください。
 
 - 手順 5 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイル
-- 採取するコンポーネントに Fiddler を含めた場合には、手順 8 で保存したファイル (`"FiddlerCap_***.saz"`) 
+- 採取するコンポーネントに Fiddler を含めた場合には、手順 8 で保存したファイル (`"FiddlerCap_***.saz"`)
 
 # ライセンス
 Copyright (c) 2020 Ryusuke Fujita
 
-This software is released under the MIT License.  
-http://opensource.org/licenses/mit-license.php  
+This software is released under the MIT License.
+http://opensource.org/licenses/mit-license.php
 
 以下に定める条件に従い、本ソフトウェアおよび関連文書のファイル（以下「ソフトウェア」）の複製を取得するすべての人に対し、ソフトウェアを無制限に扱うことを無償で許可します。これには、ソフトウェアの複製を使用、複写、変更、結合、掲載、頒布、サブライセンス、および/または販売する権利、およびソフトウェアを提供する相手に同じことを許可する権利も無制限に含まれます。
 

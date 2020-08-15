@@ -1,15 +1,15 @@
 ﻿## Overview
-OutlookTrace.ps1 is a PowerShell script to collect several traces related to Microsoft Outlook
+OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-07-31/OutlookTrace.ps1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-08-15/OutlookTrace.psm1)
 
 ## How to use
-1. Download OutlookTrace.ps1 and unblock the file.
+1. Download OutlookTrace.psm1 and unblock the file.
 
-    1. Right-click the ps1 file and click [Property].
+    1. Right-click the psm1 file and click [Property].
     2. In the [General] tab, if you see "This file came from another computer and might be blocked to help protect this computer]", check [Unblock].
 
-2. Place OutlookTrace.ps1 on the target machine.
+2. Place OutlookTrace.psm1 on the target machine.
 3. Start PowerShell as administrator.
 
     Run Get-ExecutionPolicy and if it's not RemoteSigned, set it RemoteSigned as follows.
@@ -17,16 +17,16 @@ OutlookTrace.ps1 is a PowerShell script to collect several traces related to Mic
     ```PowerShell
     Set-ExecutionPolicy -ExecutionPolicy RemoteSigned
     ```
-       
-4. Dot source OutlookTrace.ps1
+
+4. Import OutlookTrace.psm1
 
     ```
-    . <path to OutlookTrace.ps1>
+    Import-Module <path to OutlookTrace.psm1> -DisableNameChecking
     ```
 
     e.g.
     ```
-    . C:\temp\OutlookTrace.ps1
+    Import-Module C:\temp\OutlookTrace.psm1 -DisableNameChecking
     ```
 
 5. Run Collect-OutlookInfo
@@ -43,14 +43,14 @@ OutlookTrace.ps1 is a PowerShell script to collect several traces related to Mic
     ```
 
 6. When traces have started successfully, it shows "Hit enter to stop". Reproduce the issue.
-   
+
     Note: When "Fiddler" is included in Component parameter, a dialog box [FiddlerCap Web Recorder] appears. Use the following instructions to start capture, and then reproduce the issue.
 
-    1. Check [Decrypt HTTPS traffic] 
+    1. Check [Decrypt HTTPS traffic]
     2. When the following explanation appears, read it and click [OK].
 
         ```
-        HTTPS decryption will enable your debugging buddy to see the raw traffic sent via the HTTPS protocol. 
+        HTTPS decryption will enable your debugging buddy to see the raw traffic sent via the HTTPS protocol.
 
         This feature works by decrypting SSL traffic and reencrypting it using a locally generated certificate. FiddlerCap will generate this certificate and remove it when you close this tool.
         You may choose to temporarily install this certificate in the Trusted store to avoid warnings from your browser or client application.
@@ -103,7 +103,7 @@ OutlookTrace.ps1 is a PowerShell script to collect several traces related to Mic
     ```PowerShell
     Set-ExecutionPolicy -ExecutionPolicy <original value>
     ```
-    
+
 Send the following files:
 
 - A zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 5.
@@ -113,7 +113,7 @@ Send the following files:
 ## License
 Copyright (c) 2020 Ryusuke Fujita
 
-This software is released under the MIT License.  
+This software is released under the MIT License.
 http://opensource.org/licenses/mit-license.php
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
