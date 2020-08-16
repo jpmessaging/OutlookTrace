@@ -752,9 +752,10 @@ function Get-ProxySetting {
     param(
     )
 
-    # N.B. This won't be really needed, but I'm keeping it for now.
+    # props hold the return object properties.
+    # N.B. GetDefaultProxy won't be really needed, but I'm keeping it for now.
     # Get WebProxy class to get IE config
-    $webProxyDefault = [System.Net.WebProxy]::GetDefaultProxy()
+    $props = @{WebProxyDefault = [System.Net.WebProxy]::GetDefaultProxy()}
 
     # Get WinHttp & current user's IE proxy settings.
     # Use Win32 WinHttpGetDefaultProxyConfiguration & WinHttpGetIEProxyConfigForCurrentUser.
@@ -791,72 +792,44 @@ public enum ProxyAccessType
 
 // https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetdefaultproxyconfiguration
 [DllImport("winhttp.dll", SetLastError = true)]
-private static extern bool WinHttpGetDefaultProxyConfiguration(out WINHTTP_PROXY_INFO proxyInfo);
+public static extern bool WinHttpGetDefaultProxyConfiguration(out WINHTTP_PROXY_INFO proxyInfo);
 
 // https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetieproxyconfigforcurrentuser
 [DllImport("winhttp.dll", SetLastError = true)]
-private static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURRENT_USER_IE_PROXY_CONFIG proxyConfig);
-
-// Wrapper functions
-public static WINHTTP_PROXY_INFO GetWinHttpGetDefaultProxyConfiguration()
-{
-    WINHTTP_PROXY_INFO proxyInfo;
-    if (WinHttpGetDefaultProxyConfiguration(out proxyInfo))
-    {
-        return proxyInfo;
-    }
-    else
-    {
-        throw new System.ComponentModel.Win32Exception();
-    }
-}
-
-public static WINHTTP_CURRENT_USER_IE_PROXY_CONFIG GetWinHttpGetIEProxyConfigForCurrentUser()
-{
-    WINHTTP_CURRENT_USER_IE_PROXY_CONFIG proxyConfig;
-    if (WinHttpGetIEProxyConfigForCurrentUser(out proxyConfig))
-    {
-        return proxyConfig;
-    }
-    else
-    {
-        throw new System.ComponentModel.Win32Exception();
-    }
-}
+public static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURRENT_USER_IE_PROXY_CONFIG proxyConfig);
 '@
 
     if (-not ('Win32.WinHttp' -as [type])) {
         Add-Type -MemberDefinition $WinHttpDef -Name WinHttp -Namespace Win32
     }
 
-    try {
-        $proxyInfo = [Win32.WinHttp]::GetWinHttpGetDefaultProxyConfiguration()
-        $userIEProxyConfig = [Win32.WinHttp]::GetWinHttpGetIEProxyConfigForCurrentUser()
+    $proxyInfo = New-Object Win32.WinHttp+WINHTTP_PROXY_INFO
+    if ([Win32.WinHttp]::WinHttpGetDefaultProxyConfiguration([ref] $proxyInfo)) {
+        $props['WinHttpDirectAccess'] = $proxyInfo.dwAccessType -eq [Win32.WinHttp+ProxyAccessType]::WINHTTP_ACCESS_TYPE_NO_PROXY
+        $props['WinHttpProxyServer'] = $proxyInfo.lpszProxy
+        $props['WinHttpBypassList'] = $proxyInfo.lpszProxyBypass
+        $props['WINHTTP_PROXY_INFO'] = $proxyInfo # for debugging purpuse
     }
-    catch {
-        Write-Error "Native WinHttpGet function failed. $_"
-        return
+    else {
+        Write-Error ("Win32 WinHttpGetDefaultProxyConfiguration failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+    }
+
+    $userIEProxyConfig = New-Object Win32.WinHttp+WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
+    if ([Win32.WinHttp]::WinHttpGetIEProxyConfigForCurrentUser([ref] $userIEProxyConfig)) {
+        $props['UserIEPAutoDetect'] = $userIEProxyConfig.fAutoDetect
+        $props['UserIEAutoConfigUrl'] = $userIEProxyConfig.lpszAutoConfigUrl
+        $props['UserIEProxy'] = $userIEProxyConfig.lpszProxy
+        $props['UserIEProxyBypass'] = $userIEProxyConfig.lpszProxyBypass
+        $props['WINHTTP_CURRENT_USER_IE_PROXY_CONFIG'] = $userIEProxyConfig # for debugging purpuse
+    }
+    else {
+        Write-Error ("Win32 WinHttpGetIEProxyConfigForCurrentUser failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
     }
 
     Write-Verbose "UserIE*** properties correspond to WINHTTP_CURRENT_USER_IE_PROXY_CONFIG obtained by WinHttpGetIEProxyConfigForCurrentUser. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info"
     Write-Verbose "WinHttp*** properties correspond to WINHTTP_PROXY_INFO obtained by WinHttpGetDefaultProxyConfiguration. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config"
 
-    New-Object PSCustomObject -Property @{
-        # Current user IE settings (i.e. WinHttpGetIEProxyConfigForCurrentUser)
-        UserIEPAutoDetect = $userIEProxyConfig.fAutoDetect
-        UserIEAutoConfigUrl = $userIEProxyConfig.lpszAutoConfigUrl
-        UserIEProxy= $userIEProxyConfig.lpszProxy
-        UserIEProxyBypass = $userIEProxyConfig.lpszProxyBypass
-        WINHTTP_CURRENT_USER_IE_PROXY_CONFIG = $userIEProxyConfig # For debugging purpose
-
-        WebProxyDefault = $webProxyDefault
-
-        # WinHttp setting  (i.e. WinHttpGetDefaultProxyConfiguration)
-        WinHttpDirectAccess = $proxyInfo.dwAccessType -eq [Win32.WinHttp+ProxyAccessType]::WINHTTP_ACCESS_TYPE_NO_PROXY
-        WinHttpProxyServer = $proxyInfo.lpszProxy
-        WinHttpBypassList = $proxyInfo.lpszProxyBypass
-        WINHTTP_PROXY_INFO = $proxyInfo # For debug purpose.
-    }
+    New-Object PSCustomObject -Property $props
 }
 
 function Save-CachedAutodiscover {
