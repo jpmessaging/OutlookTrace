@@ -752,36 +752,110 @@ function Get-ProxySetting {
     param(
     )
 
-    # Get Users's Internet Settings
-    $internetSettings = Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
-
+    # N.B. This won't be really needed, but I'm keeping it for now.
     # Get WebProxy class to get IE config
     $webProxyDefault = [System.Net.WebProxy]::GetDefaultProxy()
 
-    # Get Machine's Winhttp Settings
-    $netshRaw = & netsh winhttp show proxy
-    foreach ($line in $netshRaw){
-        if ($line -match "Proxy Server\(s\)\s*:\s*(?<proxyServer>.*)") {
-            $winHttpProxyServer = $Matches['proxyServer']
-        }
-        elseif ($line -match "Bypass List\s*:\s*(?<bypassList>.*)") {
-            $winHttpBypassList = $Matches['bypassList']
-        }
-        elseif ($line -like "*Direct access*") {
-            $winHttpDirectAccess = $true
-        }
+    # Get WinHttp & current user's IE proxy settings.
+    # Use Win32 WinHttpGetDefaultProxyConfiguration & WinHttpGetIEProxyConfigForCurrentUser.
+    # I'm not using "netsh winhttp show proxy", because the output is system language dependent.  Netsh just calls this function anyway.
+    $WinHttpDef = @'
+// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public struct WINHTTP_PROXY_INFO
+{
+    public uint dwAccessType;
+    public string lpszProxy;
+    public string lpszProxyBypass;
+}
+
+// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public struct WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
+{
+    public bool fAutoDetect;
+    public string lpszAutoConfigUrl;
+    public string lpszProxy;
+    public string lpszProxyBypass;
+}
+
+// From winhttp.h
+// WinHttpOpen dwAccessType values (also for WINHTTP_PROXY_INFO::dwAccessType)
+public enum ProxyAccessType
+{
+    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY = 0,
+    WINHTTP_ACCESS_TYPE_NO_PROXY = 1,
+    WINHTTP_ACCESS_TYPE_NAMED_PROXY = 3,
+    WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY = 4
+}
+
+// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetdefaultproxyconfiguration
+[DllImport("winhttp.dll", SetLastError = true)]
+private static extern bool WinHttpGetDefaultProxyConfiguration(out WINHTTP_PROXY_INFO proxyInfo);
+
+// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetieproxyconfigforcurrentuser
+[DllImport("winhttp.dll", SetLastError = true)]
+private static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURRENT_USER_IE_PROXY_CONFIG proxyConfig);
+
+// Wrapper functions
+public static WINHTTP_PROXY_INFO GetWinHttpGetDefaultProxyConfiguration()
+{
+    WINHTTP_PROXY_INFO proxyInfo;
+    if (WinHttpGetDefaultProxyConfiguration(out proxyInfo))
+    {
+        return proxyInfo;
+    }
+    else
+    {
+        throw new System.ComponentModel.Win32Exception();
+    }
+}
+
+public static WINHTTP_CURRENT_USER_IE_PROXY_CONFIG GetWinHttpGetIEProxyConfigForCurrentUser()
+{
+    WINHTTP_CURRENT_USER_IE_PROXY_CONFIG proxyConfig;
+    if (WinHttpGetIEProxyConfigForCurrentUser(out proxyConfig))
+    {
+        return proxyConfig;
+    }
+    else
+    {
+        throw new System.ComponentModel.Win32Exception();
+    }
+}
+'@
+
+    if (-not ('Win32.WinHttp' -as [type])) {
+        Add-Type -MemberDefinition $WinHttpDef -Name WinHttp -Namespace Win32
     }
 
+    try {
+        $proxyInfo = [Win32.WinHttp]::GetWinHttpGetDefaultProxyConfiguration()
+        $userIEProxyConfig = [Win32.WinHttp]::GetWinHttpGetIEProxyConfigForCurrentUser()
+    }
+    catch {
+        Write-Error "Native WinHttpGet function failed. $_"
+        return
+    }
+
+    Write-Verbose "UserIE*** properties correspond to WINHTTP_CURRENT_USER_IE_PROXY_CONFIG obtained by WinHttpGetIEProxyConfigForCurrentUser. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info"
+    Write-Verbose "WinHttp*** properties correspond to WINHTTP_PROXY_INFO obtained by WinHttpGetDefaultProxyConfiguration. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config"
+
     New-Object PSCustomObject -Property @{
-        ProxyEnabled = $($internetSettings.ProxyEnable -eq 1)
-        ProxyServer = $internetSettings.ProxyServer
-        ProxyOverride = $internetSettings.ProxyOverride
+        # Current user IE settings (i.e. WinHttpGetIEProxyConfigForCurrentUser)
+        UserIEPAutoDetect = $userIEProxyConfig.fAutoDetect
+        UserIEAutoConfigUrl = $userIEProxyConfig.lpszAutoConfigUrl
+        UserIEProxy= $userIEProxyConfig.lpszProxy
+        UserIEProxyBypass = $userIEProxyConfig.lpszProxyBypass
+        WINHTTP_CURRENT_USER_IE_PROXY_CONFIG = $userIEProxyConfig # For debugging purpose
 
         WebProxyDefault = $webProxyDefault
 
-        WinHttpDirectAccess = $winHttpDirectAccess -eq $true
-        WinHttpProxyServer = $winHttpProxyServer
-        WinHttpBypassList = $winHttpBypassList
+        # WinHttp setting  (i.e. WinHttpGetDefaultProxyConfiguration)
+        WinHttpDirectAccess = $proxyInfo.dwAccessType -eq [Win32.WinHttp+ProxyAccessType]::WINHTTP_ACCESS_TYPE_NO_PROXY
+        WinHttpProxyServer = $proxyInfo.lpszProxy
+        WinHttpBypassList = $proxyInfo.lpszProxyBypass
+        WINHTTP_PROXY_INFO = $proxyInfo # For debug purpose.
     }
 }
 
@@ -1888,4 +1962,4 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Save-MicrosoftUpdate, Save-OfficeRegistry, Save-OSConfiguration, Get-ProxySetting, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Save-MicrosoftUpdate, Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Collect-OutlookInfo
