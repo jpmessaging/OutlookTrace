@@ -1512,7 +1512,7 @@ function Start-WfpTrace {
     [Parameter(Mandatory = $true)]
     $Path,
     [Parameter(Mandatory = $true)]
-    [int]$InternalSeconds,
+    [int]$IntervalSeconds,
     [TimeSpan]$MaxDuration = [TimeSpan]::FromHours(1)  # Just for safety, make sure to stop after a period
     )
 
@@ -1522,7 +1522,7 @@ function Start-WfpTrace {
     $Path = Resolve-Path $Path
 
     $job = Start-Job -ScriptBlock {
-        param($Path, $InternalSeconds, $MaxDuration)
+        param($Path, $IntervalSeconds, $MaxDuration)
 
         $expiration = [DateTime]::Now.Add($MaxDuration)
 
@@ -1538,11 +1538,11 @@ function Start-WfpTrace {
 
             # dump netevents
             $eventFilePath = Join-Path $Path "netevents_$(Get-Date -Format 'yyyyMMdd_HHmmss').xml"
-            netsh wfp show netevents file="$eventFilePath" <#timewindow=$InternalSeconds#> | Out-Null
-            Start-Sleep -Seconds $InternalSeconds
+            netsh wfp show netevents file="$eventFilePath" <#timewindow=$IntervalSeconds#> | Out-Null
+            Start-Sleep -Seconds $IntervalSeconds
 
         }
-    } -ArgumentList $Path, $InternalSeconds, $MaxDuration
+    } -ArgumentList $Path, $IntervalSeconds, $MaxDuration
 
     $job
 }
@@ -1806,7 +1806,7 @@ function Collect-OutlookInfo {
         if ($Component -contains 'WFP' -or $Component -contains 'All') {
             $wfpPath = Join-Path $tempPath -ChildPath 'WFP'
             New-Item $wfpPath -ItemType Directory | Out-Null
-            $wfpJob = Start-WfpTrace -Path $wfpPath -InternalSeconds 15
+            $wfpJob = Start-WfpTrace -Path $wfpPath -IntervalSeconds 15
             $wfpStarted = $true
         }
 
