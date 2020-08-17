@@ -744,6 +744,7 @@ function Save-OSConfiguration {
     Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_ComputerSystem.xml")
     Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_OperatingSystem.xml")
     Get-ProxySetting | Export-Clixml -Path $(Join-Path $Path -ChildPath "ProxySetting.xml")
+    Get-NLMConnectivity | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")
 }
 
 
@@ -832,6 +833,52 @@ public static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURR
     New-Object PSCustomObject -Property $props
 }
 
+function Get-NLMConnectivity {
+    [CmdletBinding()]
+    param()
+
+    $CLSID_NetworkListManager = [Guid]'DCB00C01-570F-4A9B-8D69-199FDBA5723B'
+    $type = [Type]::GetTypeFromCLSID($CLSID_NetworkListManager)
+    $nlm = [Activator]::CreateInstance($type)
+
+    $isConnectedToInternet = $nlm.IsConnectedToInternet
+    $conn = $nlm.GetConnectivity()
+    Write-Verbose ("INetworkListManager::GetConnectivity 0x{0:x8}" -f $conn)
+
+    $refCount = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($nlm);
+    Write-Verbose "Remaining ref count: $refCount"
+    $nlm = $null
+
+    # NLM_CONNECTIVITY enumeration
+    # https://docs.microsoft.com/en-us/windows/win32/api/netlistmgr/ne-netlistmgr-nlm_connectivity
+
+    # From netlistmgr.h
+    $NLM_CONNECTIVITY = @{
+        NLM_CONNECTIVITY_DISCONNECTED      = 0
+        NLM_CONNECTIVITY_IPV4_NOTRAFFIC    = 1
+        NLM_CONNECTIVITY_IPV6_NOTRAFFIC    = 2
+        NLM_CONNECTIVITY_IPV4_SUBNET	   = 0x10
+        NLM_CONNECTIVITY_IPV4_LOCALNETWORK = 0x20
+        NLM_CONNECTIVITY_IPV4_INTERNET	   = 0x40
+        NLM_CONNECTIVITY_IPV6_SUBNET	   = 0x100
+        NLM_CONNECTIVITY_IPV6_LOCALNETWORK = 0x200
+        NLM_CONNECTIVITY_IPV6_INTERNET	   = 0x400
+    }
+
+    $connectivity = New-Object System.Collections.Generic.List[string]
+
+    foreach ($entry in $NLM_CONNECTIVITY.GetEnumerator()) {        
+        if ($conn -band $entry.Value) {
+            $connectivity.Add($entry.Key)
+        }
+    }
+
+    New-Object PSCustomObject -Property @{
+        IsConnectedToInternet = $isConnectedToInternet
+        Connectivity = $connectivity
+    }
+}
+
 function Save-CachedAutodiscover {
     [CmdletBinding()]
     param(
@@ -863,7 +910,6 @@ function Save-CachedAutodiscover {
         # (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
     }
 }
-
 
 function Start-LdapTrace {
     [CmdletBinding()]
@@ -1935,4 +1981,4 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Save-MicrosoftUpdate, Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Save-MicrosoftUpdate, Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Collect-OutlookInfo
