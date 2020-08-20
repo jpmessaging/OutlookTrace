@@ -1780,18 +1780,24 @@ function Collect-OutlookInfo {
     Write-Verbose "Starting traces"
     try {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete -1
-            Save-EventLog -Path (Join-Path $tempPath 'EventLog')
-            Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')
-            Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
-            Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
-            Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
-            Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
-            Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 0
 
-            Write-Progress -Activity "Saving configuration" -Status "Done" -Completed
+            Save-EventLog -Path (Join-Path $tempPath 'EventLog')
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
+            Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')            
+            Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 30
+            Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 50
+            Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 70
+            Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 90
+            Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
             # Do we need MSInfo32?
             # Save-MSInfo32 -Path $tempPath
+
+            Write-Progress -Activity "Saving configuration" -Status "Done" -Completed            
         }
 
         if ($Component -contains 'Fiddler' -or $Component -contains 'All') {
