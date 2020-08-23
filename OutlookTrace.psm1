@@ -867,7 +867,7 @@ function Get-NLMConnectivity {
 
     $connectivity = New-Object System.Collections.Generic.List[string]
 
-    foreach ($entry in $NLM_CONNECTIVITY.GetEnumerator()) {        
+    foreach ($entry in $NLM_CONNECTIVITY.GetEnumerator()) {
         if ($conn -band $entry.Value) {
             $connectivity.Add($entry.Key)
         }
@@ -1611,7 +1611,7 @@ function Save-Dump {
         [parameter(Mandatory = $true)]
         $Path, # Folder to save a dump file
         [parameter(Mandatory = $true)]
-        $ProcessId
+        [int]$ProcessId
     )
 
     # Define a class to import MiniDumpWriteDump.
@@ -1629,48 +1629,20 @@ function Save-Dump {
     PMINIDUMP_CALLBACK_INFORMATION    CallbackParam
     );
     #>
-    $Dbghelp = @"
-    using System;
-    using System.Diagnostics;
-    using System.Runtime.InteropServices;
-    using Microsoft.Win32.SafeHandles;
-
-    public class DbgHelp
-    {
-        [DllImport("Dbghelp.dll", SetLastError=true)]
-        public static extern bool MiniDumpWriteDump(
-            IntPtr hProcess,
-            uint ProcessId,
-            IntPtr hFile,
-            uint DumpType,
-            IntPtr ExceptionParam,
-            IntPtr UserStreamParam,
-            IntPtr CallbackParam);
-
-        // Wrapper to return GetLastError() in case of failure (HRESULT)
-        public static int MiniDumpWriteDumpWrapper(
-            IntPtr hProcess,
-            uint ProcessId,
-            IntPtr hFile,
-            uint DumpType,
-            IntPtr ExceptionParam,
-            IntPtr UserStreamParam,
-            IntPtr CallbackParam)
-        {
-            if (MiniDumpWriteDump(hProcess, ProcessId, hFile, DumpType, ExceptionParam, UserStreamParam, CallbackParam))
-            {
-                return 0;
-            }
-            else
-            {
-                return Marshal.GetLastWin32Error();
-            }
-        }
-    }
-"@
+    $DbgHelp = @'
+    [DllImport("Dbghelp.dll", SetLastError=true)]
+    public static extern bool MiniDumpWriteDump(
+        IntPtr hProcess,
+        uint ProcessId,
+        IntPtr hFile,
+        uint DumpType,
+        IntPtr ExceptionParam,
+        IntPtr UserStreamParam,
+        IntPtr CallbackParam);
+'@
 
     if (-not ('DbgHelp' -as [type])) {
-        Add-Type -TypeDefinition $Dbghelp
+        Add-type -MemberDefinition $DbgHelp -Name DbgHelp -Namespace Win32
     }
 
     if (-not (Test-Path $Path)) {
@@ -1678,22 +1650,32 @@ function Save-Dump {
     }
 
     $Path = Resolve-Path $Path
+    $process = $null
 
     try{
         $process = Get-Process -Id $ProcessId -ErrorAction Stop
+        if (-not $process.Handle) {
+            # This scenario is possible for a system process.
+            throw "Cannot obtain the process handle of $($process.Name)."
+        }
 
         $dumpFile = Join-Path $Path "$($process.Name)_$(Get-Date -Format 'yyyy-MM-dd-HHmmss').dmp"
         $dumpFileStream = [System.IO.File]::Create($dumpFile)
 
         Write-Progress -Activity "Saving a memory dump file $dumpFile" -Status "Please wait" -PercentComplete -1
-        # Note: 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4) | MiniDumpWithFullMemory (2)
-        $hr = [Dbghelp]::MiniDumpWriteDumpWrapper($process.Handle,$ProcessId,$dumpFileStream.Handle,0x61826,[IntPtr]::Zero,[IntPtr]::Zero,[IntPtr]::Zero)
+        $writeDumpSuccess = $false
 
-        if ($hr -eq 0) {
-            New-Object PSObject -Property @{DumpFile = $dumpFile;}
+        # Note: 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4) | MiniDumpWithFullMemory (2)
+        if ([Win32.DbgHelp]::MiniDumpWriteDump($process.Handle, $ProcessId, $dumpFileStream.Handle, 0x61826, [IntPtr]::Zero, [IntPtr]::Zero,[ IntPtr]::Zero)) {
+            New-Object PSObject -Property @{
+                ProcessID = $process.Id
+                ProcessName = $process.Name
+                DumpFile = $dumpFile
+            }
+            $writeDumpSuccess = $true
         }
         else {
-            Write-Error $("Failed to save a memory dump of $Process. Error = 0x{0:x}" -f $hr)
+            Write-Error ("Failed to save a memory dump of $Process. Error = 0x{0:x}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
         }
     }
     finally {
@@ -1701,6 +1683,14 @@ function Save-Dump {
 
         if ($dumpFileStream) {
             $dumpFileStream.Close()
+
+            if (-not $writeDumpSuccess) {
+                Remove-Item $dumpFile -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        if ($process) {
+            $process.Dispose()
         }
     }
 }
@@ -1760,7 +1750,7 @@ function Collect-OutlookInfo {
     }
 
     # MS Office must be installed to collect Outlook & TCO.
-    # This is just a fail fast. Start-OutlookTrace/TCOTrace fail anyany.
+    # This is just a fail fast. Start-OutlookTrace/TCOTrace fail anyway.
     if ($Component -contains 'Outlook' -or $Component -contains 'TCO' -or $Component -contains 'All') {
         if (-not (Get-OfficeInfo -ErrorAction SilentlyContinue)) {
             throw "Component `"Outlook`" and/or `"TCO`" is specified, but Microsoft Office is not installed."
@@ -1775,8 +1765,6 @@ function Collect-OutlookInfo {
     $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
     New-Item $tempPath -ItemType directory -ErrorAction Stop | Out-Null
 
-    # $logFile = Join-Path $tempPath -ChildPath "log.txt"
-
     Write-Verbose "Starting traces"
     try {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
@@ -1784,7 +1772,7 @@ function Collect-OutlookInfo {
 
             Save-EventLog -Path (Join-Path $tempPath 'EventLog')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
-            Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')            
+            Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')
             Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 30
             Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
@@ -1797,7 +1785,7 @@ function Collect-OutlookInfo {
             # Do we need MSInfo32?
             # Save-MSInfo32 -Path $tempPath
 
-            Write-Progress -Activity "Saving configuration" -Status "Done" -Completed            
+            Write-Progress -Activity "Saving configuration" -Status "Done" -Completed
         }
 
         if ($Component -contains 'Fiddler' -or $Component -contains 'All') {
