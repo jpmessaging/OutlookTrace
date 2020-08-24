@@ -1839,14 +1839,12 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'WFP' -or $Component -contains 'All') {
-            $wfpPath = Join-Path $tempPath -ChildPath 'WFP'
-            New-Item $wfpPath -ItemType Directory | Out-Null
-            $wfpJob = Start-WfpTrace -Path $wfpPath -IntervalSeconds 15
+            $wfpJob = Start-WfpTrace -Path (Join-Path $tempPath 'WFP') -IntervalSeconds 15
             $wfpStarted = $true
         }
 
         if ($Component -contains 'CrashDump' -or $Component -contains 'All') {
-            Add-WerDumpKey -Path $tempPath -TargetProcess 'Outlook.exe'
+            Add-WerDumpKey -Path (Join-Path $tempPath 'WerDump') -TargetProcess 'Outlook.exe'
             $crashDumpStarted = $true
         }
 
@@ -1855,7 +1853,7 @@ function Collect-OutlookInfo {
 
             for ($i = 0; $i -lt $DumpCount; $i++) {
                 Write-Progress -Activity "Saving a memory dump of Outlook ($i/$DumpCount)." -Status "Please wait." -PercentComplete -1
-                $dumpResult = Save-Dump -Path $tempPath -ProcessId $process.Id
+                $dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $process.Id
                 Write-Progress -Activity "Saving a memory dump of Outlook ($i/$DumpCount)." -Status "Done" -Completed
                 Write-Verbose "Saved dump file: $($dumpResult.DumpFile)"
 
