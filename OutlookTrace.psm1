@@ -1661,8 +1661,6 @@ function Save-Dump {
 
         $dumpFile = Join-Path $Path "$($process.Name)_$(Get-Date -Format 'yyyy-MM-dd-HHmmss').dmp"
         $dumpFileStream = [System.IO.File]::Create($dumpFile)
-
-        Write-Progress -Activity "Saving a memory dump file $dumpFile" -Status "Please wait" -PercentComplete -1
         $writeDumpSuccess = $false
 
         # Note: 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4) | MiniDumpWithFullMemory (2)
@@ -1679,8 +1677,6 @@ function Save-Dump {
         }
     }
     finally {
-        Write-Progress -Activity "Saving a memory dump file $dumpFile" -Status "Done" -Completed
-
         if ($dumpFileStream) {
             $dumpFileStream.Close()
 
@@ -1769,7 +1765,6 @@ function Collect-OutlookInfo {
     try {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 0
-
             Save-EventLog -Path (Join-Path $tempPath 'EventLog')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
             Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')
@@ -1859,15 +1854,16 @@ function Collect-OutlookInfo {
             $process = Get-Process -Name 'Outlook' -ErrorAction Stop
 
             for ($i = 0; $i -lt $DumpCount; $i++) {
-                Write-Progress -Activity "Saving a memory dump of Outlook" -Status "($i/$DumpCount)" -PercentComplete ($i/$DumpCount*100)
+                Write-Progress -Activity "Saving a memory dump of Outlook ($i/$DumpCount)." -Status "Please wait." -PercentComplete -1
                 $dumpResult = Save-Dump -Path $tempPath -ProcessId $process.Id
+                Write-Progress -Activity "Saving a memory dump of Outlook ($i/$DumpCount)." -Status "Done" -Completed
                 Write-Verbose "Saved dump file: $($dumpResult.DumpFile)"
 
                 # If there are more dumps to save, wait.
                 if ($i -lt ($DumpCount - 1)) {
                     $secondsRemaining = $DumpIntervalSeconds
                     while ($secondsRemaining -gt 0) {
-                        Write-Progress -Activity "Waiting $DumpIntervalSeconds seconds till next dump" -Status "Waiting" -SecondsRemaining $secondsRemaining
+                        Write-Progress -Activity "Waiting $DumpIntervalSeconds seconds till next dump ($($i + 1)/$DumpCount done)." -Status "Please wait." -SecondsRemaining $secondsRemaining
                         Start-Sleep -Seconds 1
                         $secondsRemaining-=1
                     }
@@ -1879,16 +1875,18 @@ function Collect-OutlookInfo {
             # Does Outlook.exe already exist?
             $existingProcesss = Get-Process 'Outlook' -ErrorAction SilentlyContinue
             if ($existingProcesss) {
-                Write-Warning "Outlook is already running. PID = $($existingProcesss.Id)"
-                $response = Read-Host "Is it ok to close Outlook.exe and start again? [Yes|No]"
-                if ($response -like "Y*") {
-                    Stop-Process -InputObject $existingProcesss -Force
-                }
-                else {
-                    throw "StartOutlook parameter is specified, but Outlook is already running.Stop Outlook and run again, or run without StartOutlook parameter."
-                }
+                # Let the user to save & close Outlook.
+                Write-Warning "Outlook is already running. PID = $($existingProcesss.Id)."
+                Write-Warning "Please save data and close Outlook."
+                Write-Progress -Activity "Waiting for Outlook to close." -Status "Please save data and close Outlook." -PercentComplete -1
+
+                Wait-Process -InputObject $existingProcesss
+
+                Write-Progress -Activity "Waiting for Outlook to close." -Status "Done." -Completed
+                $existingProcesss.Dispose()
             }
 
+            # Start a new instance of Outlook
             $process = $null
             $err = $($process = Start-Process 'Outlook.exe' -PassThru) 2>&1
 
@@ -1896,13 +1894,12 @@ function Collect-OutlookInfo {
                 if (-not $process -or $process.HasExited) {
                     throw "StartOutlook parameter is specified, but Outlook failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
                 }
-                Write-Host "Outlook has started. PID = $($process.Id)" -ForegroundColor Green
+                Write-Host "Outlook has started. PID = $($process.Id)." -ForegroundColor Green
             }
             finally {
                 if ($process) {
                     $process.Dispose()
                 }
-
             }
         }
 
