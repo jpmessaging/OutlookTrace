@@ -330,7 +330,8 @@ function Stop-NetshTrace {
                     $SessionName = $Matches[0]
                 }
                 else {
-                    throw "Found a Netsh session, but cannot extract the name"
+                    Write-Error "Found a Netsh session, but cannot extract the name"
+                    return
                 }
                 $sessionFound = $true
                 break
@@ -341,7 +342,8 @@ function Stop-NetshTrace {
     }
 
     if (-not $sessionFound){
-        throw "Cannot find a netsh trace session"
+        Write-Error "Cannot find a netsh trace session"
+        return
     }
 
     if ($SkipCabFile) {
@@ -1127,43 +1129,52 @@ function Start-FiddlerCap {
     $fiddlerPath = Join-Path $Path -ChildPath "FiddlerCap"
     $fiddlerExe = Join-Path $fiddlerPath -ChildPath 'FiddlerCap.exe'
 
-    # If FiddlerCap is not available, download Setup file and extract.
+    #  FiddlerCap is not available.
     if (-not (Test-Path $fiddlerExe)) {
         $fiddlerCapUrl = "https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe"
         $fiddlerSetupFile = Join-Path $Path -ChildPath 'FiddlerCapSetup.exe'
 
-        try {
-            $webClient = New-Object System.Net.WebClient
-            Write-Progress -Activity "Downloading FiddlerCap" -Status "Please wait" -PercentComplete -1
-            $webClient.DownloadFile($fiddlerCapUrl, $fiddlerSetupFile)
-            $fiddlerCapDownloaded = $true
-        }
-        catch {
-            throw "Failed to download FiddlerCapSetup from $fiddlerCapUrl. $_"
-        }
-        finally {
-            Write-Progress -Activity "Downloading FiddlerCap" -Status "Done" -Completed
-
-            if ($local:webClient) {
-                $webClient.Dispose()
+        # Check if FiddlerCapSetup.exe is already available locally; Otherwize download the setup file and extract it.
+        if (-not (Test-Path $fiddlerSetupFile)) {
+            # If it's not connected to internet, bail.
+            $connectivity = Get-NLMConnectivity
+            if (-not $connectivity.IsConnectedToInternet) {
+                Write-Error "It seems there is no connectivity to Internet. Please download FiddlerCapSetup.exe from `"$fiddlerCapUrl`" and place it `"$Path`". Then run again."
+                return
             }
-        }
 
-        # This is to exit the execution even when the caller uses "-ErrorAction SilentlyContinue". In this case, "throw" does not terminiate.
-        if (-not $fiddlerCapDownloaded) {
-            return
+            $webClient = $null
+            try {
+                $webClient = New-Object System.Net.WebClient
+                Write-Progress -Activity "Downloading FiddlerCap" -Status "Please wait" -PercentComplete -1
+                $webClient.DownloadFile($fiddlerCapUrl, $fiddlerSetupFile)
+            }
+            catch {
+                Write-Error "Failed to download FiddlerCapSetup from $fiddlerCapUrl. $_"
+                return
+            }
+            finally {
+                Write-Progress -Activity "Downloading FiddlerCap" -Status "Done" -Completed
+
+                if ($webClient) {
+                    $webClient.Dispose()
+                }
+            }
         }
 
         # Silently extract. Path must be absolute.
         $process = $null
-        $err = $($process = Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru) 2>&1
-
         try {
+            Write-Progress -Activity "Extracting from FiddlerCapSetup" -Status "This may take a while. Please wait" -PercentComplete -1
+            $err = $($process = Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru) 2>&1
+
             if ($process.ExitCode -ne 0) {
-                throw "Failed to extract $fiddlerExe. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+                Write-Error "Failed to extract $fiddlerExe. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+                return
             }
         }
         finally {
+            Write-Progress -Activity "Extracting from FiddlerCapSetup" -Status "Done" -Completed
             if ($process) {
                 $process.Dispose()
             }
@@ -1172,10 +1183,11 @@ function Start-FiddlerCap {
 
     # Start FiddlerCap.exe
     $process = $null
-    $err = $($process = Start-Process $fiddlerExe -PassThru) 2>&1
     try {
+        $err = $($process = Start-Process $fiddlerExe -PassThru) 2>&1
         if (-not $process -or $process.HasExited) {
-            throw "FiddlerCap failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+            Write-Error "FiddlerCap failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+            return
         }
     }
     finally {
@@ -1209,6 +1221,7 @@ function Start-Procmon {
     }
 
     $Path = Resolve-Path $Path
+    $procmonFile = $null
 
     # Search procmon.exe or procmon64.exe under $Path (including subfolders).
     if ($ProcmonSearchPath -and (Test-Path $ProcmonSearchPath)) {
@@ -1226,12 +1239,18 @@ function Start-Procmon {
 
     $procmonZipDownloaded = $false
 
-    if (-not ($local:procmonFile -and (Test-Path $local:procmonFile))) {
-
+    if (-not ($procmonFile -and (Test-Path $procmonFile))) {
         # If 'ProcessMonitor.zip' isn't there, download.
         $procmonDownloadUrl = 'https://download.sysinternals.com/files/ProcessMonitor.zip'
         $procmonFolderPath = Join-Path $Path -ChildPath 'procmon_temp'
         $procmonZipFile = Join-Path $procmonFolderPath -ChildPath 'ProcessMonitor.zip'
+
+        # If it's not connected to internet, bail.
+        $connectivity = Get-NLMConnectivity
+        if (-not $connectivity.IsConnectedToInternet) {
+            Write-Error "It seems there is no connectivity to Internet. Please download the ProcessMonitor from `"$procmonDownloadUrl`""
+            return
+        }
 
         if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
             $procmonFile = Join-Path $procmonFolderPath -ChildPath 'Procmon64.exe'
@@ -1246,27 +1265,23 @@ function Start-Procmon {
 
         if (-not (Test-Path $procmonZipFile)) {
             Write-Progress -Activity "Downloading procmon from $procmonDownloadUrl" -Status "Please wait" -PercentComplete -1
-
+            $webClient = $null
             try {
                 $webClient = New-Object System.Net.WebClient
                 $webClient.DownloadFile($procmonDownloadUrl, $procmonZipFile)
                 $procmonZipDownloaded = $true
             }
             catch {
-                throw "Failed to download procmon from $procmonDownloadUrl. $_"
+                Write-Error "Failed to download procmon from $procmonDownloadUrl. $_"
+                return
             }
             finally {
-                if ($local:webClient) {
+                if ($webClient) {
                     $webClient.Dispose()
                 }
 
                 Write-Progress -Activity "Downloading procmon from $procmonDownloadUrl" -Status "Done" -Completed
             }
-        }
-
-        # This is just in case the caller used "-ErrorAction SilientlyContinue".
-        if (-not $procmonZipDownloaded) {
-            return
         }
 
         # Unzip ProcessMonitor.zip
@@ -1275,7 +1290,7 @@ function Start-Procmon {
             $NETFileSystemAvailable = $true
         }
         catch {
-            Write-Warning "System.IO.Compression.FileSystem isn't found. Using alternate method"
+            Write-Verbose "System.IO.Compression.FileSystem isn't found. Using alternate method"
         }
 
         if ($NETFileSystemAvailable) {
@@ -1302,7 +1317,8 @@ function Start-Procmon {
 
     try {
         if (-not $process -or $process.HasExited) {
-            throw "procmon failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+            Write-Error "procmon failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+            return
         }
     }
     finally {
@@ -1328,16 +1344,20 @@ function Stop-Procmon {
 
     $process = @(Get-Process -Name Procmon*)
     if ($process.Count -eq 0) {
-        throw "Cannot find procmon or procmon64"
+        Write-Error "Cannot find procmon or procmon64"
+        return
+    }
+
+    $procmonFile = $process[0].Path
+    foreach ($p in $process) {
+        $p.Dispose()
     }
 
     # Stop procmon
     Write-Progress -Activity "Stopping procmon" -Status "Please wait" -PercentComplete -1
-    $procmonFile = $process[0].Path
     $process = $null
-    $err = $($process = Start-Process $procmonFile -ArgumentList "/Terminate" -Wait -PassThru) 2>&1
-
     try {
+        $err = $($process = Start-Process $procmonFile -ArgumentList "/Terminate" -Wait -PassThru) 2>&1
         if ($process.ExitCode -ne 0) {
             Write-Error "procmon failed to stop. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
         }
@@ -1784,7 +1804,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Fiddler' -or $Component -contains 'All') {
-            Start-FiddlerCap -Path $Path | Out-Null
+            Start-FiddlerCap -Path $Path -ErrorAction Stop | Out-Null
             $fiddlerCapStarted = $true
 
             Write-Warning "FiddlerCap has started. Please manually configure and start capture."
@@ -1834,7 +1854,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Procmon' -or $Component -contains 'All') {
-            $procmonResult = Start-Procmon -Path (Join-Path $tempPath 'Procmon') -ProcmonSearchPath $Path
+            $procmonResult = Start-Procmon -Path (Join-Path $tempPath 'Procmon') -ProcmonSearchPath $Path -ErrorAction Stop
             $procmonStared = $true
         }
 
