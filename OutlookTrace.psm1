@@ -1455,7 +1455,7 @@ function Get-OfficeInfo {
     }
 
     # Use the latest
-    $latestOffice = $officeInstallations | Sort-Object -Property Version -Descending | Select-Object -First 1
+    $latestOffice = $officeInstallations | Sort-Object -Property {[System.Version]$_.Version} -Descending | Select-Object -First 1
 
     $outlookReg = Get-ItemProperty HKLM:'\SOFTWARE\Clients\Mail\Microsoft Outlook' -ErrorAction Stop
     $mapiDll = Get-ItemProperty $outlookReg.DLLPathEx -ErrorAction Stop
