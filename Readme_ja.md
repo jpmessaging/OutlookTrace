@@ -4,18 +4,12 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 [ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-08-25/OutlookTrace.psm1)
 
 ## 利用方法
-1. OutlookTrace.psm1 をダウンロードし、ブロックを解除します。
+1. OutlookTrace.psm1 をダウンロードして対象のマシン上にコピーします。
+2. 管理者権限で cmd を起動します。
+3. PowerShell を以下のように起動します。
 
-    1. ファイルを右クリックして、プロパティを開きます。
-    2. [全般] タブにて、「このファイルは他のコンピューターから取得したものです。このコンピューターを保護するため、このファイルへのアクセスはブロックされる可能性があります。」というメッセージが表示されている場合には、[許可する] にチェックを入れます。
-
-2. 対象のマシン上に OutlookTrace.psm1 をコピーします。
-3. 管理者権限で PowerShell を起動します。
-
-   Get-ExecutionPolicy を実行して RemoteSigned となっていない場合には以下のように設定します。
-
-    ```PowerShell
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned
+    ```
+    powershell -ExecutionPolicy Bypass
     ```
 
 4. OutlookTrace.psm1 をインポートします。
@@ -42,7 +36,7 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
     Collect-OutlookInfo -Path c:\temp -Component Configuration, Netsh, Outlook
     ```
 
-6. 正常にトレースが開始されると、"Hit enter to stop" と表示されるので、事象を再現します。
+6. 正常にトレースが開始されると、"Hit enter to stop" と表示されます。
 
     ※ 採取するコンポーネントに Fiddler を含めた場合、[FiddlerCap Web Recorder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
 
@@ -75,12 +69,12 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
     4. [1. キャプチャ開始] をクリックします。
         自動的にブラウザが起動されたら、そのブラウザはクローズいただいて結構です。
 
-7. 再現後、コンソールに Enter キーを入力しトレースを停止します。
+7. 現象を再現させます。
 8. 採取するコンポーネントに Fiddler を含めた場合、以下の手順で停止して保存します。
 
     1. [2. キャプチャ停止] をクリックします。
     2. [3. キャプチャ保存] をクリックします。
-    3. ファイルを任意の場所に保存します。
+    3. ファイルを Collect-OutlookInfo の "Path" パラメータに指定したフォルダ配下に作成された GUID 名のフォルダに保存します。
     4. [FiddlerCap Web Recorder] ダイアログボックスをクローズします。
         この時以下の内容が表示されたら、[はい] をクリックします。
 
@@ -92,24 +86,17 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
         有効期間: ***
         シリアル番号 : ***
         拇印 (sha1): ***
-        拇印 (md5):***
+        拇印 (md5):
         ```
 
-9. 手順 3 で Set-ExecutionPolicy で変更した場合には元の値へ戻します。
+9.  コンソールに Enter キーを入力しトレースを停止します。
 
-    ```PowerShell
-    Set-ExecutionPolicy -ExecutionPolicy <元の値>
-    ```
-
-以下のファイルをお寄せください。
-
-- 手順 5 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイル
-- 採取するコンポーネントに Fiddler を含めた場合には、手順 8 で保存したファイル (`"FiddlerCap_***.saz"`)
+手順 5 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。
 
 # ライセンス
 Copyright (c) 2020 Ryusuke Fujita
 
-This software is released under the MIT License.  
+This software is released under the MIT License.
 http://opensource.org/licenses/mit-license.php
 
 以下に定める条件に従い、本ソフトウェアおよび関連文書のファイル（以下「ソフトウェア」）の複製を取得するすべての人に対し、ソフトウェアを無制限に扱うことを無償で許可します。これには、ソフトウェアの複製を使用、複写、変更、結合、掲載、頒布、サブライセンス、および/または販売する権利、およびソフトウェアを提供する相手に同じことを許可する権利も無制限に含まれます。

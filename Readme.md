@@ -4,18 +4,12 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 [Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-08-25/OutlookTrace.psm1)
 
 ## How to use
-1. Download OutlookTrace.psm1 and unblock the file.
-
-    1. Right-click the psm1 file and click [Property].
-    2. In the [General] tab, if you see "This file came from another computer and might be blocked to help protect this computer]", check [Unblock].
-
-2. Place OutlookTrace.psm1 on the target machine.
-3. Start PowerShell as administrator.
-
-    Run Get-ExecutionPolicy and if it's not RemoteSigned, set it RemoteSigned as follows.
+1. Download OutlookTrace.psm1 and place it on the target machine.
+2. Start cmd as administrator.
+3. Start PowerShell as follow.
 
     ```PowerShell
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned
+    powershell -ExecutionPolicy Bypass
     ```
 
 4. Import OutlookTrace.psm1
@@ -42,7 +36,7 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
     Collect-OutlookInfo -Path c:\temp -Component Configuration, Netsh, Outlook
     ```
 
-6. When traces have started successfully, it shows "Hit enter to stop". Reproduce the issue.
+6. When traces have started successfully, it shows "Hit enter to stop".
 
     Note: When "Fiddler" is included in Component parameter, a dialog box [FiddlerCap Web Recorder] appears. Use the following instructions to start capture, and then reproduce the issue.
 
@@ -77,12 +71,12 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
         If a web browser starts automatically, you can close the browser.
 
-7. After reproducing the issue, hit Enter in the console to stop traces.
+7. Reproduce the issue.
 8. When "Fiddler" is included, stop and save the capture.
 
     1. Click [2. Stop Capture].
     2. Click [3. Save Capture].
-    3. Save the capture.
+    3. Save the capture in the folder with GUID name created under "Path" parameter you specified in Collect-OutloookInfo.
     4. Close the [FiddlerCap Web Recorder] dialog box.
 
         If the following dialog appears, click [Yes].
@@ -98,16 +92,9 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
         Thumbprint (md5) : ***
         ```
 
-9. If ExecutionPolicy is changed in the step 3, set it back to original value
+9. Hit enter key in the console to stop.
 
-    ```PowerShell
-    Set-ExecutionPolicy -ExecutionPolicy <original value>
-    ```
-
-Send the following files:
-
-- A zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 5.
-- If Fiddler is included, capture file (`"FiddlerCap_***.saz"`) saved in step 8.
+Send the zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 5.
 
 
 ## License
