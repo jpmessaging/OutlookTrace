@@ -747,6 +747,7 @@ function Save-OSConfiguration {
     Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_OperatingSystem.xml")
     Get-ProxySetting | Export-Clixml -Path $(Join-Path $Path -ChildPath "ProxySetting.xml")
     Get-NLMConnectivity | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")
+    Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")
 }
 
 
@@ -880,6 +881,47 @@ function Get-NLMConnectivity {
         Connectivity = $connectivity
     }
 }
+
+function Get-WSCAntivirus {
+    [CmdletBinding()]
+    param()
+
+    $WscDef = @'
+    public enum WSC_SECURITY_PROVIDER_HEALTH 
+    {
+        WSC_SECURITY_PROVIDER_HEALTH_GOOD,
+        WSC_SECURITY_PROVIDER_HEALTH_NOTMONITORED,
+        WSC_SECURITY_PROVIDER_HEALTH_POOR,
+        WSC_SECURITY_PROVIDER_HEALTH_SNOOZE
+    }
+    
+    // https://docs.microsoft.com/en-us/windows/win32/api/wscapi/nf-wscapi-wscgetsecurityproviderhealth
+    [DllImport("Wscapi.dll", SetLastError = true)]
+    public static extern uint WscGetSecurityProviderHealth(int Providers, out int pHealth);
+'@
+    
+    if (-not ('Win32.WSC' -as [type])) {
+        Add-Type -MemberDefinition $WscDef -Name WSC -Namespace Win32
+    }
+    
+    # from Wscapi.h
+    $WSC_SECURITY_PROVIDER_ANTIVIRUS = 4    
+    [Win32.WSC+WSC_SECURITY_PROVIDER_HEALTH]$health = [Win32.WSC+WSC_SECURITY_PROVIDER_HEALTH]::WSC_SECURITY_PROVIDER_HEALTH_POOR
+
+    # This call could fail with a terminating error on the server OS since Wscapi.dll is not available.
+    # Catch it and convert it a non-terminating error so that the caller can ignore with ErrorAction.
+    try {
+        $hr = [Win32.WSC]::WscGetSecurityProviderHealth($WSC_SECURITY_PROVIDER_ANTIVIRUS, [ref]$health)
+        New-Object PSCustomObject -Property @{
+            HRESULT = $hr
+            Health  = $health
+        }
+    }
+    catch {
+        Write-Error $_
+    }   
+}
+
 
 function Save-CachedAutodiscover {
     [CmdletBinding()]
@@ -1792,7 +1834,7 @@ function Collect-OutlookInfo {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 30
             Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 50
-            Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
+            Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration') 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 70
             Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 90
@@ -1990,4 +2032,4 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Save-MicrosoftUpdate, Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Save-MicrosoftUpdate, Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Collect-OutlookInfo
