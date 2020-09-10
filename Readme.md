@@ -1,7 +1,7 @@
 ﻿## Overview
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-08-27/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-09-10/OutlookTrace.psm1)
 
 ## How to use
 1. Download OutlookTrace.psm1 and place it on the target machine.
@@ -76,8 +76,9 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
     1. Click [2. Stop Capture].
     2. Click [3. Save Capture].
-    3. Save the capture in the folder with GUID name created under "Path" parameter you specified in Collect-OutloookInfo.
-    4. Close the [FiddlerCap Web Recorder] dialog box.
+    3. In [Save as type], select `Password-Protected Capture (*.saz)`.
+    4. Save the capture in the folder with GUID name created under "Path" parameter you specified in Collect-OutloookInfo.
+    5. Close the [FiddlerCap Web Recorder] dialog box.
 
         If the following dialog appears, click [Yes].
 
@@ -94,8 +95,8 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
 9. Hit enter key in the console to stop.
 
-Send the zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 5.
-
+Send the zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 5.  
+If you captured a Fiddler trace, send the password used in step 8 too.
 
 ## License
 Copyright (c) 2020 Ryusuke Fujita

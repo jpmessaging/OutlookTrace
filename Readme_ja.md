@@ -1,7 +1,7 @@
 ﻿## 概要
 OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
-[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-08-27/OutlookTrace.psm1)
+[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-09-10/OutlookTrace.psm1)
 
 ## 利用方法
 1. OutlookTrace.psm1 をダウンロードして対象のマシン上にコピーします。
@@ -74,8 +74,9 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 
     1. [2. キャプチャ停止] をクリックします。
     2. [3. キャプチャ保存] をクリックします。
-    3. ファイルを Collect-OutlookInfo の "Path" パラメータに指定したフォルダ配下に作成された GUID 名のフォルダに保存します。
-    4. [FiddlerCap Web Recorder] ダイアログボックスをクローズします。
+    3. [ファイルの種類] で `Password-Protected Capture (*.saz)` を選択します。
+    4. ファイルを Collect-OutlookInfo の "Path" パラメータに指定したフォルダ配下に作成された GUID 名のフォルダに保存します。
+    5. [FiddlerCap Web Recorder] ダイアログボックスをクローズします。
         この時以下の内容が表示されたら、[はい] をクリックします。
 
         ```
@@ -91,7 +92,8 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 
 9.  コンソールに Enter キーを入力しトレースを停止します。
 
-手順 5 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。
+手順 5 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。  
+Fiddler トレースを採取した場合には、手順 8 で指定したパスワードも併せてお寄せください。
 
 # ライセンス
 Copyright (c) 2020 Ryusuke Fujita

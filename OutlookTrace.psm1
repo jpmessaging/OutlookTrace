@@ -1871,7 +1871,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'PSR' -or $Component -contains 'All') {
-            Start-PSR -Path $tempPath -ShowGUI
+            Start-PSR -Path $tempPath #-ShowGUI
             $psrStarted = $true
         }
 
