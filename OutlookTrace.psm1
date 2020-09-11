@@ -370,7 +370,9 @@ function Stop-NetshTrace {
     }
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to stop netsh trace. exit code = $LASTEXITCODE.`n$local:result"
+        Write-Error "Failed to stop netsh trace ($SessionName). exit code = $LASTEXITCODE.`n$local:result`nETW session:`n$sessions"
+        # This temporary for debugging issue "Data Collector Set was not found."
+        $sessions
         return
     }
 }
@@ -887,25 +889,25 @@ function Get-WSCAntivirus {
     param()
 
     $WscDef = @'
-    public enum WSC_SECURITY_PROVIDER_HEALTH 
+    public enum WSC_SECURITY_PROVIDER_HEALTH
     {
         WSC_SECURITY_PROVIDER_HEALTH_GOOD,
         WSC_SECURITY_PROVIDER_HEALTH_NOTMONITORED,
         WSC_SECURITY_PROVIDER_HEALTH_POOR,
         WSC_SECURITY_PROVIDER_HEALTH_SNOOZE
     }
-    
+
     // https://docs.microsoft.com/en-us/windows/win32/api/wscapi/nf-wscapi-wscgetsecurityproviderhealth
     [DllImport("Wscapi.dll", SetLastError = true)]
     public static extern uint WscGetSecurityProviderHealth(int Providers, out int pHealth);
 '@
-    
+
     if (-not ('Win32.WSC' -as [type])) {
         Add-Type -MemberDefinition $WscDef -Name WSC -Namespace Win32
     }
-    
+
     # from Wscapi.h
-    $WSC_SECURITY_PROVIDER_ANTIVIRUS = 4    
+    $WSC_SECURITY_PROVIDER_ANTIVIRUS = 4
     [Win32.WSC+WSC_SECURITY_PROVIDER_HEALTH]$health = [Win32.WSC+WSC_SECURITY_PROVIDER_HEALTH]::WSC_SECURITY_PROVIDER_HEALTH_POOR
 
     # This call could fail with a terminating error on the server OS since Wscapi.dll is not available.
@@ -919,7 +921,7 @@ function Get-WSCAntivirus {
     }
     catch {
         Write-Error $_
-    }   
+    }
 }
 
 
@@ -1834,7 +1836,7 @@ function Collect-OutlookInfo {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 30
             Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 50
-            Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration') 
+            Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 70
             Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 90
