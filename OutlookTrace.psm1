@@ -179,11 +179,7 @@ function Stop-WamTrace {
     )
 
     Write-Verbose "Stopping WAM trace"
-    $logmanResult = & logman stop $SessionName -ets
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "logman failed to stop. exit code = $LASTEXITCODE.`n$logmanResult"
-    }
+    Stop-EtwSession $SessionName | Out-Null
 }
 
 
@@ -243,10 +239,7 @@ function Stop-OutlookTrace {
        return
     }
 
-    $logmanResult = & logman stop $SessionName -ets
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "logman failed to stop. exit code = $LASTEXITCODE.`n$logmanResult"
-    }
+    Stop-EtwSession $SessionName | Out-Null   
 }
 
 function Start-NetshTrace {
@@ -1178,17 +1171,19 @@ function Stop-LdapTrace {
     [CmdletBinding()]
     param(
         $SessionName = 'LdapTrace',
+        [Parameter(Mandatory = $true)]
         $TargetProcess
     )
 
-    $logmanResult = Invoke-Expression "logman stop $SessionName -ets"
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to stop LDAP trace. exit code = $LASTEXITCODE. $logmanResult"
-        # no return here intended.
-    }
-
+    Stop-EtwSession $SessionName | Out-Null
+    
     # Remove a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing (ignore any errors)
+    
+    # Process name must contain the extension such as "Outlook.exe", instead of "Outlook"
+    if ([IO.Path]::GetExtension($TargetProcess)  -ne 'exe') {
+        $TargetProcess = [IO.Path]::GetFileNameWithoutExtension($TargetProcess) + ".exe"
+    }
+    
     $keypath = "HKLM:\SYSTEM\CurrentControlSet\Services\ldap\tracing\$TargetProcess"
     Remove-Item $keypath -ErrorAction SilentlyContinue | Out-Null
 }
@@ -1326,10 +1321,7 @@ function Stop-CapiTrace {
         $SessionName = 'CapiTrace'
     )
 
-    $logmanResult = Invoke-Expression "logman stop $SessionName -ets"
-    if ($LASTEXITCODE -ne 0){
-        Write-Error "failed to stop $SessionName. exit code = $LASTEXITCODE. $logmanResult"
-    }
+    Stop-EtwSession $SessionName | Out-Null
 }
 
 function Start-FiddlerCap {
