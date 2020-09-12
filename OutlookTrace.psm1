@@ -260,6 +260,7 @@ function Start-NetshTrace {
     if (-not (Test-Path $Path)) {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
+    $Path = Resolve-Path $Path
 
     # Use "InternetClient_dbg" for Win10
     $win32os = Get-WmiObject win32_operatingsystem
@@ -271,30 +272,17 @@ function Start-NetshTrace {
         $scenario = "InternetClient"
     }
 
-    # Win10's netsh supports sessionname parameter.
-    # Without explicit session name, netsh creates "-NetTrace-***".  This prefix "-" prevents logman from stopping the session.
-    $SessionName = $null
-    if ($osMajor -ge 10) {
-        $SessionName = "NetshTrace"
-    }
-
-    Write-Verbose "Clearing dns cache"
-    & ipconfig /flushdns | Out-Null
-
     $traceFile = Join-Path $Path -ChildPath $FileName
-
-    Write-Verbose "Starting netsh trace. $netshCommand"
-    if ($SessionName) {
-        $netshCommand = "netsh trace start sessionname=$SessionName scenario=$scenario capture=yes tracefile=`"$traceFile`" overwrite=yes maxSize=2000"
-    }
-    else {
-        $netshCommand = "netsh trace start scenario=$scenario capture=yes tracefile=`"$traceFile`" overwrite=yes maxSize=2000"
-    }
+    $netshCommand = "netsh trace start scenario=$scenario capture=yes tracefile=`"$traceFile`" overwrite=yes maxSize=2000"
 
     if (-not ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, $netshCommand))) {
         return
     }
 
+    Write-Verbose "Clearing dns cache"
+    & ipconfig /flushdns | Out-Null
+
+    Write-Verbose "Starting netsh trace. $netshCommand"
     $netshResult = Invoke-Expression $netshCommand
     if ($LASTEXITCODE -ne 0) {
         throw "netsh failed to start. exit code = $LASTEXITCODE.`n$netshResult"
@@ -323,19 +311,15 @@ function Stop-NetshTrace {
             Start-Sleep -Seconds $retry
         }
 
-        $sessions = & logman -ets
-        foreach ($session in $sessions) {
-            if ($session -like "*$SessionName*") {
-                if ($session -match "[a-z,A-Z,0-9,-]+") {
-                    $SessionName = $Matches[0]
-                }
-                else {
-                    Write-Error "Found a Netsh session, but cannot extract the name"
-                    return
-                }
-                $sessionFound = $true
-                break
-            }
+        $sessions = @(Get-EtwSession | Where-Object {$_.SessionName -like "*$SessionName*"})
+        if ($sessions.Count -eq 1) {
+            $SessionName = $sessions[0].SessionName
+            $sessionFound = $true
+            break
+        }
+        elseif ($sesionNames.Count -gt 1) {
+            Write-Error "Found multiple sessions matching $SessionName"
+            return
         }
 
         ++$retry
@@ -348,35 +332,225 @@ function Stop-NetshTrace {
 
     if ($SkipCabFile) {
         # Manually stop the session
-        Write-Verbose "Stopping $SessionName"
-        $result = & logman stop $SessionName -ets
+        Write-Verbose "Stopping $SessionName with Stop-EtwSession"
+        Stop-EtwSession -SessionName $SessionName | Out-Null
     }
     else {
         Write-Progress -Activity "Stopping netsh trace" -Status "This might take a while" -PercentComplete -1
-
-        # Win10 supports sessionname paramter.
-        $win32os = Get-WmiObject win32_operatingsystem
-        $osMajor = $win32os.Version.Split(".")[0] -as [int]
-        if ($osMajor -ge 10) {
-            # netsh's "sessionname" needs a prefix before "-NetTrace"
-            $shortSessionName = $SessionName.Substring(0, $SessionName.IndexOf("-"))
-            $result = & netsh trace stop sessionname=$shortSessionName
-        }
-        else {
-            $result = & netsh trace stop
-        }
-
+        $result = & netsh trace stop
         Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
-    }
 
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to stop netsh trace ($SessionName). exit code = $LASTEXITCODE.`n$local:result`nETW session:`n$sessions"
-        # This temporary for debugging issue "Data Collector Set was not found."
-        $sessions
-        return
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to stop netsh trace ($SessionName). exit code = $LASTEXITCODE.`n$local:result"
+            # This is temporary for debugging issue "Data Collector Set was not found."
+            $sessions
+            return
+        }
     }
 }
 
+# Instead of logman, use Win32 QueryAllTracesW.
+# https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-queryalltracesw
+$ETWType = @'
+// https://docs.microsoft.com/en-us/windows/win32/etw/wnode-header
+[StructLayout(LayoutKind.Sequential)]
+public struct WNODE_HEADER
+{
+    public uint BufferSize;
+    public uint ProviderId;
+    public ulong HistoricalContext;
+    public ulong KernelHandle;
+    public Guid Guid;
+    public uint ClientContext;
+    public uint Flags;
+}
+
+// https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-event_trace_properties
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public struct EVENT_TRACE_PROPERTIES
+{
+    public WNODE_HEADER Wnode;
+    public uint BufferSize;
+    public uint MinimumBuffers;
+    public uint MaximumBuffers;
+    public uint MaximumFileSize;
+    public uint LogFileMode;
+    public uint FlushTimer;
+    public uint EnableFlags;
+    public int AgeLimit;
+    public uint NumberOfBuffers;
+    public uint FreeBuffers;
+    public uint EventsLost;
+    public uint BuffersWritten;
+    public uint LogBuffersLost;
+    public uint RealTimeBuffersLost;
+    public IntPtr LoggerThreadId;
+    public int LogFileNameOffset;
+    public int LoggerNameOffset;
+}
+
+public struct EventTraceProperties
+{
+    public EVENT_TRACE_PROPERTIES Properties;
+    public string SessionName;
+    public string LogFileName;
+}
+
+[DllImport("kernel32.dll")]
+public static extern void RtlZeroMemory(IntPtr dst, int length);
+
+[DllImport("Advapi32.dll", SetLastError = true)]
+public static extern int QueryAllTracesW( IntPtr[] PropertyArray, uint PropertyArrayCount, ref int LoggerCount);
+
+[DllImport("Advapi32.dll", SetLastError = true)]
+public static extern int StopTraceW(ulong TraceHandle, IntPtr InstanceName, IntPtr Properties); // TraceHandle is defined as ULONG64
+
+const int MAX_SESSIONS = 64;
+const int MAX_NAME_COUNT = 1024; // max char count for LogFileName & SessionName
+const uint ERROR_SUCCESS = 0;
+
+// https://docs.microsoft.com/en-us/windows/win32/etw/wnode-header
+// > The size of memory must include the room for the EVENT_TRACE_PROPERTIES structure plus the session name string and log file name string that follow the structure in memory.
+static readonly int PropertiesSize = Marshal.SizeOf(typeof(EVENT_TRACE_PROPERTIES)) + 2 * sizeof(char) * MAX_NAME_COUNT; // EVENT_TRACE_PROPERTIES + LogFileName & LoggerName
+static readonly int LoggerNameOffset = Marshal.SizeOf(typeof(EVENT_TRACE_PROPERTIES));
+static readonly int LogFileNameOffset = LoggerNameOffset + sizeof(char) * MAX_NAME_COUNT;
+
+public static List<EventTraceProperties> QueryAllTraces()
+{
+    IntPtr pBuffer = IntPtr.Zero;
+    List<EventTraceProperties> eventProperties = null;
+    try
+    {
+        // Allocate native memorty to hold the entire data.
+        int BufferSize = PropertiesSize * MAX_SESSIONS;
+        pBuffer = Marshal.AllocCoTaskMem(BufferSize);
+        RtlZeroMemory(pBuffer, BufferSize);
+
+        IntPtr[] sessions = new IntPtr[64];
+
+        for (int i = 0; i < 64; ++i)
+        {
+            sessions[i] = pBuffer + (i * PropertiesSize);
+
+            // Marshal from managed to native
+            EVENT_TRACE_PROPERTIES props = new EVENT_TRACE_PROPERTIES();
+            props.Wnode.BufferSize = (uint)PropertiesSize;
+            props.LoggerNameOffset = LoggerNameOffset;
+            props.LogFileNameOffset = LogFileNameOffset;
+            Marshal.StructureToPtr(props, sessions[i], false);
+        }
+
+        int loggerCount = 0;
+        var status = QueryAllTracesW( sessions, MAX_SESSIONS, ref loggerCount);
+
+        if (status != ERROR_SUCCESS)
+        {
+            throw new Win32Exception(status);
+        }
+
+        eventProperties = new List<EventTraceProperties>();
+        for (int i = 0; i < loggerCount; ++i)
+        {
+            // Marshal back from native to managed.
+            EVENT_TRACE_PROPERTIES props = (EVENT_TRACE_PROPERTIES)Marshal.PtrToStructure(sessions[i], typeof(EVENT_TRACE_PROPERTIES));
+            string sessionName = Marshal.PtrToStringUni(sessions[i] + LoggerNameOffset);
+            string logFileName = Marshal.PtrToStringUni(sessions[i] + LogFileNameOffset);
+
+            eventProperties.Add(new EventTraceProperties { Properties = props, SessionName = sessionName, LogFileName = logFileName });
+        }
+    }
+    finally
+    {
+        if (pBuffer != IntPtr.Zero)
+        {
+            Marshal.FreeCoTaskMem(pBuffer);
+            pBuffer = IntPtr.Zero;
+        }
+    }
+
+    return eventProperties;
+}
+
+public static EventTraceProperties StopTrace(string SessionName)
+{
+    IntPtr pSessionName = IntPtr.Zero;
+    IntPtr pProps = IntPtr.Zero;
+    try
+    {
+        pSessionName = Marshal.StringToCoTaskMemUni(SessionName);
+
+        pProps = Marshal.AllocCoTaskMem(PropertiesSize);
+        RtlZeroMemory(pProps, PropertiesSize);
+
+        EVENT_TRACE_PROPERTIES props = new EVENT_TRACE_PROPERTIES();
+        props.Wnode.BufferSize = (uint)PropertiesSize;
+        props.LoggerNameOffset = LoggerNameOffset;
+        props.LogFileNameOffset = LogFileNameOffset;
+        Marshal.StructureToPtr(props, pProps, false);
+
+        int status = StopTraceW(0, pSessionName, pProps);
+        if (status != ERROR_SUCCESS)
+        {
+            throw new Win32Exception(status);
+        }
+
+        props = (EVENT_TRACE_PROPERTIES)Marshal.PtrToStructure(pProps, typeof(EVENT_TRACE_PROPERTIES));
+        string sessionName = Marshal.PtrToStringUni(pProps + LoggerNameOffset);
+        string logFileName = Marshal.PtrToStringUni(pProps + LogFileNameOffset);
+        return new EventTraceProperties { Properties = props, SessionName = sessionName, LogFileName = logFileName };
+    }
+    finally
+    {
+        if (pProps != IntPtr.Zero)
+        {
+            Marshal.FreeCoTaskMem(pProps);
+        }
+
+        if (pSessionName != IntPtr.Zero)
+        {
+            Marshal.FreeCoTaskMem(pSessionName);
+        }
+    }
+}
+'@
+
+
+function Get-EtwSession {
+    [CmdletBinding()]
+    param()
+
+    if (-not ('Win32.ETW' -as [type])) {
+        Add-type -MemberDefinition $ETWType -Namespace Win32 -Name ETW -UsingNamespace System.Collections.Generic, System.ComponentModel
+    }
+
+    try {
+        $traces = [Win32.ETW]::QueryAllTraces()
+        return $traces
+    }
+    catch {
+        Write-Error "QueryAllTraces failed. $_"
+    }
+}
+
+function Stop-EtwSession {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SessionName
+    )
+
+    if (-not ('Win32.ETW' -as [type])) {
+        Add-type -MemberDefinition $ETWType -Namespace Win32 -Name ETW -UsingNamespace System.Collections.Generic, System.ComponentModel
+    }
+
+    try {
+        return [Win32.ETW]::StopTrace($SessionName)
+    }
+    catch {
+        Write-Error "StopTrace for $SessionName failed. $_"
+    }
+
+}
 
 function Start-PSR {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -2034,4 +2208,4 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Save-MicrosoftUpdate, Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Save-MicrosoftUpdate, Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Collect-OutlookInfo
