@@ -239,7 +239,7 @@ function Stop-OutlookTrace {
        return
     }
 
-    Stop-EtwSession $SessionName | Out-Null   
+    Stop-EtwSession $SessionName | Out-Null
 }
 
 function Start-NetshTrace {
@@ -1176,14 +1176,14 @@ function Stop-LdapTrace {
     )
 
     Stop-EtwSession $SessionName | Out-Null
-    
+
     # Remove a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing (ignore any errors)
-    
+
     # Process name must contain the extension such as "Outlook.exe", instead of "Outlook"
     if ([IO.Path]::GetExtension($TargetProcess)  -ne 'exe') {
         $TargetProcess = [IO.Path]::GetFileNameWithoutExtension($TargetProcess) + ".exe"
     }
-    
+
     $keypath = "HKLM:\SYSTEM\CurrentControlSet\Services\ldap\tracing\$TargetProcess"
     Remove-Item $keypath -ErrorAction SilentlyContinue | Out-Null
 }
@@ -1659,22 +1659,64 @@ function Get-OfficeInfo {
         }
     )
 
-    if (-not $officeInstallations) {
+    $displayName = $version = $installPath = $null
+
+    if ($officeInstallations.Count -gt 0) {
+        # Use the latest
+        $latestOffice = $officeInstallations | Sort-Object -Property {[System.Version]$_.Version} -Descending | Select-Object -First 1
+        $displayName = $latestOffice.DisplayName
+        $version = $latestOffice.Version
+        $installPath = $latestOffice.Location
+    }
+    else {
+        Write-Verbose "Cannot find the Office installation from HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall. Fall back to HKLM:\SOFTWARE\Microsoft\Office"
+        $keys =  @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Office\ | Where-Object {[RegEx]::IsMatch($_.PSChildName,'\d\d\.0') -or $_.PSChildName -eq 'ClickToRun' })
+
+        # If 'ClickToRun' exists, use its InstallPath
+        $clickToRun = $keys | Where-Object {$_.PSChildName -eq 'ClickToRun'}
+        if ($clickToRun) {
+            $installPath = Get-ItemProperty $clickToRun.PSPath | Select-Object -ExpandProperty 'InstallPath'
+            $version = Get-ItemProperty (Join-Path $clickToRun.PSPath 'Configuration')| Select-Object -ExpandProperty 'VersionToReport'
+        }
+        else {
+            # Otherwise, check "Common\InstallRoot" key's "Path"
+            foreach ($key in ($keys | Sort-Object -Property PSChildName -Descending)) {
+                $installPath = Get-ItemProperty (Join-Path $key.PSPath 'Common\InstallRoot') -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'Path'
+                if ($installPath) {
+                    $version = $key.PSChildName
+                    break
+                }
+            }
+        }
+    }
+
+    if (-not $installPath){
         Write-Error "Microsoft Office is not installed"
+
+        # This is temporary: Export data for debugging
+        $path = Get-Location | Select-Object -ExpandProperty Path
+        foreach ($key in @('HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall')){
+            $filePath = Join-Path $path -ChildPath "$($key.Replace("\","_")).reg.txt"
+            $(reg export $key $filePath) 2>&1 | Out-Null
+
+            if ($LASTEXITCODE -eq 0) {
+                Write-Warning "Please send $filePath to the engineer."
+            }
+        }
+
         return
     }
 
-    # Use the latest
-    $latestOffice = $officeInstallations | Sort-Object -Property {[System.Version]$_.Version} -Descending | Select-Object -First 1
-
-    $outlookReg = Get-ItemProperty HKLM:'\SOFTWARE\Clients\Mail\Microsoft Outlook' -ErrorAction Stop
-    $mapiDll = Get-ItemProperty $outlookReg.DLLPathEx -ErrorAction Stop
+    $outlookReg = Get-ItemProperty 'HKLM:\SOFTWARE\Clients\Mail\Microsoft Outlook' -ErrorAction SilentlyContinue
+    if ($outlookReg) {
+        $mapiDll = Get-ItemProperty $outlookReg.DLLPathEx -ErrorAction SilentlyContinue
+    }
 
     $Script:OfficeInfoCache =
     New-Object PSCustomObject -Property @{
-        DisplayName = $latestOffice.DisplayName
-        Version = $latestOffice.Version
-        InstallPath = $latestOffice.Location
+        DisplayName = $displayName
+        Version = $version
+        InstallPath = $installPath
         MapiDllFileInfo = $mapiDll
     }
 
