@@ -989,7 +989,7 @@ public static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURR
 
     $userIEProxyConfig = New-Object Win32.WinHttp+WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
     if ([Win32.WinHttp]::WinHttpGetIEProxyConfigForCurrentUser([ref] $userIEProxyConfig)) {
-        $props['UserIEPAutoDetect'] = $userIEProxyConfig.fAutoDetect
+        $props['UserIEAutoDetect'] = $userIEProxyConfig.fAutoDetect
         $props['UserIEAutoConfigUrl'] = $userIEProxyConfig.lpszAutoConfigUrl
         $props['UserIEProxy'] = $userIEProxyConfig.lpszProxy
         $props['UserIEProxyBypass'] = $userIEProxyConfig.lpszProxyBypass
