@@ -12,6 +12,8 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
+$Version = 'v2020-09-24'
+
 # Outlook's ETW pvoviders
 $outlook2016Providers =
 @"
@@ -115,13 +117,19 @@ function Write-Log {
         [string]$Path = $Script:logPath
     )
 
+    # If "logpath" not defined, just output to verbose.
+    if (-not $Path) {
+        Write-Verbose $Text
+        return
+    }
+
     $currentTime = Get-Date
-    $currentTimeFormatted = $currentTime.ToString("yyyy/MM/dd HH:mm:ss.fffffff(K)")
+    $currentTimeFormatted = $currentTime.ToString('o')
 
     if (-not $Script:logWriter) {
         # For the first time, open file & add header
         [IO.StreamWriter]$Script:logWriter = [IO.File]::AppendText($Path)
-        $Script:logWriter.WriteLine("date-time,delta(ms),info")
+        $Script:logWriter.WriteLine("date-time,delta(ms),function,info")
     }
 
     [TimeSpan]$delta = 0;
@@ -129,7 +137,16 @@ function Write-Log {
         $delta = $currentTime.Subtract($Script:lastLogTime)
     }
 
-    $Script:logWriter.WriteLine("$currentTimeFormatted,$($delta.TotalMilliseconds),$text")
+    # Format as CSV:
+    $sb = New-Object System.Text.StringBuilder
+    $sb.Append($currentTimeFormatted).Append(',') | Out-Null
+    $sb.Append($delta.TotalMilliseconds).Append(',') | Out-Null
+    $sb.Append((Get-PSCallStack)[1].Command).Append(',') | Out-Null
+    $sb.Append('"').Append($Text.Replace('"', "'")).Append('"') | Out-Null
+
+    $Script:logWriter.WriteLine($sb.ToString())
+
+    $sb = $null
     $Script:lastLogTime = $currentTime
 }
 
@@ -165,6 +182,7 @@ function Start-WamTrace {
 
     $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
     $logmanCommand = "logman start trace $SessionName -pf `"$providerFile`" -o `"$traceFile`" -bs 128 -max 256 -mode `"$logFileMode`" -ets"
+    Write-Log "Starting a WAM trace. $logmanCommand"
     $logmanResult = Invoke-Expression $logmanCommand
 
     if ($LASTEXITCODE -ne 0) {
@@ -178,7 +196,6 @@ function Stop-WamTrace {
         $SessionName = 'WamTrace'
     )
 
-    Write-Verbose "Stopping WAM trace"
     Stop-EtwSession $SessionName | Out-Null
 }
 
@@ -196,10 +213,10 @@ function Start-OutlookTrace {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
 
-    Write-Verbose "Creating a provider listing according to the version"
     $providerFile = Join-Path $Path -ChildPath 'Office.prov'
     $officeInfo = Get-OfficeInfo -ErrorAction Stop
     $major = $officeInfo.Version.Split('.')[0] -as [int]
+    Write-Log "Creating a provider listing according to the version $major"
 
     switch ($major) {
         14 {Set-Content $outlook2010Providers -Path $providerFile -ErrorAction Stop; break}
@@ -207,8 +224,6 @@ function Start-OutlookTrace {
         16 {Set-Content $outlook2016Providers -Path $providerFile -ErrorAction Stop; break}
         default {throw "Couldn't find the version from $_"}
     }
-
-    Write-Verbose "Starting an ETW session"
 
     # In order to use EVENT_TRACE_FILE_MODE_NEWFILE, file name must contain "%d"
     if ($FileName -notlike "*%d*") {
@@ -220,6 +235,7 @@ function Start-OutlookTrace {
     $logmanCommand = "logman start trace $SessionName -pf `"$providerFile`" -o `"$traceFile`" -bs 128 -max 256 -mode `"$logFileMode`" -ets"
 
     if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME,$logmanCommand)) {
+        Write-Log "Starting an Outlook trace. $logmanCommand"
         $logmanResult = Invoke-Expression $logmanCommand
 
         if ($LASTEXITCODE -ne 0) {
@@ -229,21 +245,14 @@ function Start-OutlookTrace {
 }
 
 function Stop-OutlookTrace {
-    [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         $SessionName = 'OutlookTrace'
     )
-
-    Write-Verbose "Stopping Outlook trace"
-    if (-not $PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Stopping Outlook Trace")) {
-       return
-    }
 
     Stop-EtwSession $SessionName | Out-Null
 }
 
 function Start-NetshTrace {
-    [CmdletBinding(SupportsShouldProcess = $true)]
     param (
         [parameter(Mandatory = $true)]
         $Path,
@@ -268,14 +277,10 @@ function Start-NetshTrace {
     $traceFile = Join-Path $Path -ChildPath $FileName
     $netshCommand = "netsh trace start scenario=$scenario capture=yes tracefile=`"$traceFile`" overwrite=yes maxSize=2000"
 
-    if (-not ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, $netshCommand))) {
-        return
-    }
-
-    Write-Verbose "Clearing dns cache"
+    Write-Log "Clearing dns cache"
     & ipconfig /flushdns | Out-Null
 
-    Write-Verbose "Starting netsh trace. $netshCommand"
+    Write-Log "Starting a netsh trace. $netshCommand"
     $netshResult = Invoke-Expression $netshCommand
     if ($LASTEXITCODE -ne 0) {
         throw "netsh failed to start. exit code = $LASTEXITCODE.`n$netshResult"
@@ -283,15 +288,10 @@ function Start-NetshTrace {
 }
 
 function Stop-NetshTrace {
-    [CmdletBinding(SupportsShouldProcess = $true)]
     param (
         [switch]$SkipCabFile,
         $SessionName = "NetTrace"
     )
-
-    if (-not $PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Stopping netsh trace")) {
-        return
-    }
 
     # Netsh session might not be found right after it started. So repeat with some delay (currently 1 + 2 + 3 = 6 seconds max).
     $maxRetry = 3
@@ -300,7 +300,7 @@ function Stop-NetshTrace {
 
     while ($retry -le $maxRetry -and -not $sessionFound) {
         if ($retry) {
-            Write-Verbose "$SessionName was not found. Retrying after $retry seconds."
+            Write-Log "$SessionName was not found. Retrying after $retry seconds."
             Start-Sleep -Seconds $retry
         }
 
@@ -325,10 +325,11 @@ function Stop-NetshTrace {
 
     if ($SkipCabFile) {
         # Manually stop the session
-        Write-Verbose "Stopping $SessionName with Stop-EtwSession"
+        Write-Log "Stopping $SessionName with Stop-EtwSession"
         Stop-EtwSession -SessionName $SessionName | Out-Null
     }
     else {
+        Write-Log "Stopping $SessionName with netsh trace stop"
         Write-Progress -Activity "Stopping netsh trace" -Status "This might take a while" -PercentComplete -1
         $result = & netsh trace stop
         Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
@@ -546,7 +547,6 @@ function Stop-EtwSession {
 }
 
 function Start-PSR {
-    [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [parameter(Mandatory = $true)]
         $Path,
@@ -563,10 +563,6 @@ function Start-PSR {
         $FileName = [IO.Path]::GetFileNameWithoutExtension($FileName) + '.zip'
     }
 
-    if (-not ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, 'Starting PSR'))) {
-        return
-    }
-
     # For Win7, maxsc is 100
     $maxScreenshotCount = 100
 
@@ -578,6 +574,7 @@ function Start-PSR {
         $maxScreenshotCount = 300
     }
 
+    Write-Log "Starting PSR $(if ($ShowGUI) {"with UI"}). maxScreenshotCount: $maxScreenshotCount"
     $outputFile = Join-Path $Path -ChildPath $FileName
     if ($ShowGUI) {
         & psr /start /maxsc $maxScreenshotCount /maxlogsize 10 /output $outputFile /exitonsave 1
@@ -594,13 +591,8 @@ function Start-PSR {
 }
 
 function Stop-PSR {
-    [CmdletBinding(SupportsShouldProcess = $true)]
-    param (
-    )
-
-    if (-not $PSCmdlet.ShouldProcess($env:COMPUTERNAME, "Stopping PSR")) {
-        return
-    }
+    [CmdletBinding()]
+    param ()
 
     $process = Get-Process -Name psr -ErrorAction SilentlyContinue
     if (-not $process){
@@ -766,7 +758,6 @@ function Compress-Folder {
 }
 
 function Save-EventLog {
-    [CmdletBinding(SupportsShouldProcess = $true)]
     param (
         [Parameter(Mandatory=$true)]
         $Path
@@ -782,10 +773,8 @@ function Save-EventLog {
     foreach ($log in $logs) {
         $fileName = $log.Replace('/', '_') + '.evtx'
         $filePath = Join-Path $Path -ChildPath $fileName
-
-        if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME,"evtutil epl $log $filePath /ow")) {
-            wevtutil epl $log $filePath /ow
-        }
+        Write-Log "Saving $log to $filePath"
+        wevtutil epl $log $filePath /ow
     }
 }
 
@@ -813,8 +802,7 @@ function Get-MicrosoftUpdate {
     }
 
     $result = @(
-        foreach ($key in $productsKey)
-        {
+        foreach ($key in $productsKey) {
             $patches = Get-ChildItem -Path Registry::$($key.Name) | Where-Object {$_.PSChildName -eq 'Patches' -and $_.SubKeyCount -gt 0} | Get-ChildItem | Get-ItemProperty
 
             if (-not $patches) {
@@ -890,6 +878,7 @@ function Save-OfficeRegistry {
             Remove-Item $filePath -Force
         }
 
+        Write-Log "Saving $key to $filePath"
         $err = $(reg export $key $filePath) 2>&1
 
         if ($LASTEXITCODE -ne 0) {
@@ -999,8 +988,8 @@ public static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURR
         Write-Error ("Win32 WinHttpGetIEProxyConfigForCurrentUser failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
     }
 
-    Write-Verbose "UserIE*** properties correspond to WINHTTP_CURRENT_USER_IE_PROXY_CONFIG obtained by WinHttpGetIEProxyConfigForCurrentUser. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info"
-    Write-Verbose "WinHttp*** properties correspond to WINHTTP_PROXY_INFO obtained by WinHttpGetDefaultProxyConfiguration. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config"
+    Write-Log "UserIE*** properties correspond to WINHTTP_CURRENT_USER_IE_PROXY_CONFIG obtained by WinHttpGetIEProxyConfigForCurrentUser. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info"
+    Write-Log "WinHttp*** properties correspond to WINHTTP_PROXY_INFO obtained by WinHttpGetDefaultProxyConfiguration. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config"
 
     New-Object PSCustomObject -Property $props
 }
@@ -1015,10 +1004,10 @@ function Get-NLMConnectivity {
 
     $isConnectedToInternet = $nlm.IsConnectedToInternet
     $conn = $nlm.GetConnectivity()
-    Write-Verbose ("INetworkListManager::GetConnectivity 0x{0:x8}" -f $conn)
+    Write-Log ("INetworkListManager::GetConnectivity 0x{0:x8}" -f $conn)
 
     $refCount = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($nlm);
-    Write-Verbose "Remaining ref count: $refCount"
+    Write-Log "NetworkListManager COM object's remaining ref count: $refCount"
     $nlm = $null
 
     # NLM_CONNECTIVITY enumeration
@@ -1106,12 +1095,12 @@ function Save-CachedAutodiscover {
     $localAppdata = [System.Environment]::ExpandEnvironmentVariables('%LOCALAPPDATA%')
     $cachePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
     if (-not (Test-Path $cachePath)) {
+        Write-Log "$cachePath is not found."
         return
     }
 
     # Get Autodiscover XML files and copy them to Path
-    $files = @(Get-ChildItem $cachePath -Filter *Autod*.xml -Force -Recurse)
-    $files | Copy-Item -Destination $Path
+    Get-ChildItem $cachePath -Filter '*Autod*.xml' -Force -Recurse | Copy-Item -Destination $Path
 
     # Remove Hidden attribute
     foreach ($file in @(Get-ChildItem $Path -Force)) {
@@ -1129,8 +1118,7 @@ function Start-LdapTrace {
     param(
         [Parameter(Mandatory=$true, HelpMessage = "Directory for output file")]
         $Path,
-        [parameter(Mandatory=$true,
-                   HelpMessage = "Process name to trace. e.g. Outlook.exe")]
+        [parameter(Mandatory=$true, HelpMessage = "Process name to trace. e.g. Outlook.exe")]
         $TargetProcess,
         $SessionName = 'LdapTrace'
     )
@@ -1160,6 +1148,7 @@ function Start-LdapTrace {
     # Start ETW session
     $traceFile = Join-Path $Path -ChildPath "ldap_%d.etl"
     $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
+    Write-Log "Starting a LDAP trace"
     $logmanResult = Invoke-Expression "logman create trace $SessionName -ow -o `"$traceFile`" -p Microsoft-Windows-LDAP-Client 0x1a59afa3 0xff -bs 1024 -mode `"$logFileMode`" -max 256 -ets"
 
     if ($LASTEXITCODE -ne 0) {
@@ -1180,7 +1169,7 @@ function Stop-LdapTrace {
     # Remove a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing (ignore any errors)
 
     # Process name must contain the extension such as "Outlook.exe", instead of "Outlook"
-    if ([IO.Path]::GetExtension($TargetProcess)  -ne 'exe') {
+    if ([IO.Path]::GetExtension($TargetProcess) -ne 'exe') {
         $TargetProcess = [IO.Path]::GetFileNameWithoutExtension($TargetProcess) + ".exe"
     }
 
@@ -1189,7 +1178,6 @@ function Stop-LdapTrace {
 }
 
 function Save-OfficeModuleInfo {
-    [CmdletBinding(SupportsShouldProcess = $true)]
     param (
         [parameter(Mandatory = $true)]
         $Path
@@ -1200,11 +1188,7 @@ function Save-OfficeModuleInfo {
     }
 
     # If MS Office is not installed, bail.
-    $officeInfo = Get-OfficeInfo -ErrorAction SilentlyContinue
-    if (-not $officeInfo) {
-        Write-Error "It seems that Microsoft Office (Microsoft 365 Apps) is not installed."
-        return
-    }
+    $officeInfo = Get-OfficeInfo -ErrorAction Stop
 
     $officePaths = @(
         $officeInfo.InstallPath
@@ -1218,16 +1202,12 @@ function Save-OfficeModuleInfo {
         }
     )
 
-    Write-Verbose "officePaths are $officePaths"
+    Write-Log "officePaths are $officePaths"
 
     # Get exe and dll
-    if (-not $PSCmdlet.ShouldProcess($officePaths[0], "Exporting module info")) {
-        return
-    }
-
     $items = @(
         foreach ($officePath in $officePaths) {
-            # ignore errs here.
+            # ignore errors here.
             $($o = Get-ChildItem -Path $officePath\* -Include *.dll,*.exe -Recurse) 2>&1 | Out-Null
             $o
         }
@@ -1302,6 +1282,7 @@ function Start-CAPITrace {
 
     $traceFile = Join-Path $Path -ChildPath 'capi_%d.etl'
     $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
+    Write-Log "Starting a CAPI trace"
     $logmanResult = Invoke-Expression "logman create trace $SessionName -ow -o `"$traceFile`" -p `"Security: SChannel`" 0xffffffffffffffff 0xff -bs 1024 -mode `"$logFileMode`" -max 256 -ets"
 
     if ($LASTEXITCODE -ne 0) {
@@ -1353,6 +1334,7 @@ function Start-FiddlerCap {
                 return
             }
 
+            Write-Log "Downloading FiddlerCapSetup.exe"
             $webClient = $null
             try {
                 $webClient = New-Object System.Net.WebClient
@@ -1375,6 +1357,7 @@ function Start-FiddlerCap {
         # Silently extract. Path must be absolute.
         $process = $null
         try {
+            Write-Log "Extracting from FiddlerCapSetup"
             Write-Progress -Activity "Extracting from FiddlerCapSetup" -Status "This may take a while. Please wait" -PercentComplete -1
             $err = $($process = Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru) 2>&1
 
@@ -1394,6 +1377,7 @@ function Start-FiddlerCap {
     # Start FiddlerCap.exe
     $process = $null
     try {
+        Write-Log "Starting FiddlerCap"
         $err = $($process = Start-Process $fiddlerExe -PassThru) 2>&1
         if (-not $process -or $process.HasExited) {
             Write-Error "FiddlerCap failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
@@ -1474,6 +1458,7 @@ function Start-Procmon {
         }
 
         if (-not (Test-Path $procmonZipFile)) {
+            Write-Log "Downloading procmon"
             Write-Progress -Activity "Downloading procmon from $procmonDownloadUrl" -Status "Please wait" -PercentComplete -1
             $webClient = $null
             try {
@@ -1500,7 +1485,7 @@ function Start-Procmon {
             $NETFileSystemAvailable = $true
         }
         catch {
-            Write-Verbose "System.IO.Compression.FileSystem isn't found. Using alternate method"
+            Write-Log "System.IO.Compression.FileSystem isn't found. Using alternate method"
         }
 
         if ($NETFileSystemAvailable) {
@@ -1522,6 +1507,7 @@ function Start-Procmon {
     $pmlFile = Join-Path $Path -ChildPath $PmlFileName
 
     # Start procmon.exe or procmon64.exe depending on the native arch.
+    Write-Log "Starting procmon"
     $process = $null
     $err = $($process = Start-Process $procmonFile -ArgumentList "/AcceptEula /Minimized /Quiet /NoFilter /BackingFile `"$pmlFile`"" -PassThru) 2>&1
 
@@ -1537,7 +1523,7 @@ function Start-Procmon {
         }
     }
 
-    Write-Verbose "Procmon successfully started"
+    Write-Log "Procmon successfully started"
     New-Object PSObject -Property @{
         ProcmonPath = $procmonFile
         ProcmonProcessId = $process.Id
@@ -1564,6 +1550,7 @@ function Stop-Procmon {
     }
 
     # Stop procmon
+    Write-Log "Stopping procmon"
     Write-Progress -Activity "Stopping procmon" -Status "Please wait" -PercentComplete -1
     $process = $null
     try {
@@ -1595,6 +1582,7 @@ function Start-TcoTrace {
         New-Item $keypath -ErrorAction Stop | Out-Null
     }
 
+    Write-Log "Starting a TCO trace by setting up $keypath"
     New-ItemProperty $keypath -Name 'TCOTrace' -PropertyType DWORD -Value 7 -ErrorAction SilentlyContinue | Out-Null
     New-ItemProperty $keypath -Name 'MsoHttpVerbose' -PropertyType DWORD -Value 1 -ErrorAction SilentlyContinue | Out-Null
 
@@ -1669,10 +1657,10 @@ function Get-OfficeInfo {
         $installPath = $latestOffice.Location
     }
     else {
-        Write-Verbose "Cannot find the Office installation from HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall. Fall back to HKLM:\SOFTWARE\Microsoft\Office"
+        Write-Log "Cannot find the Office installation from HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall. Fall back to HKLM:\SOFTWARE\Microsoft\Office"
         $keys =  @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Office\ | Where-Object {[RegEx]::IsMatch($_.PSChildName,'\d\d\.0') -or $_.PSChildName -eq 'ClickToRun' })
 
-        # If 'ClickToRun' exists, use its InstallPath
+        # If 'ClickToRun' exists, use its "InstallPath" & "VersionToReport".
         $clickToRun = $keys | Where-Object {$_.PSChildName -eq 'ClickToRun'}
         if ($clickToRun) {
             $installPath = Get-ItemProperty $clickToRun.PSPath | Select-Object -ExpandProperty 'InstallPath'
@@ -1740,13 +1728,13 @@ function Add-WerDumpKey {
 
     # Check if $TargetProcess ends with ".exe".
     if (-not $TargetProcess.EndsWith(".exe")) {
-        Write-Verbose "$TargetProcess does not end with '.exe'.  Adding '.exe'"
+        Write-Log "$TargetProcess does not end with '.exe'.  Adding '.exe'"
         $TargetProcess += '.exe'
     }
 
     # Create a key 'LocalDumps' under HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps, if it doesn't exist
     $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
-    if (-not(Test-Path (Join-Path $werKey 'LocalDumps'))) {
+    if (-not (Test-Path (Join-Path $werKey 'LocalDumps'))) {
         New-Item $werKey -Name 'LocalDumps' -ErrorAction Stop | Out-Null
     }
 
@@ -1758,6 +1746,7 @@ function Add-WerDumpKey {
 
     # Create "CustomDumpFlags", "DumpType", and "DumpFolder" values in ProcessName key
     $ProcessKey = Join-Path $localDumpsKey $TargetProcess
+    Write-Log "Setting up $ProcessKey with CustomDumpFlags:0x61826, DumpType:0, DumpFolder:$Path"
     # -Force will overwrite existing value
     # 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4)| MiniDumpWithFullMemory (2)
     New-ItemProperty $ProcessKey -Name 'CustomDumpFlags' -Value 0x00061826 -Force -ErrorAction Stop | Out-Null
@@ -1777,6 +1766,7 @@ function Add-WerDumpKey {
 
     foreach ($installedKey in $pcHealth) {
         if (Test-Path $installedKey) {
+            Write-Log "Temporarily renaming $installedKey to `"_Installed`""
             Rename-Item $installedKey -NewName '_Installed'
         }
     }
@@ -1791,7 +1781,7 @@ function Remove-WerDumpKey {
 
     # Check if $TargetProcess ends with ".exe".
     if (-not $TargetProcess.EndsWith(".exe")) {
-        Write-Verbose "$TargetProcess does not end with '.exe'.  Adding '.exe'"
+        Write-Log "$TargetProcess does not end with '.exe'.  Adding '.exe'"
         $TargetProcess += '.exe'
     }
 
@@ -1800,6 +1790,7 @@ function Remove-WerDumpKey {
     $ProcessKey = Join-Path $localDumpsKey $TargetProcess
 
     if (Test-Path $ProcessKey) {
+        Write-Log "Removing $ProcessKey"
         Remove-Item $ProcessKey
     }
     else {
@@ -1809,16 +1800,17 @@ function Remove-WerDumpKey {
     # Rename DW "_Installed" keys back to "Installed"
     $pcHealth = @(
         # For C2R
-        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
-        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
+        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
 
         # For MSI
-        'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
-        'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+        'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
+        'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
     )
 
     foreach ($installedKey in $pcHealth) {
         if (Test-Path $installedKey) {
+            Write-Log "Renaming $installedKey back to `"Installed`""
             Rename-Item $installedKey -NewName 'Installed'
         }
     }
@@ -1839,6 +1831,7 @@ function Start-WfpTrace {
     }
     $Path = Resolve-Path $Path
 
+    Write-Log "Starting a WFP job"
     $job = Start-Job -ScriptBlock {
         param($Path, $IntervalSeconds, $MaxDuration)
 
@@ -1886,7 +1879,6 @@ function Save-Dump {
         [int]$ProcessId
     )
 
-    # Define a class to import MiniDumpWriteDump.
    <#
     The Native signature:
     see https://docs.microsoft.com/en-us/windows/win32/api/minidumpapiset/nf-minidumpapiset-minidumpwritedump
@@ -1935,6 +1927,7 @@ function Save-Dump {
         $dumpFileStream = [System.IO.File]::Create($dumpFile)
         $writeDumpSuccess = $false
 
+        Write-Log "Calling Win32 MiniDumpWriteDump"
         # Note: 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4) | MiniDumpWithFullMemory (2)
         if ([Win32.DbgHelp]::MiniDumpWriteDump($process.Handle, $ProcessId, $dumpFileStream.Handle, 0x61826, [IntPtr]::Zero, [IntPtr]::Zero,[ IntPtr]::Zero)) {
             New-Object PSObject -Property @{
@@ -1993,6 +1986,7 @@ function Save-MSIPC {
             New-Item -ItemType Directory $dest -ErrorAction Stop | Out-Null
         }
 
+        Write-Log "Copying $($folder.FullName) to $dest"
         Copy-Item (Join-Path $folder.FullName '*') -Destination $dest -Recurse
     }
 }
@@ -2033,7 +2027,20 @@ function Collect-OutlookInfo {
     $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
     New-Item $tempPath -ItemType directory -ErrorAction Stop | Out-Null
 
-    Write-Verbose "Starting traces"
+    # Define log file path
+    $Script:logPath = Join-Path -Path $tempPath -ChildPath 'Log.txt'
+    Write-Log "Script Version = $version"
+
+    $sb = New-Object System.Text.StringBuilder
+    foreach ($paramName in $PSBoundParameters.Keys) {
+        $var = Get-Variable $paramName -ErrorAction SilentlyContinue
+        if ($var) {
+            $sb.Append("$($var.Name):$($var.Value); ") | Out-Null
+        }
+    }
+    Write-Log "Parameters $($sb.ToString())"
+
+    Write-Log "Starting traces"
     try {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 0
@@ -2126,7 +2133,7 @@ function Collect-OutlookInfo {
                 Write-Progress -Activity "Saving a memory dump of Outlook ($i/$DumpCount)." -Status "Please wait." -PercentComplete -1
                 $dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $process.Id
                 Write-Progress -Activity "Saving a memory dump of Outlook ($i/$DumpCount)." -Status "Done" -Completed
-                Write-Verbose "Saved dump file: $($dumpResult.DumpFile)"
+                Write-Log "Saved dump file: $($dumpResult.DumpFile)"
 
                 # If there are more dumps to save, wait.
                 if ($i -lt ($DumpCount - 1)) {
@@ -2173,6 +2180,7 @@ function Collect-OutlookInfo {
         }
 
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted){
+            Write-Log "Waiting for the user to stop"
             Read-Host "Hit enter to stop"
         }
     }
@@ -2227,10 +2235,14 @@ function Collect-OutlookInfo {
             Write-Warning "Please stop FiddlerCap and save the capture manually."
         }
 
-        Write-Progress -Activity 'Stopping' -Status 'Please wait.' -Completed
-    }
+        # Save the event logs after tracing is done
+        if ($Component -contains 'Configuration' -or $Component -contains 'All') {
+            Save-EventLog -Path (Join-Path $tempPath 'EventLog')
+        }
 
-    Save-EventLog -Path (Join-Path $tempPath 'EventLog')
+        Write-Progress -Activity 'Stopping' -Status 'Please wait.' -Completed
+        Close-Log
+    }
 
     $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
     Compress-Folder -Path $tempPath -ZipFileName $zipFileName -Destination $Path -RemoveFiles | Out-Null
