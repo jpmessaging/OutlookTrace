@@ -2037,9 +2037,8 @@ function Collect-OutlookInfo {
     try {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 0
-            Save-EventLog -Path (Join-Path $tempPath 'EventLog')
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
             Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
             Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 30
             Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
@@ -2230,6 +2229,8 @@ function Collect-OutlookInfo {
 
         Write-Progress -Activity 'Stopping' -Status 'Please wait.' -Completed
     }
+
+    Save-EventLog -Path (Join-Path $tempPath 'EventLog')
 
     $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
     Compress-Folder -Path $tempPath -ZipFileName $zipFileName -Destination $Path -RemoveFiles | Out-Null
