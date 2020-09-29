@@ -1624,32 +1624,87 @@ function Stop-TcoTrace {
 
 function Get-OfficeInfo {
     [CmdletBinding()]
-    param()
+    param(
+        [switch]$IgnoreCache
+    )
 
     # Use the cache if it's available
-    if ($Script:OfficeInfoCache) {
+    if ($Script:OfficeInfoCache -and -not $IgnoreCache.IsPresent) {
+        Write-Log "Returning a cache"
         return $Script:OfficeInfoCache
     }
 
-    # There might be more than one version of Office installed.
-    $officeInstallations = @(
-        foreach ($install in @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall) + @(Get-ChildItem HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall)){
-            $prop = Get-ItemProperty $install.PsPath
-            if (($prop.DisplayName -like "Microsoft Office*" -or $prop.DisplayName -like "Microsoft 365 Apps*") -and $prop.DisplayIcon -and $prop.ModifyPath -notlike "*MUI*") {
-                New-Object PSObject -Property @{
-                    Version = $prop.DisplayVersion
-                    Location = $prop.InstallLocation
-                    DisplayName = $prop.DisplayName
-                    ModifyPath = $prop.ModifyPath
-                    DisplayIcon = $prop.DisplayIcon
+    # For .NET 4.0 and above, you can use [Microsoft.Win32.RegistryView]::Registry64 (KEY_WOW64_64KEY)
+    if ('Microsoft.Win32.RegistryView' -as [type]) {
+        Write-Log "Using [Microsoft.Win32.RegistryView]::Registry64"
+
+        $officeInstallations = @(
+            $uninstallKey = $null
+            try {
+                $hklm = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64);
+                $uninstallKey = $hklm.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall')
+
+                foreach ($subKeyName in $uninstallKey.GetSubKeyNames())
+                {
+                    if ($null -eq $subKeyName) {
+                        continue
+                    }
+
+                    $subKey = $uninstallKey.OpenSubKey($subKeyName)
+                    $displayName = $subKey.GetValue('DisplayName')
+                    $displayIcon = $subKey.GetValue('DisplayIcon')
+                    $modifyPath =  $subKey.GetValue('ModifyPath')
+
+                    if (($displayName -like "Microsoft Office*" -or $displayName  -like "Microsoft 365 Apps*") -and $displayIcon -and $modifyPath -notlike "*MUI*") {
+                        New-Object PSObject -Property @{
+                            Version = $subKey.GetValue('DisplayVersion')
+                            Location = $subKey.GetValue('InstallLocation')
+                            DisplayName = $displayName
+                            ModifyPath = $modifyPath
+                            DisplayIcon = $displayIcon
+                        }
+                    }
+                    $subKey.Close()
                 }
             }
+            finally {
+                if ($uninstallKey) {
+                    $uninstallKey.Close()
+                }
+
+                if ($hklm) {
+                    $hklm.Close()
+                }
+            }
+        )
+    }
+    else {
+        # Make sure to use 64bit PowerShell for 64 OS; otherwise registry redirection will force to WOW6432Node.
+        if ($env:PROCESSOR_ARCHITEW6432 -eq 'AMD64') {
+            Write-Error "32bit PowerShell is running on 64bit machine. Please use 64bit PowerShell."
+            return
         }
-    )
+
+        $officeInstallations = @(
+            foreach ($install in @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall) + @(Get-ChildItem HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall)){
+                $prop = Get-ItemProperty $install.PsPath
+                if (($prop.DisplayName -like "Microsoft Office*" -or $prop.DisplayName -like "Microsoft 365 Apps*") -and $prop.DisplayIcon -and $prop.ModifyPath -notlike "*MUI*") {
+                    New-Object PSObject -Property @{
+                        Version = $prop.DisplayVersion
+                        Location = $prop.InstallLocation
+                        DisplayName = $prop.DisplayName
+                        ModifyPath = $prop.ModifyPath
+                        DisplayIcon = $prop.DisplayIcon
+                    }
+                }
+            }
+        )
+    }
 
     $displayName = $version = $installPath = $null
 
     if ($officeInstallations.Count -gt 0) {
+        # There might be more than one version of Office installed.
         # Use the latest
         $latestOffice = $officeInstallations | Sort-Object -Property {[System.Version]$_.Version} -Descending | Select-Object -First 1
         $displayName = $latestOffice.DisplayName
@@ -2014,8 +2069,9 @@ function Collect-OutlookInfo {
     # MS Office must be installed to collect Outlook & TCO.
     # This is just a fail fast. Start-OutlookTrace/TCOTrace fail anyway.
     if ($Component -contains 'Outlook' -or $Component -contains 'TCO' -or $Component -contains 'All') {
-        if (-not (Get-OfficeInfo -ErrorAction SilentlyContinue)) {
-            throw "Component `"Outlook`" and/or `"TCO`" is specified, but Microsoft Office is not installed."
+        $err = $(Get-OfficeInfo | Out-Null) 2>&1
+        if ($err) {
+            throw "Component `"Outlook`" and/or `"TCO`" is specified, but installation of Microsoft Office is not found. $err"
         }
     }
 
@@ -2029,7 +2085,7 @@ function Collect-OutlookInfo {
 
     # Define log file path
     $Script:logPath = Join-Path -Path $tempPath -ChildPath 'Log.txt'
-    Write-Log "Script Version = $version"
+    Write-Log "Script Version = $Script:Version"
 
     $sb = New-Object System.Text.StringBuilder
     foreach ($paramName in $PSBoundParameters.Keys) {
