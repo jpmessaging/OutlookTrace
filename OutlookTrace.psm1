@@ -283,7 +283,8 @@ function Start-NetshTrace {
     Write-Log "Starting a netsh trace. $netshCommand"
     $netshResult = Invoke-Expression $netshCommand
     if ($LASTEXITCODE -ne 0) {
-        throw "netsh failed to start. exit code = $LASTEXITCODE.`n$netshResult"
+        # Make sure to use 64bit PowerShell for 64 OS; otherwise netsh trace is not available.
+        throw "netsh failed to start. exit code = $LASTEXITCODE.`n$netshResult$(if ($env:PROCESSOR_ARCHITEW6432 -eq 'AMD64') {"`n32bit PowerShell is running on 64bit OS. Please use 64bit PowerShell."})"
     }
 }
 
@@ -2075,6 +2076,10 @@ function Collect-OutlookInfo {
         }
     }
 
+    if ($Component -contains 'Netsh' -and $env:PROCESSOR_ARCHITEW6432 -eq 'AMD64') {
+        throw "32bit PowerShell is running on 64bit OS. Please run 64bit PowerShell."
+    }
+
     if (-not (Test-Path $Path -ErrorAction Stop)){
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
@@ -2298,6 +2303,7 @@ function Collect-OutlookInfo {
 
         Write-Progress -Activity 'Stopping' -Status 'Please wait.' -Completed
         Close-Log
+        $Script:logPath = $null
     }
 
     $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
