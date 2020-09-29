@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2020-09-24'
+$Version = 'v2020-09-28'
 
 # Outlook's ETW pvoviders
 $outlook2016Providers =
@@ -2066,6 +2066,10 @@ function Collect-OutlookInfo {
         Write-Warning "Please run as administrator."
         return
     }
+    
+    if ($env:PROCESSOR_ARCHITEW6432 -eq 'AMD64') {
+        throw "32bit PowerShell is running on 64bit OS. Please use 64bit PowerShell."
+    }
 
     # MS Office must be installed to collect Outlook & TCO.
     # This is just a fail fast. Start-OutlookTrace/TCOTrace fail anyway.
@@ -2074,10 +2078,6 @@ function Collect-OutlookInfo {
         if ($err) {
             throw "Component `"Outlook`" and/or `"TCO`" is specified, but installation of Microsoft Office is not found. $err"
         }
-    }
-
-    if ($Component -contains 'Netsh' -and $env:PROCESSOR_ARCHITEW6432 -eq 'AMD64') {
-        throw "32bit PowerShell is running on 64bit OS. Please run 64bit PowerShell."
     }
 
     if (-not (Test-Path $Path -ErrorAction Stop)){
@@ -2090,7 +2090,8 @@ function Collect-OutlookInfo {
 
     # Define log file path
     $Script:logPath = Join-Path -Path $tempPath -ChildPath 'Log.txt'
-    Write-Log "Script Version = $Script:Version"
+    Write-Log "Script Version: $Script:Version"
+    Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
 
     $sb = New-Object System.Text.StringBuilder
     foreach ($paramName in $PSBoundParameters.Keys) {
