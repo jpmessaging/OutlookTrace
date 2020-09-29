@@ -796,10 +796,10 @@ function Get-MicrosoftUpdate {
         15 = 'MSIPATCHSTATE_ALL'
     }
 
-    $productsKey = Get-ChildItem -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products
+    $productsKey = Get-ChildItem -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products -ErrorAction SilentlyContinue
 
     if ($OfficeOnly) {
-        $productsKey = Get-ChildItem -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products | Where-Object {$_.Name -match "F01FEC"}
+        $productsKey = Get-ChildItem -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products -ErrorAction SilentlyContinue | Where-Object {$_.Name -match "F01FEC"}
     }
 
     $result = @(
