@@ -252,6 +252,7 @@ function Stop-OutlookTrace {
     Stop-EtwSession $SessionName | Out-Null
 }
 
+
 function Start-NetshTrace {
     param (
         [parameter(Mandatory = $true)]
@@ -274,8 +275,15 @@ function Start-NetshTrace {
         $scenario = "InternetClient"
     }
 
+    if ($env:PROCESSOR_ARCHITEW6432) {
+        $netshexe = Join-Path $env:SystemRoot 'SysNative\netsh.exe'
+    }
+    else {
+        $netshexe = Join-Path $env:SystemRoot 'System32\netsh.exe'
+    }
+
     $traceFile = Join-Path $Path -ChildPath $FileName
-    $netshCommand = "netsh trace start scenario=$scenario capture=yes tracefile=`"$traceFile`" overwrite=yes maxSize=2000"
+    $netshCommand = "$netshexe trace start scenario=$scenario capture=yes tracefile=`"$traceFile`" overwrite=yes maxSize=2000"
 
     Write-Log "Clearing dns cache"
     & ipconfig /flushdns | Out-Null
@@ -332,7 +340,15 @@ function Stop-NetshTrace {
     else {
         Write-Log "Stopping $SessionName with netsh trace stop"
         Write-Progress -Activity "Stopping netsh trace" -Status "This might take a while" -PercentComplete -1
-        $result = & netsh trace stop
+
+        if ($env:PROCESSOR_ARCHITEW6432) {
+            $netshexe = Join-Path $env:SystemRoot 'SysNative\netsh.exe'
+        }
+        else {
+            $netshexe = Join-Path $env:SystemRoot 'System32\netsh.exe'
+        }
+
+        $result = & $netshexe trace stop
         Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
 
         if ($LASTEXITCODE -ne 0) {
