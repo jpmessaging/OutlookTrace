@@ -1832,6 +1832,10 @@ function Get-OfficeInfo {
             foreach ($key in $keysToSearch) {
                 $uninstallKey = $hklm.OpenSubKey($key)
 
+                if ($null -eq $uninstallKey) {
+                    continue
+                }
+
                 foreach ($subKeyName in $uninstallKey.GetSubKeyNames()) {
                     if ($null -eq $subKeyName) {
                         continue
