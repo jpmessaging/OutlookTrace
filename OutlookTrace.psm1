@@ -196,6 +196,7 @@ function Stop-WamTrace {
         $SessionName = 'WamTrace'
     )
 
+    Write-Log "Stopping $SessionName"
     Stop-EtwSession $SessionName | Out-Null
 }
 
@@ -249,6 +250,7 @@ function Stop-OutlookTrace {
         $SessionName = 'OutlookTrace'
     )
 
+    Write-Log "Stopping $SessionName"
     Stop-EtwSession $SessionName | Out-Null
 }
 
@@ -291,8 +293,7 @@ function Start-NetshTrace {
     Write-Log "Starting a netsh trace. $netshCommand"
     $netshResult = Invoke-Expression $netshCommand
     if ($LASTEXITCODE -ne 0) {
-        # Make sure to use 64bit PowerShell for 64 OS; otherwise netsh trace is not available.
-        throw "netsh failed to start. exit code = $LASTEXITCODE.`n$netshResult$(if ($env:PROCESSOR_ARCHITEW6432 -eq 'AMD64') {"`n32bit PowerShell is running on 64bit OS. Please use 64bit PowerShell."})"
+        throw "netsh failed to start. exit code = $LASTEXITCODE.`n$netshResult"
     }
 }
 
@@ -360,7 +361,7 @@ function Stop-NetshTrace {
     }
 }
 
-# Instead of logman, use Win32 QueryAllTracesW.
+# Instead of logman, use Win32 QueryAllTracesW, StopTraceW.
 # https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-queryalltracesw
 $ETWType = @'
 // https://docs.microsoft.com/en-us/windows/win32/etw/wnode-header
@@ -405,6 +406,13 @@ public struct EventTraceProperties
     public EVENT_TRACE_PROPERTIES Properties;
     public string SessionName;
     public string LogFileName;
+
+    public EventTraceProperties(EVENT_TRACE_PROPERTIES properties, string sessionName, string logFileName)
+    {
+        Properties = properties;
+        SessionName = sessionName;
+        LogFileName = logFileName;
+    }
 }
 
 [DllImport("kernel32.dll")]
@@ -441,7 +449,8 @@ public static List<EventTraceProperties> QueryAllTraces()
 
         for (int i = 0; i < 64; ++i)
         {
-            sessions[i] = pBuffer + (i * PropertiesSize);
+            //sessions[i] = pBuffer + (i * PropertiesSize); // This does not compile in .NET 2.0
+            sessions[i] = new IntPtr(pBuffer.ToInt64() + (i * PropertiesSize));
 
             // Marshal from managed to native
             EVENT_TRACE_PROPERTIES props = new EVENT_TRACE_PROPERTIES();
@@ -452,7 +461,7 @@ public static List<EventTraceProperties> QueryAllTraces()
         }
 
         int loggerCount = 0;
-        var status = QueryAllTracesW( sessions, MAX_SESSIONS, ref loggerCount);
+        int status = QueryAllTracesW( sessions, MAX_SESSIONS, ref loggerCount);
 
         if (status != ERROR_SUCCESS)
         {
@@ -464,10 +473,11 @@ public static List<EventTraceProperties> QueryAllTraces()
         {
             // Marshal back from native to managed.
             EVENT_TRACE_PROPERTIES props = (EVENT_TRACE_PROPERTIES)Marshal.PtrToStructure(sessions[i], typeof(EVENT_TRACE_PROPERTIES));
-            string sessionName = Marshal.PtrToStringUni(sessions[i] + LoggerNameOffset);
-            string logFileName = Marshal.PtrToStringUni(sessions[i] + LogFileNameOffset);
+            string sessionName = Marshal.PtrToStringUni(new IntPtr(sessions[i].ToInt64() + LoggerNameOffset));
+            string logFileName = Marshal.PtrToStringUni(new IntPtr(sessions[i].ToInt64() + LogFileNameOffset));
 
-            eventProperties.Add(new EventTraceProperties { Properties = props, SessionName = sessionName, LogFileName = logFileName });
+            //eventProperties.Add(new EventTraceProperties { Properties = props, SessionName = sessionName, LogFileName = logFileName });
+            eventProperties.Add(new EventTraceProperties(props,sessionName, logFileName));
         }
     }
     finally
@@ -506,9 +516,11 @@ public static EventTraceProperties StopTrace(string SessionName)
         }
 
         props = (EVENT_TRACE_PROPERTIES)Marshal.PtrToStructure(pProps, typeof(EVENT_TRACE_PROPERTIES));
-        string sessionName = Marshal.PtrToStringUni(pProps + LoggerNameOffset);
-        string logFileName = Marshal.PtrToStringUni(pProps + LogFileNameOffset);
-        return new EventTraceProperties { Properties = props, SessionName = sessionName, LogFileName = logFileName };
+        string sessionName = Marshal.PtrToStringUni(new IntPtr(pProps.ToInt64() + LoggerNameOffset));
+        string logFileName = Marshal.PtrToStringUni(new IntPtr(pProps.ToInt64() + LogFileNameOffset));
+
+        //return new EventTraceProperties { Properties = props, SessionName = sessionName, LogFileName = logFileName };
+        return new EventTraceProperties(props, sessionName, logFileName);
     }
     finally
     {
@@ -524,7 +536,6 @@ public static EventTraceProperties StopTrace(string SessionName)
     }
 }
 '@
-
 
 function Get-EtwSession {
     [CmdletBinding()]
@@ -795,7 +806,7 @@ function Save-EventLog {
     }
 }
 
-function Get-MicrosoftUpdate {
+function Get-MicrosoftUpdate_old {
     [CmdletBinding()]
     param(
         [switch]$OfficeOnly,
@@ -856,6 +867,110 @@ function Get-MicrosoftUpdate {
     $result
 }
 
+function Get-MicrosoftUpdate {
+    [CmdletBinding()]
+    param(
+        [switch]$OfficeOnly,
+        [switch]$AppliedOnly
+    )
+
+    # Constants
+    # https://docs.microsoft.com/en-us/windows/desktop/api/msi/nf-msi-msienumpatchesexa
+    $PatchState = @{
+        1 = 'MSIPATCHSTATE_APPLIED'
+        2 = 'MSIPATCHSTATE_SUPERSEDED'
+        4 = 'MSIPATCHSTATE_OBSOLETED'
+        8 = 'MSIPATCHSTATE_REGISTERED'
+        15 = 'MSIPATCHSTATE_ALL'
+    }
+
+    # if ($env:PROCESSOR_ARCHITEW6432 -and -not ('Microsoft.Win32.RegistryView' -as [type])) {
+    #     Write-Error "32bit PowerShell is running on 64bit OS and .NET 4.0 is not used. Please run 64bit PowerShell."
+    #     return
+    # }
+
+    $hklm = $productsKey = $null
+    try {
+        # Use .NET registry API (with [RegistryView]::Registry64) instead of PowerShell here to avoid registry redirection occurs on 32bit PowerShell on 64bit OS for HKLM\SOFTWARE.
+        if ('Microsoft.Win32.RegistryView' -as [type]) {
+            $hklm = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64);
+        }
+        elseif (-not $env:PROCESSOR_ARCHITEW6432) {
+            # RegistryView is not available, but it's OK because no WOW64.
+            $hklm = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [string]::Empty);
+        }
+        else {
+            # This is the case where registry rediction takes place (32bit PowerShell on 64bit OS). Bail.
+            Write-Error "32bit PowerShell is running on 64bit OS and .NET 4.0 is not used. Please run 64bit PowerShell."
+            return
+        }
+
+        $productsKey = $hklm.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products')
+
+        foreach ($productName in $productsKey.GetSubKeyNames()) {
+            if ($null -eq $productName -or ($OfficeOnly -and $productName -notmatch 'F01FEC')) {
+                continue
+            }
+
+            $productKey = $productsKey.OpenSubKey($productName)
+
+            foreach ($subkeyName in $productKey.GetSubKeyNames()) {
+                if ($subkeyName -ne 'Patches') {
+                    continue
+                }
+
+                $patchesKey = $productKey.OpenSubKey($subkeyName)
+                foreach ($patchName in $patchesKey.GetSubKeyNames()) {
+                    $patchKey = $patchesKey.OpenSubKey($patchName)
+
+                    $state = $patchKey.GetValue('State')
+
+                    if ($AppliedOnly -and $PatchState[$state] -ne 'MSIPATCHSTATE_APPLIED') {
+                        continue
+                    }
+
+                    $displayName = $patchKey.GetValue('DisplayName')
+                    $moreInfoURL = $patchKey.GetValue('MoreInfoURL')
+                    $installed = $patchKey.GetValue('Installed')
+
+                    if (-not $displayName -and -not $moreInfoURL) {
+                        continue
+                    }
+
+                    # extract KB number
+                    $KB = $null
+                    if ($moreInfoURL -match 'https?://support.microsoft.com/kb/(?<KB>\d+)') {
+                        $KB = $Matches['KB']
+                    }
+
+                    New-Object PSCustomObject -Property @{
+                        DisplayName = $displayName
+                        KB = $KB
+                        MoreInfoURL = $moreInfoURL
+                        Installed = $installed
+                        PatchState = $PatchState[$state]
+                    }
+
+                    $patchKey.Close()
+                }
+
+                $patchesKey.Close()
+            }
+
+            $productKey.Close()
+        }
+    }
+    finally {
+        if ($productsKey) {
+            $productsKey.Close()
+        }
+
+        if ($hklm) {
+            $hklm.Close()
+        }
+    }
+}
+
 function Save-MicrosoftUpdate {
     [CmdletBinding()]
     param(
@@ -884,25 +999,49 @@ function Save-OfficeRegistry {
     }
 
     $registryKeys = @(
-        "HKCU\Software\Microsoft\Office",
-        "HKCU\Software\Policies\Microsoft\Office",
-        "HKLM\Software\Microsoft\Office",
-        "HKLM\Software\PoliciesMicrosoft\Office")
+        "HKCU:\SOFTWARE\Microsoft\Office"
+        "HKCU:\SOFTWARE\Policies\Microsoft\Office"
+        "HKCU:\SOFTWARE\Wow6432Node\Microsoft\Office"
+        "HKCU:\SOFTWARE\Wow6432Node\Policies\Microsoft\Office"
+        "HKLM:\SOFTWARE\Microsoft\Office"
+        "HKLM:\SOFTWARE\PoliciesMicrosoft\Office"
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Office"
+        "HKLM:\SOFTWARE\WOW6432Node\Policies\Microsoft\Office"
+        )
+
+    # Make sure NOT to use WOW64 version of reg.exe when running on 32bit PowerShell on 64bit OS.
+    # I could use "/reg:64" option of reg.exe, but it's not available for Win7.
+    if ($env:PROCESSOR_ARCHITEW6432) {
+        $regexe = Join-Path $env:SystemRoot 'SysNative\reg.exe'
+    }
+    else {
+        $regexe = Join-Path $env:SystemRoot 'System32\reg.exe'
+    }
 
     foreach ($key in $registryKeys) {
-        $filePath = Join-Path $Path -ChildPath "$($key.Replace("\","_")).reg"
+        $err = $($queryResult = & $regexe Query $key.Replace(':', '')) 2>&1
+        if ($null -eq $queryResult) {
+            Write-Log "$key does not exist"
+            continue;
+        }
+
+        # Cannot use Test-Path because when running 32bit PS on 64bit OS, HKLM\Software is redirected to WOW6432Node
+        # if (-not (Test-Path $key)) {
+        #     Write-Log "$key does not exist"
+        #     continue
+        # }
+
+        $filePath = Join-Path $Path -ChildPath "$($key.Replace("\","_").Replace(':','')).reg"
+
         if (Test-Path $filePath) {
             Remove-Item $filePath -Force
         }
 
         Write-Log "Saving $key to $filePath"
-        $err = $(reg export $key $filePath) 2>&1
+        $err = $(& $regexe export $key.Replace(':','') $filePath | Out-Null) 2>&1
 
         if ($LASTEXITCODE -ne 0) {
-            # keys under Policies may not exist. So ignore.
-            if ($key -notlike "*Policies*") {
-                Write-Error "$key is not exported. exit code = $LASTEXITCODE. $err"
-            }
+            Write-Error "$key is not exported. exit code = $LASTEXITCODE. $err"
         }
     }
 }
@@ -932,9 +1071,17 @@ function Get-ProxySetting {
     )
 
     # props hold the return object properties.
-    # N.B. GetDefaultProxy won't be really needed, but I'm keeping it for now.
+    $props= @{}
+
     # Get WebProxy class to get IE config
-    $props = @{WebProxyDefault = [System.Net.WebProxy]::GetDefaultProxy()}
+    # N.B. GetDefaultProxy won't be really needed, but I'm keeping it for now.
+    # It's possible that [System.Net.WebProxy]::GetDefaultProxy() throws
+    try {
+        $props['WebProxyDefault'] = [System.Net.WebProxy]::GetDefaultProxy()
+    }
+    catch {
+        Write-Log "$_"
+    }
 
     # Get WinHttp & current user's IE proxy settings.
     # Use Win32 WinHttpGetDefaultProxyConfiguration & WinHttpGetIEProxyConfigForCurrentUser.
@@ -1181,6 +1328,7 @@ function Stop-LdapTrace {
         $TargetProcess
     )
 
+    Write-Log "Stopping $SessionName"
     Stop-EtwSession $SessionName | Out-Null
 
     # Remove a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing (ignore any errors)
@@ -1205,7 +1353,11 @@ function Save-OfficeModuleInfo {
     }
 
     # If MS Office is not installed, bail.
-    $officeInfo = Get-OfficeInfo -ErrorAction Stop
+    $officeInfo = Get-OfficeInfo -ErrorAction SilentlyContinue
+    if (-not $officeInfo) {
+        Write-Error "MS Office is not installed."
+        return
+    }
 
     $officePaths = @(
         $officeInfo.InstallPath
@@ -1319,6 +1471,7 @@ function Stop-CapiTrace {
         $SessionName = 'CapiTrace'
     )
 
+    Write-Log "Stopping $SessionName"
     Stop-EtwSession $SessionName | Out-Null
 }
 
@@ -1630,6 +1783,7 @@ function Stop-TcoTrace {
         return
     }
 
+    Write-Log "Stopping a TCO trace by removing TCOTrace & MsoHttpVerbose from $keypath"
     Remove-ItemProperty $keypath -Name 'TCOTrace' -ErrorAction SilentlyContinue | Out-Null
     Remove-ItemProperty $keypath -Name 'MsoHttpVerbose' -ErrorAction SilentlyContinue | Out-Null
 
@@ -1651,18 +1805,34 @@ function Get-OfficeInfo {
         return $Script:OfficeInfoCache
     }
 
-    # For .NET 4.0 and above, you can use [Microsoft.Win32.RegistryView]::Registry64 (KEY_WOW64_64KEY)
-    if ('Microsoft.Win32.RegistryView' -as [type]) {
-        Write-Log "Using [Microsoft.Win32.RegistryView]::Registry64"
-
-        $officeInstallations = @(
-            $uninstallKey = $null
-            try {
+    $officeInstallations = @(
+        $hklm = $null
+        try {
+            if ('Microsoft.Win32.RegistryView' -as [type]) {
+                Write-Log "Using OpenBaseKey with [Microsoft.Win32.RegistryView]::Registry64"
                 $hklm = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64);
-                $uninstallKey = $hklm.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall')
+            }
+            elseif (-not $env:PROCESSOR_ARCHITEW6432) {
+                # RegistryView is not available, but it's OK because no WOW64.
+                Write-Log "Using OpenRemoteBaseKey"
+                $hklm = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine,[string]::Empty);
+            }
+            else {
+                # This is the case where registry rediction takes place (32bit PowerShell on 64bit OS). Bail.
+                Write-Error "32bit PowerShell 2.0 is running on 64bit OS. Please run 64bit PowerShell."
+                return
+            }
 
-                foreach ($subKeyName in $uninstallKey.GetSubKeyNames())
-                {
+            $keysToSearch = @(
+                'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                    # 32bit MSI is under Wow6432Node.
+                'SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+            )
+
+            foreach ($key in $keysToSearch) {
+                $uninstallKey = $hklm.OpenSubKey($key)
+
+                foreach ($subKeyName in $uninstallKey.GetSubKeyNames()) {
                     if ($null -eq $subKeyName) {
                         continue
                     }
@@ -1683,40 +1853,16 @@ function Get-OfficeInfo {
                     }
                     $subKey.Close()
                 }
-            }
-            finally {
-                if ($uninstallKey) {
-                    $uninstallKey.Close()
-                }
 
-                if ($hklm) {
-                    $hklm.Close()
-                }
+                $uninstallKey.Close()
             }
-        )
-    }
-    else {
-        # Make sure to use 64bit PowerShell for 64 OS; otherwise registry redirection will force to WOW6432Node.
-        if ($env:PROCESSOR_ARCHITEW6432 -eq 'AMD64') {
-            Write-Error "32bit PowerShell is running on 64bit machine. Please use 64bit PowerShell."
-            return
         }
-
-        $officeInstallations = @(
-            foreach ($install in @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall) + @(Get-ChildItem HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall)){
-                $prop = Get-ItemProperty $install.PsPath
-                if (($prop.DisplayName -like "Microsoft Office*" -or $prop.DisplayName -like "Microsoft 365 Apps*") -and $prop.DisplayIcon -and $prop.ModifyPath -notlike "*MUI*") {
-                    New-Object PSObject -Property @{
-                        Version = $prop.DisplayVersion
-                        Location = $prop.InstallLocation
-                        DisplayName = $prop.DisplayName
-                        ModifyPath = $prop.ModifyPath
-                        DisplayIcon = $prop.DisplayIcon
-                    }
-                }
+        finally {
+            if ($hklm) {
+                $hklm.Close()
             }
-        )
-    }
+        }
+    )
 
     $displayName = $version = $installPath = $null
 
@@ -1754,6 +1900,7 @@ function Get-OfficeInfo {
         Write-Error "Microsoft Office is not installed"
 
         # This is temporary: Export data for debugging
+        <#
         $path = Get-Location | Select-Object -ExpandProperty Path
         foreach ($key in @('HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall')){
             $filePath = Join-Path $path -ChildPath "$($key.Replace("\","_")).reg.txt"
@@ -1763,6 +1910,7 @@ function Get-OfficeInfo {
                 Write-Warning "Please send $filePath to the engineer."
             }
         }
+        #>
 
         return
     }
@@ -1937,6 +2085,7 @@ function Stop-WfpTrace {
     $WfpJob
     )
 
+    Write-Log "Stopping a WFP job"
     Stop-Job -Job $WfpJob
     Remove-Job -Job $WfpJob
 }
@@ -2082,9 +2231,9 @@ function Collect-OutlookInfo {
         Write-Warning "Please run as administrator."
         return
     }
-    
-    if ($env:PROCESSOR_ARCHITEW6432 -eq 'AMD64') {
-        throw "32bit PowerShell is running on 64bit OS. Please use 64bit PowerShell."
+
+    if ($env:PROCESSOR_ARCHITEW6432 -and $PSVersionTable.PSVersion.Major -eq 2) {
+        throw "32bit PowerShell 2.0 is running on 64bit OS. Please use 64bit PowerShell."
     }
 
     # MS Office must be installed to collect Outlook & TCO.
@@ -2107,6 +2256,7 @@ function Collect-OutlookInfo {
     # Define log file path
     $Script:logPath = Join-Path -Path $tempPath -ChildPath 'Log.txt'
     Write-Log "Script Version: $Script:Version"
+    Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
 
     $sb = New-Object System.Text.StringBuilder
@@ -2131,6 +2281,7 @@ function Collect-OutlookInfo {
             Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 70
             Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
+            Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OfficeInfo.xml')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 90
             Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
             # Do we need MSInfo32?
@@ -2334,4 +2485,4 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Save-MicrosoftUpdate, Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Collect-OutlookInfo
