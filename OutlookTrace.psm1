@@ -415,14 +415,14 @@ public struct EventTraceProperties
     }
 }
 
-[DllImport("kernel32.dll")]
+[DllImport("kernel32.dll", ExactSpelling = true)]
 public static extern void RtlZeroMemory(IntPtr dst, int length);
 
-[DllImport("Advapi32.dll", SetLastError = true)]
-public static extern int QueryAllTracesW( IntPtr[] PropertyArray, uint PropertyArrayCount, ref int LoggerCount);
+[DllImport("Advapi32.dll", ExactSpelling = true)]
+public static extern int QueryAllTracesW(IntPtr[] PropertyArray, uint PropertyArrayCount, ref int LoggerCount);
 
-[DllImport("Advapi32.dll", SetLastError = true)]
-public static extern int StopTraceW(ulong TraceHandle, IntPtr InstanceName, IntPtr Properties); // TraceHandle is defined as ULONG64
+[DllImport("Advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+public static extern int StopTraceW(ulong TraceHandle, string InstanceName, IntPtr Properties); // TRACEHANDLE is defined as ULONG64
 
 const int MAX_SESSIONS = 64;
 const int MAX_NAME_COUNT = 1024; // max char count for LogFileName & SessionName
@@ -494,12 +494,9 @@ public static List<EventTraceProperties> QueryAllTraces()
 
 public static EventTraceProperties StopTrace(string SessionName)
 {
-    IntPtr pSessionName = IntPtr.Zero;
     IntPtr pProps = IntPtr.Zero;
     try
     {
-        pSessionName = Marshal.StringToCoTaskMemUni(SessionName);
-
         pProps = Marshal.AllocCoTaskMem(PropertiesSize);
         RtlZeroMemory(pProps, PropertiesSize);
 
@@ -509,7 +506,7 @@ public static EventTraceProperties StopTrace(string SessionName)
         props.LogFileNameOffset = LogFileNameOffset;
         Marshal.StructureToPtr(props, pProps, false);
 
-        int status = StopTraceW(0, pSessionName, pProps);
+        int status = StopTraceW(0, SessionName, pProps);
         if (status != ERROR_SUCCESS)
         {
             throw new Win32Exception(status);
@@ -527,11 +524,6 @@ public static EventTraceProperties StopTrace(string SessionName)
         if (pProps != IntPtr.Zero)
         {
             Marshal.FreeCoTaskMem(pProps);
-        }
-
-        if (pSessionName != IntPtr.Zero)
-        {
-            Marshal.FreeCoTaskMem(pSessionName);
         }
     }
 }
@@ -987,6 +979,50 @@ function Save-MicrosoftUpdate {
     Get-MicrosoftUpdate | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
 }
 
+function Get-InstalledUpdate
+{
+    [CmdletBinding()]
+    param()
+
+    # Ask items in AppUpdatesFolder from Shell
+    # FOLDERID_AppUpdates == a305ce99-f527-492b-8b1a-7e76fa98d6e4
+    $shell = $appUpdates = $null
+
+    try {
+        $shell = New-Object -ComObject Shell.Application
+        $appUpdates = $shell.NameSpace('Shell:AppUpdatesFolder')
+        if ($null -eq $appUpdates) {
+            Write-Log "Cannot obtain Shell:AppUpdatesFolder. Probabliy 32bit PowerShell is used on 64bit OS"
+            Write-Error "Cannot obtain Shell:AppUpdatesFolder"
+            return
+        }
+
+        $items = $appUpdates.Items()
+
+        foreach ($item in $items) {
+            # https://docs.microsoft.com/en-us/windows/win32/shell/folder-getdetailsof
+            New-Object PSCustomObject -Property @{
+                Name = $item.Name
+                Program = $appUpdates.GetDetailsOf($item, 2)
+                Version = $appUpdates.GetDetailsOf($item, 3)
+                Publisher = $appUpdates.GetDetailsOf($item, 4)
+                URL = $appUpdates.GetDetailsOf($item, 7)
+                InstalledOn = $appUpdates.GetDetailsOf($item, 12)
+            }
+            [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($item) | Out-Null
+        }
+    }
+    finally {
+        if ($appUpdates) {
+            [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($appUpdates) | Out-Null
+        }
+        if ($shell) {
+            [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($shell) | Out-Null
+        }
+    }
+}
+
+
 function Save-OfficeRegistry {
     [CmdletBinding()]
     param (
@@ -1062,6 +1098,7 @@ function Save-OSConfiguration {
     Get-ProxySetting | Export-Clixml -Path $(Join-Path $Path -ChildPath "ProxySetting.xml")
     Get-NLMConnectivity | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")
     Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")
+    Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")
 }
 
 
@@ -1219,7 +1256,7 @@ function Get-WSCAntivirus {
 
     // https://docs.microsoft.com/en-us/windows/win32/api/wscapi/nf-wscapi-wscgetsecurityproviderhealth
     [DllImport("Wscapi.dll", SetLastError = true)]
-    public static extern uint WscGetSecurityProviderHealth(int Providers, out int pHealth);
+    public static extern int WscGetSecurityProviderHealth(uint Providers, out int pHealth);
 '@
 
     if (-not ('Win32.WSC' -as [type])) {
@@ -1227,7 +1264,7 @@ function Get-WSCAntivirus {
     }
 
     # from Wscapi.h
-    $WSC_SECURITY_PROVIDER_ANTIVIRUS = 4
+    $WSC_SECURITY_PROVIDER_ANTIVIRUS = 4 -as [Uint32]
     [Win32.WSC+WSC_SECURITY_PROVIDER_HEALTH]$health = [Win32.WSC+WSC_SECURITY_PROVIDER_HEALTH]::WSC_SECURITY_PROVIDER_HEALTH_POOR
 
     # This call could fail with a terminating error on the server OS since Wscapi.dll is not available.
@@ -2154,7 +2191,7 @@ function Save-Dump {
 
         Write-Log "Calling Win32 MiniDumpWriteDump"
         # Note: 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4) | MiniDumpWithFullMemory (2)
-        if ([Win32.DbgHelp]::MiniDumpWriteDump($process.Handle, $ProcessId, $dumpFileStream.Handle, 0x61826, [IntPtr]::Zero, [IntPtr]::Zero,[ IntPtr]::Zero)) {
+        if ([Win32.DbgHelp]::MiniDumpWriteDump($process.Handle, $ProcessId, $dumpFileStream.Handle, 0x61826, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)) {
             New-Object PSObject -Property @{
                 ProcessID = $process.Id
                 ProcessName = $process.Name
@@ -2276,17 +2313,19 @@ function Collect-OutlookInfo {
     try {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 0
-            Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
+
+            # Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')
+            # Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
+            
             Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 30
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
             Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 50
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
             Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 70
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
             Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
             Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OfficeInfo.xml')
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 90
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
             Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
             # Do we need MSInfo32?
             # Save-MSInfo32 -Path $tempPath
@@ -2417,6 +2456,12 @@ function Collect-OutlookInfo {
             Read-Host "Hit enter to stop"
         }
     }
+    catch {
+        # Log & save the exception so that I can analyze later. Then rethrow.
+        Write-Log "Exception occured. $_"
+        $_ | Export-CliXml (Join-Path $tempPath 'Exception.xml')
+        throw
+    }
     finally {
         Write-Progress -Activity 'Stopping' -Status "Please wait." -PercentComplete -1
 
@@ -2489,4 +2534,4 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Collect-OutlookInfo
