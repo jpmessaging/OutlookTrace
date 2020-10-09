@@ -461,7 +461,7 @@ public static List<EventTraceProperties> QueryAllTraces()
         }
 
         int loggerCount = 0;
-        int status = QueryAllTracesW( sessions, MAX_SESSIONS, ref loggerCount);
+        int status = QueryAllTracesW(sessions, MAX_SESSIONS, ref loggerCount);
 
         if (status != ERROR_SUCCESS)
         {
@@ -563,7 +563,6 @@ function Stop-EtwSession {
     catch {
         Write-Error "StopTrace for $SessionName failed. $_"
     }
-
 }
 
 function Start-PSR {
@@ -594,7 +593,7 @@ function Start-PSR {
         $maxScreenshotCount = 300
     }
 
-    Write-Log "Starting PSR $(if ($ShowGUI) {"with UI"}). maxScreenshotCount: $maxScreenshotCount"
+    Write-Log "Starting PSR $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
     $outputFile = Join-Path $Path -ChildPath $FileName
     if ($ShowGUI) {
         & psr /start /maxsc $maxScreenshotCount /maxlogsize 10 /output $outputFile /exitonsave 1
@@ -616,10 +615,11 @@ function Stop-PSR {
 
     $process = Get-Process -Name psr -ErrorAction SilentlyContinue
     if (-not $process){
-        Write-Error "There's no psr.exe process"
+        Write-Error 'There is no psr.exe process'
         return
     }
 
+    Write-Log 'Stopping PSR'
     & psr /stop
 
     Wait-Process -InputObject $process
@@ -1035,14 +1035,16 @@ function Save-OfficeRegistry {
     }
 
     $registryKeys = @(
-        "HKCU:\SOFTWARE\Microsoft\Office"
-        "HKCU:\SOFTWARE\Policies\Microsoft\Office"
-        "HKCU:\SOFTWARE\Wow6432Node\Microsoft\Office"
-        "HKCU:\SOFTWARE\Wow6432Node\Policies\Microsoft\Office"
-        "HKLM:\SOFTWARE\Microsoft\Office"
-        "HKLM:\SOFTWARE\PoliciesMicrosoft\Office"
-        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Office"
-        "HKLM:\SOFTWARE\WOW6432Node\Policies\Microsoft\Office"
+        "HKCU:\Software\Microsoft\Exchange"
+        "HKCU:\Software\Policies\Microsoft\Exchange"
+        "HKCU:\Software\Microsoft\Office"
+        "HKCU:\Software\Policies\Microsoft\Office"
+        "HKCU:\Software\Wow6432Node\Microsoft\Office"
+        "HKCU:\Software\Wow6432Node\Policies\Microsoft\Office"
+        "HKLM:\Software\Microsoft\Office"
+        "HKLM:\Software\PoliciesMicrosoft\Office"
+        "HKLM:\Software\WOW6432Node\Microsoft\Office"
+        "HKLM:\Software\WOW6432Node\Policies\Microsoft\Office"
         )
 
     # Make sure NOT to use WOW64 version of reg.exe when running on 32bit PowerShell on 64bit OS.
@@ -2316,7 +2318,7 @@ function Collect-OutlookInfo {
 
             # Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')
             # Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
-            
+
             Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
             Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
