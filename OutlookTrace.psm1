@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2020-10-03'
+$Version = 'v2020-10-25'
 
 # Outlook's ETW pvoviders
 $outlook2016Providers =
@@ -2255,6 +2255,291 @@ function Save-MSIPC {
     }
 }
 
+<#
+.SYNOPSIS
+This function returns an instance of Microsoft.Identity.Client.LogCallback delegate which calls the given scriptblock when LogCallback is invoked.
+#>
+function New-LogCallback {
+    [CmdletBinding()]
+    param (
+    # Scriptblock to be called when MSAL invokes LogCallback
+    [Parameter(Mandatory=$true)]
+    [scriptblock]$Callback,
+
+    # Remaining arguments to be passd to Callback scriptblock via $Event.MessageData
+    [Parameter(ValueFromRemainingArguments)]
+    [object[]]$ArgumentList
+    )
+
+    # Class that exposes an event of type Microsoft.Identity.Client.LogCallback that Register-ObjectEvent can register to.
+    $LogCallbackProxyType = @"
+        using System;
+        using System.Threading;
+        using Microsoft.Identity.Client;
+
+        public sealed class LogCallbackProxy
+        {
+            // This is the exposed event. The sole purpose is for Register-ObjectEvent to hook to.
+            public event LogCallback Logging;
+
+            // This is the LogCallback delegate instance.
+            public LogCallback Callback
+            {
+                get { return new LogCallback(OnLogging); }
+            }
+
+            // Raise the event
+            private void OnLogging(LogLevel level, string message, bool containsPii)
+            {
+                LogCallback temp = Volatile.Read(ref Logging);
+                if (temp != null) {
+                    temp(level, message, containsPii);
+                }
+            }
+        }
+"@
+
+    if (-not ("LogCallbackProxy" -as [type])) {
+        Add-Type $LogCallbackProxyType -ReferencedAssemblies (Join-Path (Split-Path $PSCommandPath) 'modules\Microsoft.Identity.Client.dll')
+    }
+
+    $proxy = New-Object LogCallbackProxy
+    Register-ObjectEvent -InputObject $proxy -EventName Logging -Action $Callback -MessageData $ArgumentList | Out-Null
+
+    $proxy.Callback
+}
+
+<#
+.SYNOPSIS
+Obtains a modern auth token (maybe from a cached one if available).
+
+.NOTES
+You need the following MSAL.NET modules under "modules" sub folder:
+
+ [MSAL.NET](https://www.nuget.org/packages/Microsoft.Identity.Client)
+ [MSAL.NET Extensions](https://www.nuget.org/packages/Microsoft.Identity.Client.Extensions.Msal/)
+
+ Folder structure should look like this:
+
+    SomeFolder
+    |  OutlookTrace.psm1
+    |
+    |- modules
+          Microsoft.Identity.Client.dll
+          Microsoft.Identity.Client.Extensions.Msal.dll
+
+Note about proxy:
+MSAL.NET uses System.Net.Http.HttpClient when calling RequestBase.ResolveAuthorityEndpointsAsync(), which reaches "/common/discovery/instance?api-version=1.1&authorization_endpoint=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fv2.0%2Fauthorize".
+(And this data is cached by Microsoft.Identity.Client.Instance.Discovery.NetworkCacheMetadataProvider in memory. And it won't be fetched next time).
+And it also uses System.Windows.Forms.WebBrowser-derived class (named "CustomWebBrowser") when calling InteractiveRequest.GetTokenResponseAsync() to reach "authorize" endpoint
+e.g. "/common/oauth2/v2.0/authorize?scope=openid+profile+offline_access&response_type=code&client_id=d3590ed6-52b3-4102-aeff-aad2292ab01d&redirect_uri=https%3A%2F%2Flogin.microsoftonline.com%2Fcommon%2Foauth2%2Fnativeclient...
+I can provide the builder's WithHttpClientFactory() with a IMsalHttpClientFactory of a HttpClient with a specific proxy. However I don't think I can do the same for the CustomWebBrowser.
+Thus, in order to use a consistent proxy, it's best to configure the user's default proxy in WinInet.
+
+.LINK
+[AzureAD/microsoft-authentication-library-for-dotnet](https://github.com/AzureAD/microsoft-authentication-library-for-dotnet)
+[AzureAD/microsoft-authentication-extensions-for-dotnet](https://github.com/AzureAD/microsoft-authentication-extensions-for-dotnet)
+
+#>
+function Get-Token {
+    [CmdletBinding()]
+    param(
+    # Client ID (Application ID) of the registered application.
+    [Parameter(Mandatory=$true)]
+    [string]$ClientId,
+
+    # Tenant ID. By default, it uses '/common' endpoint for multi-tenant app. For a single-tenant app, specify the tenant name or GUID (e.g. "contoso.com", "contoso.onmicrosoft.com", "333b3ed5-0ac4-4e75-a1cd-db9e8f593ff3")
+    [string]$TenantId = 'common',
+
+    # Array of scopes to request.  By default, "openid", "profile", and "offline_access" are included.
+    [string[]]$Scopes,
+
+    # Refirect URI for the application. When this is not given, "https://login.microsoftonline.com/common/oauth2/nativeclient" will be used.
+    # Make sure to use the same URI as the one registered for the application.
+    [string]$RedirectUri,
+
+    # Clear the cached token and force to get a new token.
+    [switch]$ClearCache,
+
+    # Enable MSAL logging. Log file will be msal.log under the script folder.
+    [switch]$EnableLogging
+    )
+
+    # Need MSAL.NET DLL under modules
+    # https://github.com/AzureAD/microsoft-authentication-library-for-dotnet
+    # [MSAL.NET](https://www.nuget.org/packages/Microsoft.Identity.Client)
+    if (-not ('Microsoft.Identity.Client.AuthenticationResult' -as [type])) {
+        try {
+            Add-Type -Path (Join-Path (Split-Path $PSCommandPath) 'modules\Microsoft.Identity.Client.dll')
+        }
+        catch {
+            Write-Error $_
+            return
+        }
+    }
+
+    # [MSAL.NET Extensions](https://www.nuget.org/packages/Microsoft.Identity.Client.Extensions.Msal/)
+    if (-not ('Microsoft.Identity.Client.Extensions.Msal.MsalCacheHelper' -as [type])) {
+        try {
+            Add-Type -Path (Join-Path (Split-Path $PSCommandPath) 'modules\Microsoft.Identity.Client.Extensions.Msal.dll')
+        }
+        catch {
+            Write-Error $_
+            return
+        }
+    }
+
+    # Configure & create a PublicClientApplication
+    $builder = [Microsoft.Identity.Client.PublicClientApplicationBuilder]::Create($ClientId).WithAuthority("https://login.microsoftonline.com/$TenantId/")
+
+    if ($RedirectUri) {
+        $builder.WithRedirectUri($RedirectUri) | Out-Null
+    }
+    else {
+        # WithDefaultRedirectUri() makes the redirect_uri "https://login.microsoftonline.com/common/oauth2/nativeclient".
+        # Without it, redirect_uri would be "urn:ietf:wg:oauth:2.0:oob".
+        $builder.WithDefaultRedirectUri() | Out-Null
+    }
+
+    $writer = $null
+
+    if ($EnableLogging) {
+        $logFile = Join-Path (Split-Path $PSCommandPath) 'msal.log'
+        [IO.StreamWriter]$writer = [IO.File]::AppendText($logFile)
+        Write-Verbose "MSAL Loggin is enabled. Log file: $logFile"
+
+        # Add a CSV header line
+        $writer.WriteLine("datetime,level,containsPii,message");
+
+        $builder.WithLogging(
+            # Microsoft.Identity.Client.LogCallback
+            (New-LogCallback {
+                param([Microsoft.Identity.Client.LogLevel]$level, [string]$message, [bool]$containsPii)
+
+                $writer = $Event.MessageData[0]
+                $writer.WriteLine("$((Get-Date).ToString('o')),$level,$containsPii,`"$message`"")
+
+            } -ArgumentList $writer),
+
+            [Microsoft.Identity.Client.LogLevel]::Verbose,
+            # enablePiiLogging
+            $true,
+            # enableDefaultPlatformLogging
+            $false
+        ) | Out-Null
+    }
+
+    $publicClient = $builder.Build()
+
+    # Configure caching
+    $cacheFileName = "msalcache.bin"
+    $cacheDir = Split-Path $PSCommandPath
+    $storagePropertiesBuilder = New-Object Microsoft.Identity.Client.Extensions.Msal.StorageCreationPropertiesBuilder($cacheFileName, $cacheDir, $ClientId)
+    $storageProperties = $storagePropertiesBuilder.Build()
+    $cacheHelper = [Microsoft.Identity.Client.Extensions.Msal.MsalCacheHelper]::CreateAsync($storageProperties).GetAwaiter().GetResult()
+    $cacheHelper.RegisterCache($publicClient.UserTokenCache)
+
+    if ($ClearCache) {
+        $cacheHelper.Clear()
+    }
+
+    # Get an account
+    $firstAccount = $publicClient.GetAccountsAsync().GetAwaiter().GetResult() | Select-Object -First 1
+
+    # By default, MSAL asks for scopes: openid, profile, and offline_access.
+    try {
+        $publicClient.AcquireTokenSilent($Scopes, $firstAccount).ExecuteAsync().GetAwaiter().GetResult()
+    }
+    catch [Microsoft.Identity.Client.MsalUiRequiredException] {
+        try {
+            $publicClient.AcquireTokenInteractive($Scopes).ExecuteAsync().GetAwaiter().GetResult()
+        }
+        catch {
+            Write-Error $_
+        }
+    }
+    catch {
+        Write-Error $_
+    }
+    finally {
+        if ($writer){
+            $writer.Dispose()
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+This function makes an Autodiscover request.
+#>
+function Test-Autodiscover {
+    [CmdletBinding()]
+    param(
+    # Server to send an Autodiscover request. For Exchange Online, use 'outlook.office365.com'
+    [Parameter(Mandatory=$true)]
+    [string]$Server,
+
+    # Target Email address for Autodiscover
+    [Parameter(Mandatory=$true)]
+    [string]$EmailAddress,
+
+    # Legacy auth credential.
+    [Parameter(ParameterSetName='LegacyAuth', Mandatory=$true)]
+    [PSCredential]$Credential,
+
+    # Modern auth access token.
+    # To mock an Office client, use ClientId 'd3590ed6-52b3-4102-aeff-aad2292ab01c' and Scope 'https://outlook.office.com/.default'
+    # e.g. Get-Token -ClientId 'd3590ed6-52b3-4102-aeff-aad2292ab01c' -Scopes 'https://outlook.office.com/.default' -RedirectUri 'urn:ietf:wg:oauth:2.0:oob'
+    [Parameter(ParameterSetName='ModernAuth', Mandatory=$true)]
+    [string]$Token,
+
+    # Proxy Server
+    # e.g. "http://myproxy:8080"
+    [string]$Proxy
+    )
+
+    $body = @"
+<?xml version="1.0" encoding="utf-8"?>
+<Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/requestschema/2006">
+    <Request>
+    <EMailAddress>$EmailAddress</EMailAddress>
+    <AcceptableResponseSchema>http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a</AcceptableResponseSchema>
+    </Request>
+</Autodiscover>
+"@
+
+    # Arguments for Invoke-WebRequest paramters
+    $arguments = @{
+        Method = 'Post'
+        Uri = "https://$Server/autodiscover/autodiscover.xml"
+        Headers =  @{'Content-Type'='text/xml'}
+        Body = $body
+        UseBasicParsing = $true
+    }
+
+
+    switch -Wildcard ($PSCmdlet.ParameterSetName) {
+        'LegacyAuth' {
+            Write-Verbose "Credential is provided. Use it for legacy auth"
+            $arguments['Credential'] = $Credential
+            break
+        }
+
+        'ModernAuth' {
+            Write-Verbose "Token is provided. Use it for modern auth"
+            $arguments['Headers'].Add('Authorization',"Bearer $Token")
+            break
+        }
+    }
+
+    if ($Proxy) {
+        $arguments['Proxy'] = $Proxy
+    }
+
+    Invoke-WebRequest @arguments
+}
+
+
 function Collect-OutlookInfo {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param (
@@ -2536,4 +2821,4 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Collect-OutlookInfo
