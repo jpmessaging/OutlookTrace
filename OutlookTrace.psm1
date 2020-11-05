@@ -12,11 +12,11 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2020-10-25'
+$Version = 'v2020-11-03'
 
 # Outlook's ETW pvoviders
 $outlook2016Providers =
-@"
+@'
 "{9efff48f-728d-45a1-8001-536349a2db37}" 0xFFFFFFFFFFFFFFFF 64
 "{f50d9315-e17e-43c1-8370-3edf6cc057be}" 0xFFFFFFFFFFFFFFFF 64
 "{02fd33df-f746-4a10-93a0-2bc6273bc8e4}" 0x00000015         64
@@ -48,10 +48,10 @@ $outlook2016Providers =
 "{a1b69d49-2195-4f59-9d33-bdf30c0fe473}" 0xFFFFFFFFFFFFFFFF 64
 "{b4f150b4-67db-4742-8846-2cd7b16ee60e}" 0xFFFFFFFFFFFFFFFF 64
 "{8736922d-e8b2-47eb-8564-23e77e728cf3}" 0x00000414         64
-"@
+'@
 
 $outlook2013Providers =
-@"
+@'
 "{284b8d30-4aa6-4a0f-9143-ce2e8e1f10f0}" 0xFFFFFFFFFFFFFFFF 64
 "{02cac15f-d4be-400e-9127-d54982aa4ae9}" 0xFFFFFFFFFFFFFFFF 64
 "{aa8fa310-0939-4ce3-b9bb-ae05b2695110}" 0xFFFFFFFFFFFFFFFF 64
@@ -69,16 +69,16 @@ $outlook2013Providers =
 "{8736922d-e8b2-47eb-8564-23e77e728cf3}" 0x0000014         64
 "{464a42fb-36bd-4749-a67c-02138387138c}" 0xFFFFFFFFFFFFFFFF 64
 "{02fd33df-f746-4a10-93a0-2bc6273bc8e4}" 0xFFFFFFFFFFFFFFFF 64
-"@
+'@
 
 $outlook2010Providers =
-@"
+@'
 "{f94cbe33-31c2-492d-9bf8-573beff84c94}" 0x0FB7FFEF 64
 "{e3c8312d-b20c-4831-995e-5ec5f5522215}" 0x00124586 64
-"@
+'@
 
 $wamProviders =
-@"
+@'
 {077b8c4a-e425-578d-f1ac-6fdf1220ff68}
 {5836994d-a677-53e7-1389-588ad1420cc5}
 {05f02597-fe85-4e67-8542-69567ab8fd4f}
@@ -107,7 +107,7 @@ $wamProviders =
 {25756703-e23b-4647-a3cb-cb24d473c193}
 {569cf830-214c-5629-79a8-4e9b58ea24bc}
 {8BFE6B98-510E-478D-B868-142CD4DEDC1A}
-"@
+'@
 
 function Write-Log {
     [CmdletBinding()]
@@ -246,6 +246,7 @@ function Start-OutlookTrace {
 }
 
 function Stop-OutlookTrace {
+    [CmdletBinding()]
     param(
         $SessionName = 'OutlookTrace'
     )
@@ -256,6 +257,7 @@ function Stop-OutlookTrace {
 
 
 function Start-NetshTrace {
+    [CmdletBinding()]
     param (
         [parameter(Mandatory = $true)]
         $Path,
@@ -298,6 +300,7 @@ function Start-NetshTrace {
 }
 
 function Stop-NetshTrace {
+    [CmdletBinding()]
     param (
         [switch]$SkipCabFile,
         $SessionName = "NetTrace"
@@ -778,6 +781,7 @@ function Compress-Folder {
 }
 
 function Save-EventLog {
+    [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
         $Path
@@ -1097,6 +1101,7 @@ function Save-OSConfiguration {
 
     Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_ComputerSystem.xml")
     Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_OperatingSystem.xml")
+
     Get-ProxySetting | Export-Clixml -Path $(Join-Path $Path -ChildPath "ProxySetting.xml")
     Get-NLMConnectivity | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")
     Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")
@@ -1382,6 +1387,7 @@ function Stop-LdapTrace {
 }
 
 function Save-OfficeModuleInfo {
+    [CmdletBinding()]
     param (
         [parameter(Mandatory = $true)]
         $Path
@@ -2390,7 +2396,7 @@ function Get-Token {
     }
 
     # Configure & create a PublicClientApplication
-    $builder = [Microsoft.Identity.Client.PublicClientApplicationBuilder]::Create($ClientId).WithAuthority("https://login.microsoftonline.com/$TenantId/")
+    $builder = [Microsoft.Identity.Client.PublicClientApplicationBuilder]::Create($ClientId).WithAuthority((New-Object System.Uri "https://login.microsoftonline.com/$TenantId/"), <#validateAuthority#> $false)
 
     if ($RedirectUri) {
         $builder.WithRedirectUri($RedirectUri) | Out-Null
@@ -2517,7 +2523,6 @@ function Test-Autodiscover {
         UseBasicParsing = $true
     }
 
-
     switch -Wildcard ($PSCmdlet.ParameterSetName) {
         'LegacyAuth' {
             Write-Verbose "Credential is provided. Use it for legacy auth"
@@ -2606,14 +2611,20 @@ function Collect-OutlookInfo {
 
             Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
+
             Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
+
             Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
+
             Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
             Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OfficeInfo.xml')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
+
             Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
+            Get-WmiObject -Class Win32_Process | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
+
             # Do we need MSInfo32?
             # Save-MSInfo32 -Path $tempPath
 
@@ -2641,6 +2652,8 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Outlook' -or $Component -contains 'All') {
+            # Stop a lingering session if any.
+            Stop-OutlookTrace -ErrorAction SilentlyContinue
             Start-OutlookTrace -Path (Join-Path $tempPath 'Outlook')
             $outlookTraceStarted = $true
         }
@@ -2666,6 +2679,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'WAM' -or $Component -contains 'All') {
+            Stop-WamTrace -ErrorAction SilentlyContinue
             Start-WamTrace -Path (Join-Path $tempPath 'WAM')
             $wamTraceStarted = $true
         }
@@ -2803,6 +2817,11 @@ function Collect-OutlookInfo {
         # Save the event logs after tracing is done
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Save-EventLog -Path (Join-Path $tempPath 'EventLog')
+        }
+
+        # Save process list again after traces
+        if ($Component -contains 'Configuration' -or $Component -contains 'All') {
+            Get-WmiObject -Class Win32_Process | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
         }
 
         Write-Progress -Activity 'Stopping' -Status 'Please wait.' -Completed
