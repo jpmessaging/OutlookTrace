@@ -154,6 +154,7 @@ function Close-Log {
     if ($Script:logWriter) {
         $Script:logWriter.Close()
         $Script:logWriter = $null
+        $Script:lastLogTime = $null
     }
 }
 
