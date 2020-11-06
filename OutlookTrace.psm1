@@ -573,7 +573,7 @@ function Start-PSR {
     param(
         [parameter(Mandatory = $true)]
         $Path,
-        $FileName = "psr.zip",
+        $FileName = "PSR.zip",
         [switch]$ShowGUI
     )
 
