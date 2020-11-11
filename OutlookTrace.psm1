@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2020-11-03'
+$Version = 'v2020-11-10'
 
 # Outlook's ETW pvoviders
 $outlook2016Providers =
@@ -1007,11 +1007,11 @@ function Get-InstalledUpdate
         foreach ($item in $items) {
             # https://docs.microsoft.com/en-us/windows/win32/shell/folder-getdetailsof
             New-Object PSCustomObject -Property @{
-                Name = $item.Name
-                Program = $appUpdates.GetDetailsOf($item, 2)
-                Version = $appUpdates.GetDetailsOf($item, 3)
-                Publisher = $appUpdates.GetDetailsOf($item, 4)
-                URL = $appUpdates.GetDetailsOf($item, 7)
+                Name        = $item.Name
+                Program     = $appUpdates.GetDetailsOf($item, 2)
+                Version     = $appUpdates.GetDetailsOf($item, 3)
+                Publisher   = $appUpdates.GetDetailsOf($item, 4)
+                URL         = $appUpdates.GetDetailsOf($item, 7)
                 InstalledOn = $appUpdates.GetDetailsOf($item, 12)
             }
             [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($item) | Out-Null
@@ -1027,6 +1027,23 @@ function Get-InstalledUpdate
     }
 }
 
+
+function Get-LogonUser {
+    [CmdletBinding()]
+    param()
+
+    $quserResult = & quser.exe
+    $currentSession = $quserResult | Where-Object {$_.StartsWith('>')} | Select-Object -First 1
+    if (-not $currentSession) {
+        Write-Error "Cannot find current session with quser."
+        return
+    }
+
+    Write-Log "Current session: $currentSession"
+    $match = [Regex]::Match($currentSession, '^>(?<name>.+?)\s{2,}')
+    $userName = $match.Groups['name'].Value
+    Get-WmiObject -Class Win32_UserAccount | Where-Object Name -eq $userName
+}
 
 function Save-OfficeRegistry {
     [CmdletBinding()]
@@ -1049,8 +1066,15 @@ function Save-OfficeRegistry {
         "HKLM:\Software\Microsoft\Office"
         "HKLM:\Software\PoliciesMicrosoft\Office"
         "HKLM:\Software\WOW6432Node\Microsoft\Office"
-        "HKLM:\Software\WOW6432Node\Policies\Microsoft\Office"
-        )
+        "HKLM:\Software\WOW6432Node\Policies\Microsoft\Office")
+
+    $logonUser = Get-LogonUser -ErrorAction SilentlyContinue
+
+    if ($logonUser) {
+        Write-Log "Logon user name: $($logonUser.Name), Sid: $($logonUser.Sid)"
+        $logonUserHKCU = "HKEY_USERS\$($logonUser.Sid)"
+        $registryKeys = $registryKeys | ForEach-Object {$_.Replace("HKCU:", $logonUserHKCU)}
+    }
 
     # Make sure NOT to use WOW64 version of reg.exe when running on 32bit PowerShell on 64bit OS.
     # I could use "/reg:64" option of reg.exe, but it's not available for Win7.
@@ -1114,6 +1138,8 @@ function Get-ProxySetting {
     [CmdletBinding()]
     param(
     )
+
+    Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 
     # props hold the return object properties.
     $props= @{}
@@ -1192,6 +1218,7 @@ public static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURR
         $props['UserIEProxy'] = $userIEProxyConfig.lpszProxy
         $props['UserIEProxyBypass'] = $userIEProxyConfig.lpszProxyBypass
         $props['WINHTTP_CURRENT_USER_IE_PROXY_CONFIG'] = $userIEProxyConfig # for debugging purpuse
+        $props['User'] = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     }
     else {
         Write-Error ("Win32 WinHttpGetIEProxyConfigForCurrentUser failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
@@ -2583,6 +2610,8 @@ function Collect-OutlookInfo {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
+    Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+
     $Path = Resolve-Path $Path
     $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
     New-Item $tempPath -ItemType directory -ErrorAction Stop | Out-Null
@@ -2624,7 +2653,9 @@ function Collect-OutlookInfo {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
 
             Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
-            Get-WmiObject -Class Win32_Process | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
+
+            # Get processes and its user (PowerShell 4's Get-Process has -IncludeUserName, but I'm using WMI here for now).
+            Get-WmiObject -Class Win32_Process | Select-Object *, @{N='User'; E={"$($_.GetOwner().Domain)\$($_.GetOwner().User)"}} | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
 
             # Do we need MSInfo32?
             # Save-MSInfo32 -Path $tempPath
@@ -2822,7 +2853,7 @@ function Collect-OutlookInfo {
 
         # Save process list again after traces
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
-            Get-WmiObject -Class Win32_Process | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
+            Get-WmiObject -Class Win32_Process | Select-Object *, @{N='User'; E={"$($_.GetOwner().Domain)\$($_.GetOwner().User)"}} | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
         }
 
         Write-Progress -Activity 'Stopping' -Status 'Please wait.' -Completed
