@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2020-11-10'
+$Version = 'v2020-11-12'
 
 # Outlook's ETW pvoviders
 $outlook2016Providers =
@@ -1057,23 +1057,23 @@ function Save-OfficeRegistry {
     }
 
     $registryKeys = @(
-        "HKCU:\Software\Microsoft\Exchange"
-        "HKCU:\Software\Policies\Microsoft\Exchange"
-        "HKCU:\Software\Microsoft\Office"
-        "HKCU:\Software\Policies\Microsoft\Office"
-        "HKCU:\Software\Wow6432Node\Microsoft\Office"
-        "HKCU:\Software\Wow6432Node\Policies\Microsoft\Office"
-        "HKLM:\Software\Microsoft\Office"
-        "HKLM:\Software\PoliciesMicrosoft\Office"
-        "HKLM:\Software\WOW6432Node\Microsoft\Office"
-        "HKLM:\Software\WOW6432Node\Policies\Microsoft\Office")
+        "HKCU\Software\Microsoft\Exchange"
+        "HKCU\Software\Policies\Microsoft\Exchange"
+        "HKCU\Software\Microsoft\Office"
+        "HKCU\Software\Policies\Microsoft\Office"
+        "HKCU\Software\Wow6432Node\Microsoft\Office"
+        "HKCU\Software\Wow6432Node\Policies\Microsoft\Office"
+        "HKLM\Software\Microsoft\Office"
+        "HKLM\Software\PoliciesMicrosoft\Office"
+        "HKLM\Software\WOW6432Node\Microsoft\Office"
+        "HKLM\Software\WOW6432Node\Policies\Microsoft\Office")
 
     $logonUser = Get-LogonUser -ErrorAction SilentlyContinue
 
     if ($logonUser) {
-        Write-Log "Logon user name: $($logonUser.Name), Sid: $($logonUser.Sid)"
+        Write-Log "Logon user $($logonUser.Caption) ($($logonUser.Sid))"
         $logonUserHKCU = "HKEY_USERS\$($logonUser.Sid)"
-        $registryKeys = $registryKeys | ForEach-Object {$_.Replace("HKCU:", $logonUserHKCU)}
+        $registryKeys = $registryKeys | ForEach-Object {$_.Replace("HKCU", $logonUserHKCU)}
     }
 
     # Make sure NOT to use WOW64 version of reg.exe when running on 32bit PowerShell on 64bit OS.
@@ -1086,7 +1086,7 @@ function Save-OfficeRegistry {
     }
 
     foreach ($key in $registryKeys) {
-        $err = $($queryResult = & $regexe Query $key.Replace(':', '')) 2>&1
+        $err = $($queryResult = & $regexe Query $key) 2>&1
         if ($null -eq $queryResult) {
             Write-Log "$key does not exist"
             continue;
@@ -1098,14 +1098,14 @@ function Save-OfficeRegistry {
         #     continue
         # }
 
-        $filePath = Join-Path $Path -ChildPath "$($key.Replace("\","_").Replace(':','')).reg"
+        $filePath = Join-Path $Path -ChildPath "$($key.Replace('\','_')).reg"
 
         if (Test-Path $filePath) {
             Remove-Item $filePath -Force
         }
 
         Write-Log "Saving $key to $filePath"
-        $err = $(& $regexe export $key.Replace(':','') $filePath | Out-Null) 2>&1
+        $err = $(& $regexe export $key $filePath | Out-Null) 2>&1
 
         if ($LASTEXITCODE -ne 0) {
             Write-Error "$key is not exported. exit code = $LASTEXITCODE. $err"
@@ -1134,7 +1134,7 @@ function Save-OSConfiguration {
 
     if (Get-Command 'Get-NetIPInterface' -ErrorAction SilentlyContinue) {
         Get-NetIPInterface -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "NetIPInterface.xml")
-    }    
+    }
 }
 
 
@@ -1824,7 +1824,17 @@ function Start-TcoTrace {
     $majorVersion = $officeInfo.Version.Split('.')[0]
 
     # Create registry key & values. Ignore errors (might fail due to existing values)
-    $keypath = "HKCU:\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
+    $logonUser = Get-LogonUser -ErrorAction SilentlyContinue
+    if ($logonUser) {
+        Write-Log "Found a logon user $($logonUser.Caption) ($($logonUser.SID))."
+        $keypath = "Registry::HKEY_USERS\$($logonUser.Sid)\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
+    }
+    else {
+        $keypath = "Registry::HKCU\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
+    }
+
+    Write-Log "Using $keypath."
+
     if (-not (Test-Path $keypath)) {
         New-Item $keypath -ErrorAction Stop | Out-Null
     }
@@ -1854,7 +1864,15 @@ function Stop-TcoTrace {
     $majorVersion = $officeInfo.Version.Split('.')[0]
 
     # Remove registry values
-    $keypath = "HKCU:\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
+    $logonUser = Get-LogonUser -ErrorAction SilentlyContinue
+    if ($logonUser) {
+        Write-Log "Found a logon user $($logonUser.Caption) ($($logonUser.SID))."
+        $keypath = "Registry::HKEY_USERS\$($logonUser.Sid)\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
+    }
+    else {
+        $keypath = "Registry::HKCU\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
+    }
+
     if (-not (Test-Path $keypath)) {
         Write-Warning "$keypath does not exist"
         return
