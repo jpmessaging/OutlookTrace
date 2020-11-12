@@ -1131,6 +1131,10 @@ function Save-OSConfiguration {
     Get-NLMConnectivity | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")
     Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")
     Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")
+
+    if (Get-Command 'Get-NetIPInterface' -ErrorAction SilentlyContinue) {
+        Get-NetIPInterface -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "NetIPInterface.xml")
+    }    
 }
 
 
