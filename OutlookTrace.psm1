@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2020-11-12'
+$Version = 'v2020-11-15'
 
 # Outlook's ETW pvoviders
 $outlook2016Providers =
@@ -152,6 +152,7 @@ function Write-Log {
 
 function Close-Log {
     if ($Script:logWriter) {
+        Write-Log "Closing logWriter."
         $Script:logWriter.Close()
         $Script:logWriter = $null
         $Script:lastLogTime = $null
@@ -181,13 +182,16 @@ function Start-WamTrace {
     }
     $traceFile = Join-Path $Path -ChildPath $FileName
 
+    Write-Log "Starting a WAM trace."
     $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
-    $logmanCommand = "logman start trace $SessionName -pf `"$providerFile`" -o `"$traceFile`" -bs 128 -max 256 -mode `"$logFileMode`" -ets"
-    Write-Log "Starting a WAM trace. $logmanCommand"
-    $logmanResult = Invoke-Expression $logmanCommand
+    $err = $($stdout = Invoke-Command {
+        $ErrorActionPreference = 'Continue'
+        & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max 256 -mode $logFileMode -ets
+    }) 2>&1
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "logman failed to start. exit code = $LASTEXITCODE.`n$logmanResult"
+    if ($err -or $LASTEXITCODE -ne 0) {
+        Write-Error "logman failed. exit code:$LASTEXITCODE; stdout:`"$stdout`"; error:`"$err`""
+        return
     }
 }
 
@@ -215,6 +219,7 @@ function Start-OutlookTrace {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
 
+    $Path = Resolve-Path $Path
     $providerFile = Join-Path $Path -ChildPath 'Office.prov'
     $officeInfo = Get-OfficeInfo -ErrorAction Stop
     $major = $officeInfo.Version.Split('.')[0] -as [int]
@@ -231,17 +236,21 @@ function Start-OutlookTrace {
     if ($FileName -notlike "*%d*") {
         $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
     }
-    $traceFile = Join-Path $Path -ChildPath $FileName
 
+    $traceFile = Join-Path $Path -ChildPath $FileName
     $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
-    $logmanCommand = "logman start trace $SessionName -pf `"$providerFile`" -o `"$traceFile`" -bs 128 -max 256 -mode `"$logFileMode`" -ets"
 
     if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME,$logmanCommand)) {
-        Write-Log "Starting an Outlook trace. $logmanCommand"
-        $logmanResult = Invoke-Expression $logmanCommand
+        Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`"; traceFile:`"$traceFile`"; logFileMode:`"$logFileMode`""
 
-        if ($LASTEXITCODE -ne 0) {
-            throw "logman failed to start. exit code = $LASTEXITCODE.`n$logmanResult"
+        $err = $($stdout = Invoke-Command {
+            $ErrorActionPreference = 'Continue'
+            & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max 256 -mode $logFileMode -ets
+        }) 2>&1
+
+        if ($err -or $LASTEXITCODE -ne 0) {
+            Write-Error "logman failed. exit code:$LASTEXITCODE; stdout:`"$stdout`"; error:`"$err`""
+            return
         }
     }
 }
@@ -287,16 +296,24 @@ function Start-NetshTrace {
         $netshexe = Join-Path $env:SystemRoot 'System32\netsh.exe'
     }
 
-    $traceFile = Join-Path $Path -ChildPath $FileName
-    $netshCommand = "$netshexe trace start scenario=$scenario capture=yes tracefile=`"$traceFile`" overwrite=yes maxSize=2000"
+    if (-not (Get-Command $netshexe -ErrorAction SilentlyContinue)) {
+        Write-Error "Cannot find $netshexe."
+        return
+    }
 
     Write-Log "Clearing dns cache"
     & ipconfig /flushdns | Out-Null
 
-    Write-Log "Starting a netsh trace. $netshCommand"
-    $netshResult = Invoke-Expression $netshCommand
-    if ($LASTEXITCODE -ne 0) {
-        throw "netsh failed to start. exit code = $LASTEXITCODE.`n$netshResult"
+    Write-Log "Starting a netsh trace."
+    $traceFile = Join-Path $Path -ChildPath $FileName
+    $err = $($stdout = Invoke-Command  {
+        $ErrorActionPreference = 'Continue'
+        & $netshexe trace start scenario=$scenario capture=yes tracefile="`"$traceFile`"" overwrite=yes maxSize=2000
+    }) 2>&1
+
+    if ($err -or $LASTEXITCODE -ne 0) {
+        Write-Error "netsh failed.`nexit code: $LASTEXITCODE; stdout: $stdout; error: $err"
+        return
     }
 }
 
@@ -353,15 +370,23 @@ function Stop-NetshTrace {
             $netshexe = Join-Path $env:SystemRoot 'System32\netsh.exe'
         }
 
-        $result = & $netshexe trace stop
-        Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
+        if (-not (Get-Command $netshexe -ErrorAction SilentlyContinue)) {
+            Write-Error "Cannot find $netshexe."
+            return
+        }
 
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to stop netsh trace ($SessionName). exit code = $LASTEXITCODE.`n$local:result"
+        $err = $($stdout = Invoke-Command {
+            $ErrorActionPreference = 'Continue'
+            & $netshexe trace stop
+        }) 2>&1
+
+        if ($err -or $LASTEXITCODE -ne 0) {
+            Write-Error "Failed to stop netsh trace ($SessionName). exit code: $LASTEXITCODE; stdout: $stdout; error: $err"
             # This is temporary for debugging issue "Data Collector Set was not found."
             $sessions
             return
         }
+        Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
     }
 }
 
@@ -593,8 +618,13 @@ function Start-PSR {
     $osMajor = $win32os.Version.Split(".")[0] -as [int]
     $osMinor = $win32os.Version.Split(".")[1] -as [int]
 
-    if ($osMajor -gt 6 -or $osMajor -eq 6 -and $osMinor -ge 3) {
+    if ($osMajor -gt 6 -or ($osMajor -eq 6 -and $osMinor -ge 3)) {
         $maxScreenshotCount = 300
+    }
+
+    if (-not (Get-Command 'psr.exe' -ErrorAction SilentlyContinue)) {
+        Write-Error "psr.exe is not available."
+        return
     }
 
     Write-Log "Starting PSR $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
@@ -609,7 +639,8 @@ function Start-PSR {
     # PSR doesn't return anything even on failure. Check if process is spawned.
     $process = Get-Process -Name psr -ErrorAction SilentlyContinue
     if (-not $process) {
-        throw "PSR failed to start"
+        Write-Error "PSR failed to start"
+        return
     }
 }
 
@@ -767,7 +798,9 @@ function Compress-Folder {
         # If requested, remove zipped files
         if ($RemoveFiles) {
             Write-Verbose "Removing zipped files"
+            Write-Progress -Activity "Cleaning up" -Status "Please wait" -PercentComplete -1
             Get-ChildItem $Path -Exclude $ZipFileName | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Progress -Activity "Cleaning up" -Status "Please wait" -Completed
             $filesRemoved = $true
         }
 
@@ -1032,7 +1065,22 @@ function Get-LogonUser {
     [CmdletBinding()]
     param()
 
-    $quserResult = & quser.exe
+    # quser.exe might not be available.
+    if (-not (Get-Command quser.exe -ErrorAction SilentlyContinue)) {
+        Write-Error "quser.exe is not available."
+        return
+    }
+
+    $err = $($quserResult = Invoke-Command {
+        $ErrorActionPreference = 'Continue'
+        & quser.exe
+    }) 2>&1
+
+    if ($err -or $LASTEXITCODE -ne 0) {
+        Write-Error "quser failed. exit code:$LASTEXITCODE; stdout:`"$quserResult`"; error:`"$err`""
+        return
+    }
+
     $currentSession = $quserResult | Where-Object {$_.StartsWith('>')} | Select-Object -First 1
     if (-not $currentSession) {
         Write-Error "Cannot find current session with quser."
@@ -1068,12 +1116,17 @@ function Save-OfficeRegistry {
         "HKLM\Software\WOW6432Node\Microsoft\Office"
         "HKLM\Software\WOW6432Node\Policies\Microsoft\Office")
 
-    $logonUser = Get-LogonUser -ErrorAction SilentlyContinue
+    $err = $($logonUser = Get-LogonUser -ErrorAction Continue) 2>&1
 
     if ($logonUser) {
         Write-Log "Logon user $($logonUser.Caption) ($($logonUser.Sid))"
         $logonUserHKCU = "HKEY_USERS\$($logonUser.Sid)"
         $registryKeys = $registryKeys | ForEach-Object {$_.Replace("HKCU", $logonUserHKCU)}
+    }
+    else {
+        if ($err) {
+            Write-Log "Get-LogonUser failed. $err"
+        }
     }
 
     # Make sure NOT to use WOW64 version of reg.exe when running on 32bit PowerShell on 64bit OS.
@@ -1085,8 +1138,18 @@ function Save-OfficeRegistry {
         $regexe = Join-Path $env:SystemRoot 'System32\reg.exe'
     }
 
+    # If, for some reason, reg.exe is not available, bail.
+    if (-not (Get-Command $regexe -ErrorAction SilentlyContinue)) {
+        Write-Error "$regexe is not avaialble."
+        return
+    }
+
     foreach ($key in $registryKeys) {
-        $err = $($queryResult = & $regexe Query $key) 2>&1
+        $err = $($queryResult = Invoke-Command {
+            $ErrorActionPreference = 'Continue'
+            & $regexe Query $key
+        }) 2>&1
+
         if ($null -eq $queryResult) {
             Write-Log "$key does not exist"
             continue;
@@ -1105,7 +1168,10 @@ function Save-OfficeRegistry {
         }
 
         Write-Log "Saving $key to $filePath"
-        $err = $(& $regexe export $key $filePath | Out-Null) 2>&1
+        $err = $(Invoke-Command {
+            $ErrorActionPreference = 'Continue'
+            & $regexe export $key $filePath | Out-Null
+        }) 2>&1
 
         if ($LASTEXITCODE -ne 0) {
             Write-Error "$key is not exported. exit code = $LASTEXITCODE. $err"
@@ -1367,6 +1433,8 @@ function Start-LdapTrace {
         New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
     }
 
+    $Path = Resolve-Path $Path
+
     # Process name must contain the extension such as "Outlook.exe", instead of "Outlook"
     if ([IO.Path]::GetExtension($TargetProcess)  -ne 'exe') {
         $TargetProcess = [IO.Path]::GetFileNameWithoutExtension($TargetProcess) + ".exe"
@@ -1382,17 +1450,23 @@ function Start-LdapTrace {
     $key = Get-Item (Join-Path $keypath -ChildPath $TargetProcess)
 
     if (!$key) {
-        throw "Failed to create the key under $keypath. Make sure to run as an administrator"
+        Write-Error "Failed to create the key under $keypath. Make sure to run as an administrator"
+        return
     }
 
     # Start ETW session
     $traceFile = Join-Path $Path -ChildPath "ldap_%d.etl"
     $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
     Write-Log "Starting a LDAP trace"
-    $logmanResult = Invoke-Expression "logman create trace $SessionName -ow -o `"$traceFile`" -p Microsoft-Windows-LDAP-Client 0x1a59afa3 0xff -bs 1024 -mode `"$logFileMode`" -max 256 -ets"
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to start LDAP trace. exit code = $LASTEXITCODE. $logmanResult"
+    $err = $($stdout = Invoke-Command {
+        $ErrorActionPreference = 'Continue'
+        & logman.exe create trace $SessionName -ow -o $traceFile -p Microsoft-Windows-LDAP-Client 0x1a59afa3 0xff -bs 1024 -mode $logFileMode -max 256 -ets
+    }) 2>&1
+
+    if ($err -or $LASTEXITCODE -ne 0) {
+        Write-Error "Failed to start LDAP trace. exit code:$LASTEXITCODE; stdout:`"$stdout`"; error:`"$err`""
+        return
     }
 }
 
@@ -1454,7 +1528,7 @@ function Save-OfficeModuleInfo {
     $items = @(
         foreach ($officePath in $officePaths) {
             # ignore errors here.
-            $($o = Get-ChildItem -Path $officePath\* -Include *.dll,*.exe -Recurse) 2>&1 | Out-Null
+            $($o = Get-ChildItem -Path $officePath\* -Include *.dll,*.exe -Recurse -ErrorAction Continue) 2>&1 | Out-Null
             $o
         }
     )
@@ -1532,7 +1606,7 @@ function Start-CAPITrace {
     $logmanResult = Invoke-Expression "logman create trace $SessionName -ow -o `"$traceFile`" -p `"Security: SChannel`" 0xffffffffffffffff 0xff -bs 1024 -mode `"$logFileMode`" -max 256 -ets"
 
     if ($LASTEXITCODE -ne 0) {
-        throw "logman failed to create a session. exit code = $LASTEXITCODE. $logmanResult"
+        Write-Error "logman failed to create a session. exit code = $LASTEXITCODE. $logmanResult"
         return
     }
 
@@ -1606,7 +1680,13 @@ function Start-FiddlerCap {
         try {
             Write-Log "Extracting from FiddlerCapSetup"
             Write-Progress -Activity "Extracting from FiddlerCapSetup" -Status "This may take a while. Please wait" -PercentComplete -1
-            $err = $($process = Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru) 2>&1
+
+            # To redirect & capture error even when this cmdlet is called with ErrorAction:SilentlyContinue, need "Continue" error action.
+            # Usually you can simply specify ErrorAction:Continue to the cmdlet. However, Start-Process does not respect that. So, I need to manually set $ErrorActionPreference here.
+            $err = $($process = Invoke-Command {
+                $ErrorActionPreference = "Continue"
+                Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru
+            }) 2>&1
 
             if ($process.ExitCode -ne 0) {
                 Write-Error "Failed to extract $fiddlerExe. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
@@ -1625,7 +1705,16 @@ function Start-FiddlerCap {
     $process = $null
     try {
         Write-Log "Starting FiddlerCap"
-        $err = $($process = Start-Process $fiddlerExe -PassThru) 2>&1
+        $err = $($process = Invoke-Command {
+            $ErrorActionPreference = "Continue"
+            try {
+                Start-Process $fiddlerExe -PassThru
+            }
+            catch {
+                Write-Error $_
+            }
+        }) 2>&1
+
         if (-not $process -or $process.HasExited) {
             Write-Error "FiddlerCap failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
             return
@@ -1756,7 +1845,15 @@ function Start-Procmon {
     # Start procmon.exe or procmon64.exe depending on the native arch.
     Write-Log "Starting procmon"
     $process = $null
-    $err = $($process = Start-Process $procmonFile -ArgumentList "/AcceptEula /Minimized /Quiet /NoFilter /BackingFile `"$pmlFile`"" -PassThru) 2>&1
+    $err = $($process = Invoke-Command {
+        $ErrorActionPreference = "Continue"
+        try {
+            Start-Process $procmonFile -ArgumentList "/AcceptEula /Minimized /Quiet /NoFilter /BackingFile `"$pmlFile`"" -PassThru
+        }
+        catch {
+            Write-Error $_
+        }
+    }) 2>&1
 
     try {
         if (-not $process -or $process.HasExited) {
@@ -1782,8 +1879,7 @@ function Start-Procmon {
 
 function Stop-Procmon {
     [CmdletBinding()]
-    param(
-    )
+    param()
 
     $process = @(Get-Process -Name Procmon*)
     if ($process.Count -eq 0) {
@@ -1801,7 +1897,16 @@ function Stop-Procmon {
     Write-Progress -Activity "Stopping procmon" -Status "Please wait" -PercentComplete -1
     $process = $null
     try {
-        $err = $($process = Start-Process $procmonFile -ArgumentList "/Terminate" -Wait -PassThru) 2>&1
+        $err = $($process = Invoke-Command {
+            $ErrorActionPreference = "Continue"
+            try {
+                Start-Process $procmonFile -ArgumentList "/Terminate" -Wait -PassThru
+            }
+            catch {
+                Write-Error $_
+            }
+        }) 2>&1
+
         if ($process.ExitCode -ne 0) {
             Write-Error "procmon failed to stop. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
         }
@@ -1817,8 +1922,7 @@ function Stop-Procmon {
 
 function Start-TcoTrace {
     [CmdletBinding()]
-    param(
-    )
+    param()
 
     $officeInfo = Get-OfficeInfo -ErrorAction Stop
     $majorVersion = $officeInfo.Version.Split('.')[0]
@@ -2240,7 +2344,8 @@ function Save-Dump {
         $process = Get-Process -Id $ProcessId -ErrorAction Stop
         if (-not $process.Handle) {
             # This scenario is possible for a system process.
-            throw "Cannot obtain the process handle of $($process.Name)."
+            Write-Error "Cannot obtain the process handle of $($process.Name)."
+            return
         }
 
         $dumpFile = Join-Path $Path "$($process.Name)_$(Get-Date -Format 'yyyy-MM-dd-HHmmss').dmp"
@@ -2616,15 +2721,17 @@ function Collect-OutlookInfo {
     }
 
     if ($env:PROCESSOR_ARCHITEW6432 -and $PSVersionTable.PSVersion.Major -eq 2) {
-        throw "32bit PowerShell 2.0 is running on 64bit OS. Please use 64bit PowerShell."
+        Write-Error "32bit PowerShell 2.0 is running on 64bit OS. Please use 64bit PowerShell."
+        return
     }
 
     # MS Office must be installed to collect Outlook & TCO.
     # This is just a fail fast. Start-OutlookTrace/TCOTrace fail anyway.
     if ($Component -contains 'Outlook' -or $Component -contains 'TCO' -or $Component -contains 'All') {
-        $err = $(Get-OfficeInfo | Out-Null) 2>&1
+        $err = $(Get-OfficeInfo -ErrorAction Continue | Out-Null) 2>&1
         if ($err) {
-            throw "Component `"Outlook`" and/or `"TCO`" is specified, but installation of Microsoft Office is not found. $err"
+            Write-Error "Component `"Outlook`" and/or `"TCO`" is specified, but installation of Microsoft Office is not found. $err"
+            return
         }
     }
 
@@ -2677,11 +2784,18 @@ function Collect-OutlookInfo {
             Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
 
             # Get processes and its user (PowerShell 4's Get-Process has -IncludeUserName, but I'm using WMI here for now).
-            Get-WmiObject -Class Win32_Process | Select-Object *, @{N='User'; E={"$($_.GetOwner().Domain)\$($_.GetOwner().User)"}} | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
+            Write-Log "Saving Win32_Process."
+            Get-WmiObject -Class Win32_Process | ForEach-Object {
+                if ($_.ProcessName -eq 'Outlook.exe') {
+                    $_ | Select-Object *, @{N='User'; E={$owner = $_.GetOwner();"$($owner.Domain)\$($owner.User)"}}
+                } else
+                {
+                    $_
+                }
+            } | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
 
             # Do we need MSInfo32?
             # Save-MSInfo32 -Path $tempPath
-
             Write-Progress -Activity "Saving configuration" -Status "Done" -Completed
         }
 
@@ -2791,11 +2905,20 @@ function Collect-OutlookInfo {
 
             # Start a new instance of Outlook
             $process = $null
-            $err = $($process = Start-Process 'Outlook.exe' -PassThru) 2>&1
+            $err = $($process = Invoke-Command {
+                $ErrorActionPreference = 'Continue'
+                try {
+                    Start-Process 'Outlook.exe' -PassThru
+                }
+                catch {
+                    Write-Error $_
+                }
+            }) 2>&1
 
             try {
                 if (-not $process -or $process.HasExited) {
-                    throw "StartOutlook parameter is specified, but Outlook failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+                    Write-Error "StartOutlook parameter is specified, but Outlook failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+                    return
                 }
                 Write-Host "Outlook has started. PID = $($process.Id)." -ForegroundColor Green
             }
@@ -2875,7 +2998,15 @@ function Collect-OutlookInfo {
 
         # Save process list again after traces
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
-            Get-WmiObject -Class Win32_Process | Select-Object *, @{N='User'; E={"$($_.GetOwner().Domain)\$($_.GetOwner().User)"}} | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
+            Write-Log "Saving Win32_Process"
+            Get-WmiObject -Class Win32_Process | ForEach-Object {
+                if ($_.ProcessName -eq 'Outlook.exe') {
+                    $_ | Select-Object *, @{N='User'; E={$owner = $_.GetOwner();"$($owner.Domain)\$($owner.User)"}}
+                } else
+                {
+                    $_
+                }
+            } | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
         }
 
         Write-Progress -Activity 'Stopping' -Status 'Please wait.' -Completed
@@ -2884,10 +3015,14 @@ function Collect-OutlookInfo {
     }
 
     $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
-    Compress-Folder -Path $tempPath -ZipFileName $zipFileName -Destination $Path -RemoveFiles | Out-Null
+    Compress-Folder -Path $tempPath -ZipFileName $zipFileName -Destination $Path | Out-Null
 
     if (Test-Path $tempPath) {
-        Remove-Item $tempPath -Force
+        # Removing temp files might take a while. Do it in a background.
+        $job = Start-Job -ScriptBlock {
+            Remove-Item $using:tempPath -Recurse -Force
+        }
+        Write-Host "Temporary folder `"$tempPath`" will be removed by a background job (Job ID: $($job.Id))"
     }
 
     Write-Host "The collected data is `"$(Join-Path $Path $zipFileName).zip`"" -ForegroundColor Green
