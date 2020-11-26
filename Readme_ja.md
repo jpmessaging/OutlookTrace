@@ -4,15 +4,17 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 [ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-11-15/OutlookTrace.psm1)
 
 ## 利用方法
-1. OutlookTrace.psm1 をダウンロードして対象のマシン上にコピーします。
-2. 管理者権限で cmd を起動します。
-3. PowerShell を以下のように起動します。
+
+1. Outlook を実行している場合には終了します。
+2. OutlookTrace.psm1 をダウンロードして対象のマシン上にコピーします。
+3. 管理者権限で cmd を起動します。
+4. PowerShell を以下のように起動します。
 
     ```
     powershell -ExecutionPolicy Bypass
     ```
 
-4. OutlookTrace.psm1 をインポートします。
+5. OutlookTrace.psm1 をインポートします。
 
     ```
     Import-Module <OutlookTrace.psm1 へのパス> -DisableNameChecking
@@ -23,7 +25,7 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
     Import-Module C:\temp\OutlookTrace.psm1 -DisableNameChecking
     ```
 
-5. Collect-OutlookInfo を実行します
+6. Collect-OutlookInfo を実行します
 
     ※ 採取するコンポーネントについてはエンジニアからの案内をご確認ください。
 
@@ -36,7 +38,7 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
     Collect-OutlookInfo -Path c:\temp -Component Configuration, Netsh, Outlook
     ```
 
-6. 正常にトレースが開始されると、"Hit enter to stop" と表示されます。
+7. 正常にトレースが開始されると、"Hit enter to stop" と表示されます。
 
     ※ 採取するコンポーネントに Fiddler を含めた場合、[FiddlerCap Web Recorder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
 
@@ -69,8 +71,8 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
     4. [1. キャプチャ開始] をクリックします。
         自動的にブラウザが起動されたら、そのブラウザはクローズいただいて結構です。
 
-7. 現象を再現させます。
-8. 採取するコンポーネントに Fiddler を含めた場合、以下の手順で停止して保存します。
+8. Outlook を起動して、現象を再現させます。
+9. 採取するコンポーネントに Fiddler を含めた場合、以下の手順で停止して保存します。
 
     1. [2. キャプチャ停止] をクリックします。
     2. [3. キャプチャ保存] をクリックします。
@@ -90,9 +92,9 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
         拇印 (md5):
         ```
 
-9.  コンソールに Enter キーを入力しトレースを停止します。
+10. コンソールに Enter キーを入力しトレースを停止します。
 
-手順 5 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。  
+手順 6 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。
 Fiddler トレースを採取した場合には、手順 8 で指定したパスワードも併せてお寄せください。
 
 # ライセンス

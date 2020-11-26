@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2020-11-15'
+$Version = 'v2020-11-25'
 
 # Outlook's ETW pvoviders
 $outlook2016Providers =
@@ -1090,7 +1090,23 @@ function Get-LogonUser {
     Write-Log "Current session: $currentSession"
     $match = [Regex]::Match($currentSession, '^>(?<name>.+?)\s{2,}')
     $userName = $match.Groups['name'].Value
-    Get-WmiObject -Class Win32_UserAccount | Where-Object Name -eq $userName
+
+    # WMI Win32_UserAccount can be very slow. I'm avoiding here.
+    # Get-WmiObject -Class Win32_UserAccount -Filter "Name = '$userName'"
+    
+    try {
+        $account = New-Object System.Security.Principal.NTAccount($userName)
+        $sid = $account.Translate([System.Security.Principal.SecurityIdentifier]).Value
+    }
+    catch {
+        Write-Error $_
+        return
+    }
+
+    New-Object PSCustomObject -Property @{
+        Name = $userName
+        SID = $sid
+    }
 }
 
 function Save-OfficeRegistry {
@@ -1119,8 +1135,8 @@ function Save-OfficeRegistry {
     $err = $($logonUser = Get-LogonUser -ErrorAction Continue) 2>&1
 
     if ($logonUser) {
-        Write-Log "Logon user $($logonUser.Caption) ($($logonUser.Sid))"
-        $logonUserHKCU = "HKEY_USERS\$($logonUser.Sid)"
+        Write-Log "Logon user $($logonUser.Name) ($($logonUser.SID))"
+        $logonUserHKCU = "HKEY_USERS\$($logonUser.SID)"
         $registryKeys = $registryKeys | ForEach-Object {$_.Replace("HKCU", $logonUserHKCU)}
     }
     else {
@@ -1930,8 +1946,8 @@ function Start-TcoTrace {
     # Create registry key & values. Ignore errors (might fail due to existing values)
     $logonUser = Get-LogonUser -ErrorAction SilentlyContinue
     if ($logonUser) {
-        Write-Log "Found a logon user $($logonUser.Caption) ($($logonUser.SID))."
-        $keypath = "Registry::HKEY_USERS\$($logonUser.Sid)\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
+        Write-Log "Found a logon user $($logonUser.Name) ($($logonUser.SID))."
+        $keypath = "Registry::HKEY_USERS\$($logonUser.SID)\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
     }
     else {
         $keypath = "Registry::HKCU\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
@@ -1970,8 +1986,8 @@ function Stop-TcoTrace {
     # Remove registry values
     $logonUser = Get-LogonUser -ErrorAction SilentlyContinue
     if ($logonUser) {
-        Write-Log "Found a logon user $($logonUser.Caption) ($($logonUser.SID))."
-        $keypath = "Registry::HKEY_USERS\$($logonUser.Sid)\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
+        Write-Log "Found a logon user $($logonUser.Name) ($($logonUser.SID))."
+        $keypath = "Registry::HKEY_USERS\$($logonUser.SID)\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
     }
     else {
         $keypath = "Registry::HKCU\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
@@ -2428,7 +2444,7 @@ function New-LogCallback {
     [scriptblock]$Callback,
 
     # Remaining arguments to be passd to Callback scriptblock via $Event.MessageData
-    [Parameter(ValueFromRemainingArguments)]
+    [Parameter(ValueFromRemainingArguments = $true)]
     [object[]]$ArgumentList
     )
 
@@ -3029,4 +3045,4 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Collect-OutlookInfo
