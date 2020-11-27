@@ -109,28 +109,43 @@ $wamProviders =
 {8BFE6B98-510E-478D-B868-142CD4DEDC1A}
 '@
 
+
+function Open-Log {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$Path
+    )
+
+    if ($Script:logWriter) {
+       Close-Log
+    }
+
+    # Open a file & add header
+    try {
+        [IO.StreamWriter]$Script:logWriter = [IO.File]::AppendText($Path)
+        $Script:logWriter.WriteLine("date-time,delta(ms),function,info")
+    }
+    catch {
+        Write-Error $_
+    }
+}
+
 function Write-Log {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)]
-        [string]$Text,
-        [string]$Path = $Script:logPath
+        [string]$Text
     )
 
-    # If "logpath" not defined, just output to verbose.
-    if (-not $Path) {
+    # If Open-Log is not called beforehand, just output to verbose.
+    if (-not $Script:logWriter) {
         Write-Verbose $Text
         return
     }
 
     $currentTime = Get-Date
     $currentTimeFormatted = $currentTime.ToString('o')
-
-    if (-not $Script:logWriter) {
-        # For the first time, open file & add header
-        [IO.StreamWriter]$Script:logWriter = [IO.File]::AppendText($Path)
-        $Script:logWriter.WriteLine("date-time,delta(ms),function,info")
-    }
 
     [TimeSpan]$delta = 0;
     if ($Script:lastLogTime) {
@@ -1093,7 +1108,7 @@ function Get-LogonUser {
 
     # WMI Win32_UserAccount can be very slow. I'm avoiding here.
     # Get-WmiObject -Class Win32_UserAccount -Filter "Name = '$userName'"
-    
+
     try {
         $account = New-Object System.Security.Principal.NTAccount($userName)
         $sid = $account.Translate([System.Security.Principal.SecurityIdentifier]).Value
@@ -2757,12 +2772,13 @@ function Collect-OutlookInfo {
 
     Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 
+    # Create a temporary folder to store data.
     $Path = Resolve-Path $Path
     $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
     New-Item $tempPath -ItemType directory -ErrorAction Stop | Out-Null
 
-    # Define log file path
-    $Script:logPath = Join-Path -Path $tempPath -ChildPath 'Log.txt'
+    # Start logging.
+    Open-Log -Path (Join-Path $tempPath 'Log.txt') -ErrorAction Stop
     Write-Log "Script Version: $Script:Version"
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
@@ -3027,7 +3043,6 @@ function Collect-OutlookInfo {
 
         Write-Progress -Activity 'Stopping' -Status 'Please wait.' -Completed
         Close-Log
-        $Script:logPath = $null
     }
 
     $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
