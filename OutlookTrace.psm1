@@ -1527,7 +1527,9 @@ function Save-OfficeModuleInfo {
     [CmdletBinding()]
     param (
         [parameter(Mandatory = $true)]
-        $Path
+        $Path,
+        # filter items by their name using -match (e.g. 'outlook.exe','mso\d\d.*\.dll'). These are treated as "OR".
+        [string[]]$Filters
     )
 
     if (-not (Test-Path $Path)){
@@ -1555,6 +1557,8 @@ function Save-OfficeModuleInfo {
 
     Write-Log "officePaths are $officePaths"
 
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
     # Get exe and dll
     $items = @(
         foreach ($officePath in $officePaths) {
@@ -1564,27 +1568,44 @@ function Save-OfficeModuleInfo {
         }
     )
 
-    $result = @(
-        foreach ($item in $items) {
-            if ($item.VersionInfo.FileVersionRaw) {
-                $fileVersion = $item.VersionInfo.FileVersionRaw
-            }
-            else {
-                $fileVersion = $item.VersionInfo.FileVersion
-            }
+    $sw.Stop()
+    Write-Log "Listing items took $($sw.ElapsedMilliseconds) ms."
+    $sw.Reset(); $sw.Start() # Reset() is not available in .NET Framework 2.0
 
-            New-Object PSCustomObject -Property @{
-                Name = $item.Name
-                FullName = $item.FullName
-                #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
-                FileVersion = $fileVersion
+    # Apply filters
+    if ($Filters.Count) { # This is for PowerShell v2. PSv2 iterates a null collection.
+        $items = $items | Where-Object {
+            foreach ($filter in $Filters) {
+                if ($_.Name -match $filter) {
+                    $true
+                    break
+                }
             }
         }
-    )
+    }
 
     $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
     $name = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
-    $result | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
+
+    $items | ForEach-Object {
+        $item = $_
+        if ($item.VersionInfo.FileVersionRaw) {
+            $fileVersion = $item.VersionInfo.FileVersionRaw
+        }
+        else {
+            $fileVersion = $item.VersionInfo.FileVersion
+        }
+
+        New-Object PSCustomObject -Property @{
+            Name = $item.Name
+            FullName = $item.FullName
+            #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
+            FileVersion = $fileVersion
+        }
+    } | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
+
+    $sw.Stop()
+    Write-Log "Enumerating items took $($sw.ElapsedMilliseconds) ms."
 }
 
 function Save-MSInfo32 {
@@ -2803,7 +2824,9 @@ function Collect-OutlookInfo {
             Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
 
-            Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
+            #Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
+            $Filters = 'outlook\.exe', 'umoutlookaddin\.dll', 'mso\.dll', 'mso\d\d.+\.dll', 'olmapi32\.dll', 'emsmdb32\.dll', 'wwlib\.dll'
+            Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -Filters $Filters -ErrorAction SilentlyContinue
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
 
             Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
