@@ -1529,7 +1529,8 @@ function Save-OfficeModuleInfo {
         [parameter(Mandatory = $true)]
         $Path,
         # filter items by their name using -match (e.g. 'outlook.exe','mso\d\d.*\.dll'). These are treated as "OR".
-        [string[]]$Filters
+        [string[]]$Filters,
+        [TimeSpan]$Timeout
     )
 
     if (-not (Test-Path $Path)){
@@ -1568,9 +1569,8 @@ function Save-OfficeModuleInfo {
         }
     )
 
-    $sw.Stop()
-    Write-Log "Listing items took $($sw.ElapsedMilliseconds) ms."
-    $sw.Reset(); $sw.Start() # Reset() is not available in .NET Framework 2.0
+    $listingFinished = $sw.Elapsed
+    Write-Log "Listing items took $($listingFinished.Milliseconds) ms."
 
     # Apply filters
     if ($Filters.Count) { # This is for PowerShell v2. PSv2 iterates a null collection.
@@ -1587,8 +1587,8 @@ function Save-OfficeModuleInfo {
     $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
     $name = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
 
-    $items | ForEach-Object {
-        $item = $_
+    @(
+    foreach ($item in $items) {
         if ($item.VersionInfo.FileVersionRaw) {
             $fileVersion = $item.VersionInfo.FileVersionRaw
         }
@@ -1602,10 +1602,17 @@ function Save-OfficeModuleInfo {
             #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
             FileVersion = $fileVersion
         }
-    } | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
+
+        # If timeout is reached, bail.
+        if ($Timeout -and $sw.Elapsed -gt $Timeout) {
+            Write-Log "Timeout $Timeout is reached. returning."
+            break
+        }
+    }) | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
+
 
     $sw.Stop()
-    Write-Log "Enumerating items took $($sw.ElapsedMilliseconds) ms."
+    Write-Log "Enumerating items took $(($sw.Elapsed - $listingFinished).Milliseconds) ms."
 }
 
 function Save-MSInfo32 {
@@ -2824,9 +2831,9 @@ function Collect-OutlookInfo {
             Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
 
-            #Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
-            $Filters = 'outlook\.exe', 'umoutlookaddin\.dll', 'mso\.dll', 'mso\d\d.+\.dll', 'olmapi32\.dll', 'emsmdb32\.dll', 'wwlib\.dll'
-            Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -Filters $Filters -ErrorAction SilentlyContinue
+            Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
+            #$Filters = 'outlook\.exe', 'umoutlookaddin\.dll', 'mso\.dll', 'mso\d\d.+\.dll', 'olmapi32\.dll', 'emsmdb32\.dll', 'wwlib\.dll'
+            #Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -Filters $Filters -ErrorAction SilentlyContinue
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
 
             Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
