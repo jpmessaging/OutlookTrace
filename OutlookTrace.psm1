@@ -1561,16 +1561,16 @@ function Save-OfficeModuleInfo {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
     # Get exe and dll
+    # It's slightly faster to run gci twice with -Filter than running once with -Include *exe, *.dll
     $items = @(
         foreach ($officePath in $officePaths) {
-            # ignore errors here.
-            $($o = Get-ChildItem -Path $officePath\* -Include *.dll,*.exe -Recurse -ErrorAction Continue) 2>&1 | Out-Null
-            $o
+            Get-ChildItem -Path $officePath -Filter *.exe -Recurse -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $officePath -Filter *.dll -Recurse -ErrorAction SilentlyContinue
         }
     )
 
     $listingFinished = $sw.Elapsed
-    Write-Log "Listing items took $($listingFinished.Milliseconds) ms."
+    Write-Log "Listing $($items.Count) items took $($listingFinished.Milliseconds) ms."
 
     # Apply filters
     if ($Filters.Count) { # This is for PowerShell v2. PSv2 iterates a null collection.
