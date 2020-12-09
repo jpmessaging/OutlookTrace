@@ -127,7 +127,7 @@ function Open-Log {
         $Script:logWriter.WriteLine("date-time,delta(ms),function,info")
     }
     catch {
-        Write-Error $_
+        Write-Error -ErrorRecord $_
     }
 }
 
@@ -586,7 +586,7 @@ function Get-EtwSession {
         return $traces
     }
     catch {
-        Write-Error "QueryAllTraces failed. $_"
+        Write-Error -Message "QueryAllTraces failed. $_" -Exception $_.Exception
     }
 }
 
@@ -605,7 +605,7 @@ function Stop-EtwSession {
         return [Win32.ETW]::StopTrace($SessionName)
     }
     catch {
-        Write-Error "StopTrace for $SessionName failed. $_"
+        Write-Error -Message "StopTrace for $SessionName failed. $_" -Exception $_.Exception
     }
 }
 
@@ -745,7 +745,7 @@ function Compress-Folder {
                     ++$count
                 }
                 catch {
-                    Write-Error "Failed to add $($file.FullName). $_"
+                    Write-Error -Message "Failed to add $($file.FullName). $_" -Exception $_.Exception
                 }
                 finally {
                     if ($local:fileStream) {
@@ -1114,7 +1114,7 @@ function Get-LogonUser {
         $sid = $account.Translate([System.Security.Principal.SecurityIdentifier]).Value
     }
     catch {
-        Write-Error $_
+        Write-Error -ErrorRecord $_
         return
     }
 
@@ -1413,7 +1413,7 @@ function Get-WSCAntivirus {
         }
     }
     catch {
-        Write-Error $_
+        Write-Error -ErrorRecord $_
     }
 }
 
@@ -1638,7 +1638,7 @@ function Save-MSInfo32 {
         }
     }
     catch {
-        Write-Error "Failed to start $processName.`n$_"
+        Write-Error -Message "Failed to start $processName.`n$_" -Exception $_.Exception
     }
     finally {
         if ($process) {
@@ -1722,7 +1722,7 @@ function Start-FiddlerCap {
                 $webClient.DownloadFile($fiddlerCapUrl, $fiddlerSetupFile)
             }
             catch {
-                Write-Error "Failed to download FiddlerCapSetup from $fiddlerCapUrl. $_"
+                Write-Error -Message "Failed to download FiddlerCapSetup from $fiddlerCapUrl. $_" -Exception $_.Exception
                 return
             }
             finally {
@@ -1770,7 +1770,7 @@ function Start-FiddlerCap {
                 Start-Process $fiddlerExe -PassThru
             }
             catch {
-                Write-Error $_
+                Write-Error -ErrorRecord $_
             }
         }) 2>&1
 
@@ -1862,7 +1862,7 @@ function Start-Procmon {
                 $procmonZipDownloaded = $true
             }
             catch {
-                Write-Error "Failed to download procmon from $procmonDownloadUrl. $_"
+                Write-Error -Message "Failed to download procmon from $procmonDownloadUrl. $_" -Exception $_.Exception
                 return
             }
             finally {
@@ -1910,7 +1910,7 @@ function Start-Procmon {
             Start-Process $procmonFile -ArgumentList "/AcceptEula /Minimized /Quiet /NoFilter /BackingFile `"$pmlFile`"" -PassThru
         }
         catch {
-            Write-Error $_
+            Write-Error -ErrorRecord $_
         }
     }) 2>&1
 
@@ -1962,7 +1962,7 @@ function Stop-Procmon {
                 Start-Process $procmonFile -ArgumentList "/Terminate" -Wait -PassThru
             }
             catch {
-                Write-Error $_
+                Write-Error -ErrorRecord $_
             }
         }) 2>&1
 
@@ -2593,7 +2593,7 @@ function Get-Token {
             Add-Type -Path (Join-Path (Split-Path $PSCommandPath) 'modules\Microsoft.Identity.Client.dll')
         }
         catch {
-            Write-Error $_
+            Write-Error -ErrorRecord $_
             return
         }
     }
@@ -2604,7 +2604,7 @@ function Get-Token {
             Add-Type -Path (Join-Path (Split-Path $PSCommandPath) 'modules\Microsoft.Identity.Client.Extensions.Msal.dll')
         }
         catch {
-            Write-Error $_
+            Write-Error -ErrorRecord $_
             return
         }
     }
@@ -2675,11 +2675,11 @@ function Get-Token {
             $publicClient.AcquireTokenInteractive($Scopes).ExecuteAsync().GetAwaiter().GetResult()
         }
         catch {
-            Write-Error $_
+            Write-Error -ErrorRecord $_
         }
     }
     catch {
-        Write-Error $_
+        Write-Error -ErrorRecord $_
     }
     finally {
         if ($writer){
@@ -2973,7 +2973,7 @@ function Collect-OutlookInfo {
                     Start-Process 'Outlook.exe' -PassThru
                 }
                 catch {
-                    Write-Error $_
+                    Write-Error -ErrorRecord $_
                 }
             }) 2>&1
 
