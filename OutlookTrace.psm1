@@ -582,8 +582,7 @@ function Get-EtwSession {
     }
 
     try {
-        $traces = [Win32.ETW]::QueryAllTraces()
-        return $traces
+        [Win32.ETW]::QueryAllTraces()
     }
     catch {
         Write-Error -Message "QueryAllTraces failed. $_" -Exception $_.Exception
