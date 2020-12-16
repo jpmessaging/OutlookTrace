@@ -1077,7 +1077,15 @@ function Get-InstalledUpdate
 
 function Get-LogonUser {
     [CmdletBinding()]
-    param()
+    param(
+        [switch]$IgnoreCache
+    )
+
+    # If there's a cache, use it unless IgnoreCache is specified
+    if (-not $IgnoreCache -and $Script:LogonUser) {
+        Write-Log "Returning a cache."
+        return $Script:LogonUser
+    }
 
     # quser.exe might not be available.
     if (-not (Get-Command quser.exe -ErrorAction SilentlyContinue)) {
@@ -1117,10 +1125,12 @@ function Get-LogonUser {
         return
     }
 
-    New-Object PSCustomObject -Property @{
+    $Script:LogonUser = New-Object PSCustomObject -Property @{
         Name = $userName
         SID = $sid
     }
+
+    $Script:LogonUser
 }
 
 function Save-OfficeRegistry {
@@ -1462,6 +1472,100 @@ public enum NETSETUP_JOIN_STATUS
     New-Object PSCustomObject -Property @{
         Name = $name
         JoinStatus = [Enum]::GetName([Win32.NetAPI+NETSETUP_JOIN_STATUS], $status)
+    }
+}
+
+function Get-OutlookProfile {
+    [CmdletBinding()]
+    param(
+        [string]$User
+    )
+
+    $baseKeyPath = "Registry::HKCU"
+
+    if ($User) {
+        try {
+            $account = New-Object System.Security.Principal.NTAccount($User)
+            $sid = $account.Translate([System.Security.Principal.SecurityIdentifier]).Value
+            $baseKeyPath = "Registry::HKEY_USERS\$sid"
+        }
+        catch {
+            Write-Error -Message "Cannot find the given user `"$User`"." -Exception $_.Exception
+            return
+        }
+    }
+    else {
+        $User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    }
+
+    # List Outlook "profiles" keys
+    $profiles = @(
+        $versionKeys = @(Get-ChildItem (Join-Path $baseKeyPath 'Software\Microsoft\Office\') -ErrorAction SilentlyContinue | Where-Object {$_.Name -match '\d\d\.0'})
+        if ($versionKeys.Count) {
+            foreach ($versionKey in $versionKeys) {
+                Get-ChildItem (Join-Path $versionKey.PsPath '\Outlook\Profiles') -ErrorAction SilentlyContinue
+                $versionKey.Close()
+            }
+        }
+    )
+
+    if (-not $profiles.Count) {
+        Write-Log "There is no profiles for $User."
+        return
+    }
+
+    $PR_PROFILE_CONFIG_FLAGS = '00036601'
+
+    # Flag constants:
+    # This corresponds [Use Cached Exchange Mode]
+    $CONFIG_OST_CACHE_PRIVATE = 0x180
+    # This corresponds to [Download Public Folder Favorites]
+    $CONFIG_OST_CACHE_PUBLIC = 0x400
+    # This corresponds to [Download shared folders]
+    $CONFIG_OST_CACHE_DELEGATE_PIM = 0x800
+
+    foreach ($profile in $profiles) {
+        $flags = 0
+        $CACHE_PRIVATE = $false
+        $CACHE_PUBLIC = $false
+        $CACHE_DELEGATE_PIM = $false
+
+        $subkeys = Get-ChildItem $profile.PSPath -Recurse
+
+        foreach ($subkey in $subkeys) {
+            if ($subkey.Property | where {$_ -eq $PR_PROFILE_CONFIG_FLAGS}) {
+                $bytes = $subkey.GetValue($PR_PROFILE_CONFIG_FLAGS)
+                $flags = [BitConverter]::ToUInt32($bytes, 0)
+                break
+            }
+        }
+
+        # Close all the sub keys
+        $subkeys | ForEach {$_.Close()}
+
+        if (($flags -band $CONFIG_OST_CACHE_PRIVATE) -ne 0) {
+            $CACHE_PRIVATE = $true
+        }
+
+        if (($flags -band $CONFIG_OST_CACHE_PUBLIC) -ne 0) {
+            $CACHE_PUBLIC = $true
+        }
+
+        if (($flags -band $CONFIG_OST_CACHE_DELEGATE_PIM) -ne 0) {
+            $CACHE_DELEGATE_PIM = $true
+        }
+
+        New-Object PSCustomObject -Property @{
+            User = $User
+            Profile = $profile.Name
+            CachedMode = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
+            DownloadPublicFolderFavorites = $CACHE_PUBLIC
+            DownloadSharedFolders = $CACHE_DELEGATE_PIM
+            PR_PROFILE_CONFIG_FLAGS = $flags
+        }
+
+
+        $profile.Close()
     }
 }
 
@@ -2888,6 +2992,10 @@ function Collect-OutlookInfo {
 
             Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
             Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OfficeInfo.xml')
+
+            $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
+            Get-OutlookProfile -User $LogonUser.Name -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookProfile.xml')
+
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
 
             Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
@@ -3137,4 +3245,4 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Collect-OutlookInfo
