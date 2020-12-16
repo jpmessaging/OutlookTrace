@@ -1572,7 +1572,11 @@ function Get-OutlookProfile {
 function Save-CachedAutodiscover {
     [CmdletBinding()]
     param(
-        $Path
+        [Parameter(Mandatory = $true)]
+        # Where to save
+        $Path,
+        # Target user
+        [string]$User
     )
 
     if (-not (Test-Path $Path)) {
@@ -1580,12 +1584,20 @@ function Save-CachedAutodiscover {
     }
 
     # Check %LOCALAPPDATA%\Microsoft\Outlook
-    $localAppdata = [System.Environment]::ExpandEnvironmentVariables('%LOCALAPPDATA%')
+    if ($User) {
+        $localAppdata = Join-Path "C:\Users" "$User\AppData\Local"
+    }
+    else {
+        $localAppdata = $env:LOCALAPPDATA
+    }
+
     $cachePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
     if (-not (Test-Path $cachePath)) {
         Write-Log "$cachePath is not found."
         return
     }
+
+    Write-Log "Searching $cachePath."
 
     # Get Autodiscover XML files and copy them to Path
     Get-ChildItem $cachePath -Filter '*Autod*.xml' -Force -Recurse | Copy-Item -Destination $Path
@@ -2990,12 +3002,10 @@ function Collect-OutlookInfo {
             Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
 
-            Save-CachedAutodiscover -Path (Join-Path $tempPath 'Cached AutoDiscover')
-            Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OfficeInfo.xml')
-
             $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
+            Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $tempPath 'Cached AutoDiscover')
+            Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OfficeInfo.xml')
             Get-OutlookProfile -User $LogonUser.Name -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookProfile.xml')
-
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
 
             Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
@@ -3005,8 +3015,8 @@ function Collect-OutlookInfo {
             Get-WmiObject -Class Win32_Process | ForEach-Object {
                 if ($_.ProcessName -eq 'Outlook.exe') {
                     $_ | Select-Object *, @{N='User'; E={$owner = $_.GetOwner();"$($owner.Domain)\$($owner.User)"}}
-                } else
-                {
+                }
+                else {
                     $_
                 }
             } | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
