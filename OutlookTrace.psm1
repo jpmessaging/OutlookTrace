@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2020-12-10'
+$Version = 'v2020-12-17'
 
 # Outlook's ETW pvoviders
 $outlook2016Providers =
@@ -1533,7 +1533,7 @@ function Get-OutlookProfile {
         $subkeys = Get-ChildItem $profile.PSPath -Recurse
 
         foreach ($subkey in $subkeys) {
-            if ($subkey.Property | where {$_ -eq $PR_PROFILE_CONFIG_FLAGS}) {
+            if ($subkey.Property | Where-Object {$_ -eq $PR_PROFILE_CONFIG_FLAGS}) {
                 $bytes = $subkey.GetValue($PR_PROFILE_CONFIG_FLAGS)
                 $flags = [BitConverter]::ToUInt32($bytes, 0)
                 break
@@ -1541,7 +1541,7 @@ function Get-OutlookProfile {
         }
 
         # Close all the sub keys
-        $subkeys | ForEach {$_.Close()}
+        $subkeys | ForEach-Object {$_.Close()}
 
         if (($flags -band $CONFIG_OST_CACHE_PRIVATE) -ne 0) {
             $CACHE_PRIVATE = $true
