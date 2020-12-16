@@ -1227,6 +1227,7 @@ function Save-OSConfiguration {
     Get-NLMConnectivity | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")
     Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")
     Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")
+    Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "JoinInformation.xml")
 
     if (Get-Command 'Get-NetIPInterface' -ErrorAction SilentlyContinue) {
         Get-NetIPInterface -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "NetIPInterface.xml")
@@ -1416,6 +1417,53 @@ function Get-WSCAntivirus {
     }
 }
 
+function Get-JoinInformation {
+    [CmdletBinding()]
+    param()
+
+    $def = @'
+[DllImport("Netapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+public static extern uint NetGetJoinInformation(string server, out IntPtr name, out uint status);
+
+[DllImport("Netapi32.dll", ExactSpelling = true)]
+public static extern uint NetApiBufferFree(IntPtr Buffer);
+
+public enum NETSETUP_JOIN_STATUS
+{
+    NetSetupUnknownStatus = 0,
+    NetSetupUnjoined,
+    NetSetupWorkgroupName,
+    NetSetupDomainName
+}
+'@
+
+    if (-not ('Win32.NetAPI' -as [type])) {
+        Add-Type -MemberDefinition $def -Namespace 'Win32' -Name 'NetAPI'
+    }
+
+    [IntPtr]$pName = [IntPtr]::Zero
+    [uint32]$status = 0
+
+    $sc = [Win32.NetAPI]::NetGetJoinInformation($null, [ref]$pName, [ref]$status)
+
+    if ($sc -ne 0) {
+        Write-Error "NetGetJoinInformation failed with $sc." -Exception (New-Object ComponentModel.Win32Exception($sc))
+        return
+    }
+
+    $name = [System.Runtime.InteropServices.Marshal]::PtrToStringUni($pName)
+
+    $sc = [Win32.NetAPI]::NetApiBufferFree($pName)
+    if ($sc -ne 0) {
+        Write-Error "NetApiBufferFree failed with $sc." -Exception (New-Object ComponentModel.Win32Exception($sc))
+        return
+    }
+
+    New-Object PSCustomObject -Property @{
+        Name = $name
+        JoinStatus = [Enum]::GetName([Win32.NetAPI+NETSETUP_JOIN_STATUS], $status)
+    }
+}
 
 function Save-CachedAutodiscover {
     [CmdletBinding()]
@@ -3089,4 +3137,4 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Collect-OutlookInfo
