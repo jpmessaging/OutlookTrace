@@ -2921,6 +2921,154 @@ function Test-Autodiscover {
     Invoke-WebRequest @arguments
 }
 
+<#
+.SYNOPSIS
+Convert a ProgID to CLSID
+#>
+function ConvertTo-CLSID {
+    [CmdletBinding()]
+    param(
+        [parameter(Mandatory=$true)]
+        [string]$ProgID#,
+        #[ValidateSet('Guid', 'String')]
+        #[string]$ReturnType
+    )
+
+    $def = @'
+    [DllImport("ole32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    public static extern uint CLSIDFromProgID(string progOd, out Guid clsid);
+
+    [DllImport("ole32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    public static extern uint StringFromCLSID([MarshalAs(UnmanagedType.LPStruct)] Guid refclsid, out IntPtr pClsidString);
+'@
+
+    if (-not ('Win32.OLE' -as [type])) {
+        Add-Type -MemberDefinition $def -Namespace Win32 -Name OLE -ErrorAction Stop
+    }
+
+    [uint32]$S_OK = 0
+
+    [Guid]$CLSID = [Guid]::Empty
+    [uint32]$hr = [Win32.OLE]::CLSIDFromProgID($ProgID, [ref]$CLSID)
+
+    if ($hr -ne $S_OK) {
+        Write-Verbose -Message $("CLSIDFromProgID for `"$ProgID`" failed with 0x{0:x}. Trying ClickToRun registry." -f $hr)
+
+        # Try Click2Run Registry
+        $clsidProp = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\$ProgID\CLSID" -ErrorAction SilentlyContinue
+        if ($clsidProp) {
+            $CLSID = $clsidProp.'(default)'
+        }
+
+        if ($CLSID -eq [Guid]::Empty) {
+            Write-Error -Message $("CLSIDFromProgID for `"$ProgID`" failed with 0x{0:x}. Also, it cannot be found in the ClickToRun registry" -f $hr)
+            return
+        }
+    }
+
+    [IntPtr]$pClsIdString = [IntPtr]::Zero
+    $hr = [Win32.OLE]::StringFromCLSID($CLSID, [ref]$pCLSIDString)
+
+    if ($hr -eq $S_OK -and $pCLSIDString) {
+        $CLSIDString = [System.Runtime.InteropServices.Marshal]::PtrToStringUni($pCLSIDString)
+        [System.Runtime.InteropServices.Marshal]::FreeCoTaskMem($pCLSIDString)
+        $pCLSIDString = [IntPtr]::Zero
+    }
+
+    New-Object PSCustomObject -Property @{
+        GUID = $CLSID
+        String = $CLSIDString
+    }
+}
+
+<#
+.SYNOPSIS
+Get Outlook's COM addins
+#>
+function Get-OutlookAddin {
+    [CmdletBinding()]
+    param()
+
+    # Get keys under "Addins"
+     $addinKeys = @(
+        @('Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\Office\Outlook\Addins', 'Registry::HKLM\SOFTWARE\Microsoft\Office\Outlook\Addins', 'Registry::HKCU\Software\Microsoft\Office\Outlook\Addins') | ForEach-Object {
+            Get-ChildItem $_ -ErrorAction SilentlyContinue
+        }
+     )
+
+     $LoadBehavior = @{
+        0 = 'None'
+        1 = 'NoneLoaded'
+        2 = 'StartupUnloaded'
+        3 = 'Startup'
+        8 = 'LoadOnDemandUnloaded'
+        9 = 'LoadOnDemand'
+        16 = 'LoadAtNextStartupOnly'
+    }
+
+     $cache = @{}
+
+     foreach ($addin in $addinKeys) {
+        $props = @{}
+        $props['Path'] = $addin.Name
+        $props['ProgID'] = $addin.PSChildName
+
+        if ($cache.ContainsKey($props['ProgID'])) {
+            Write-Log "Skipping $($props['ProgID']) because it's already found."
+            continue
+        }
+        else {
+            $cache.Add($props['ProgID'], $null)
+        }
+
+        $err = $($clsid = ConvertTo-CLSID $props['ProgID'] -ErrorAction Continue) 2>&1
+
+        if ($err) {
+            Write-Log $err
+            continue
+        }
+        else {
+            $props['CLSID'] = $clsid.String
+        }
+
+        # ToDo: text might get garbled in DBCS environment.
+        $props['Description'] = $addin.GetValue('Description')
+        $props['FriendlyName'] = $addin.GetValue('FriendlyName')
+        $loadBehaviorValue = $addin.GetValue('LoadBehavior')
+
+        if (-not $loadBehaviorValue) {
+            Write-Log "Skipping $($props['ProgID']) because its LoadBehavior is null."
+            continue
+        }
+        else {
+            $props['LoadBehavior'] = $LoadBehavior[$loadBehaviorValue]
+        }
+
+        $inproc32 = Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\$($props['CLSID'])\InprocServer32" -ErrorAction SilentlyContinue
+        if (-not $inproc32) {
+            $inproc32 = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\$($props['CLSID'])\InprocServer32" -ErrorAction SilentlyContinue
+        }
+
+        if ($inproc32) {
+            $props['DLL'] = $inproc32.'(default)'
+            $props['ThreadingModel'] = $inproc32.ThreadingModel
+        }
+
+        New-Object PSCustomObject -Property $props
+     }
+
+    # Close all the keys
+    $addinKeys | ForEach-Object {$_.Close()}
+}
+
+function Get-Click2RunConfiguration {
+    [CmdletBinding()]
+    param()
+
+    # Registry path is the for 32bit Office on 64bit OS.
+    Get-ItemProperty Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\Configuration
+}
+
 
 function Collect-OutlookInfo {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -2992,6 +3140,8 @@ function Collect-OutlookInfo {
             # Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
 
             Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
+            Get-Click2RunConfiguration -ErrorAction SilentlyContinue | ForEach-Object { if ($_) {$_ | Export-Clixml -Path (Join-Path $tempPath 'Configuration\Click2RunConfiguration.xml')}}
+            Get-OutlookAddin -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookAddin.xml')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
 
             Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
@@ -3255,4 +3405,4 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-Click2RunConfiguration, Collect-OutlookInfo
