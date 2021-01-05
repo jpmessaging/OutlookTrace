@@ -3061,7 +3061,7 @@ function Get-OutlookAddin {
     $addinKeys | ForEach-Object {$_.Close()}
 }
 
-function Get-Click2RunConfiguration {
+function Get-ClickToRunConfiguration {
     [CmdletBinding()]
     param()
 
@@ -3140,7 +3140,7 @@ function Collect-OutlookInfo {
             # Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
 
             Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
-            Get-Click2RunConfiguration -ErrorAction SilentlyContinue | ForEach-Object { if ($_) {$_ | Export-Clixml -Path (Join-Path $tempPath 'Configuration\Click2RunConfiguration.xml')}}
+            Get-ClickToRunConfiguration -ErrorAction SilentlyContinue | ForEach-Object { if ($_) {$_ | Export-Clixml -Path (Join-Path $tempPath 'Configuration\ClickToRunConfiguration.xml')}}
             Get-OutlookAddin -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookAddin.xml')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
 
@@ -3378,11 +3378,10 @@ function Collect-OutlookInfo {
             Write-Log "Saving Win32_Process"
             Get-WmiObject -Class Win32_Process | ForEach-Object {
                 if ($_.ProcessName -eq 'Outlook.exe') {
-                    $_ | Select-Object *, @{N='User'; E={$owner = $_.GetOwner();"$($owner.Domain)\$($owner.User)"}}
-                } else
-                {
-                    $_
+                    $owner = $_.GetOwner()
+                    $_ | Add-Member -MemberType NoteProperty -Name 'User' -Value "$($owner.Domain)\$($owner.User)"
                 }
+                $_
             } | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
         }
 
@@ -3403,6 +3402,12 @@ function Collect-OutlookInfo {
 
     Write-Host "The collected data is `"$(Join-Path $Path $zipFileName).zip`"" -ForegroundColor Green
     Invoke-Item $Path
+}
+
+
+# Configure Export-Clixml to use UTF8 by default.
+if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Contains("Export-CliXml:Encoding")) {    
+    $PSDefaultParameterValues.Add("Export-Clixml:Encoding", 'UTF8')    
 }
 
 Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-Click2RunConfiguration, Collect-OutlookInfo
