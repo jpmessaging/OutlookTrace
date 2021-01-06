@@ -3282,6 +3282,7 @@ function Collect-OutlookInfo {
 
             # Start a new instance of Outlook
             $process = $null
+
             $err = $($process = Invoke-Command {
                 $ErrorActionPreference = 'Continue'
                 try {
@@ -3292,17 +3293,15 @@ function Collect-OutlookInfo {
                 }
             }) 2>&1
 
-            try {
-                if (-not $process -or $process.HasExited) {
-                    Write-Error "StartOutlook parameter is specified, but Outlook failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
-                    return
-                }
-                Write-Host "Outlook has started. PID = $($process.Id)." -ForegroundColor Green
+            if (-not $process -or $process.HasExited) {
+                Write-Error "StartOutlook parameter is specified, but Outlook failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+                return
             }
-            finally {
-                if ($process) {
-                    $process.Dispose()
-                }
+
+            Write-Host "Outlook has started. PID = $($process.Id)." -ForegroundColor Green
+
+            if ($process) {
+                $process.Dispose()
             }
         }
 
@@ -3406,8 +3405,8 @@ function Collect-OutlookInfo {
 
 
 # Configure Export-Clixml to use UTF8 by default.
-if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Contains("Export-CliXml:Encoding")) {    
-    $PSDefaultParameterValues.Add("Export-Clixml:Encoding", 'UTF8')    
+if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Contains("Export-CliXml:Encoding")) {
+    $PSDefaultParameterValues.Add("Export-Clixml:Encoding", 'UTF8')
 }
 
 Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-Click2RunConfiguration, Collect-OutlookInfo
