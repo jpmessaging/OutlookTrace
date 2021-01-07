@@ -1116,14 +1116,7 @@ function Get-LogonUser {
     # WMI Win32_UserAccount can be very slow. I'm avoiding here.
     # Get-WmiObject -Class Win32_UserAccount -Filter "Name = '$userName'"
 
-    try {
-        $account = New-Object System.Security.Principal.NTAccount($userName)
-        $sid = $account.Translate([System.Security.Principal.SecurityIdentifier]).Value
-    }
-    catch {
-        Write-Error -ErrorRecord $_
-        return
-    }
+    $sid = ConvertTo-UserSID $userName
 
     $Script:LogonUser = New-Object PSCustomObject -Property @{
         Name = $userName
@@ -1133,11 +1126,95 @@ function Get-LogonUser {
     $Script:LogonUser
 }
 
+function ConvertTo-UserSID {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory = $true)]
+        [string]$UserName
+    )
+
+    try {
+        $account = New-Object System.Security.Principal.NTAccount($userName)
+        $sid = $account.Translate([System.Security.Principal.SecurityIdentifier]).Value
+        return $sid
+    }
+    catch {
+        Write-Error -Message "Cannot obtain user SID for $UserName." -Exception $_.Exception
+    }
+}
+
+<#
+.SYNOPSIS
+Test if a given string is a valid SID
+#>
+function Test-SID {
+    [CmdletBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        [string]$SID
+    )
+
+    try {
+        New-Object System.Security.Principal.SecurityIdentifier($SID) | Out-Null
+        return $true
+    }
+    catch {
+        # ignore error here
+    }
+
+    $false
+}
+
+<#
+.SYNOPSIS
+Get a given local user's registry root. If User is empty, it just returns HKCU.
+#>
+function Get-UserRegistryRoot {
+    [CmdletBinding()]
+    param(
+        # User name or SID
+        [string]$User,
+        # Skip "Registry::" prefix
+        [switch]$SkipRegistryPrefix
+    )
+
+    if ($User) {
+        # If user SID is given use it as it is; otherwise convert SID. when failed to convert, just return. An ErrorRecord will be written to error stream by ConvertTo-UserSID
+        if (Test-SID $User) {
+            $userSID = $User
+        }
+        else {
+            $userSID = ConvertTo-UserSID $User
+            if (-not $userSID) {
+                return
+            }
+        }
+
+        $userRegRoot = "HKEY_USERS\$userSID"
+
+        if (-not ($userRegRoot -and (Test-Path "Registry::$userRegRoot"))) {
+            Write-Error "Cannot find $userRegRoot."
+            return
+        }
+    }
+    else {
+        Write-Log "User is empty. Use HKCU."
+        $userRegRoot = 'HKCU'
+    }
+
+    if (-not $SkipRegistryPrefix) {
+        $userRegRoot = "Registry::$userRegRoot"
+    }
+
+    $userRegRoot
+}
+
 function Save-OfficeRegistry {
     [CmdletBinding()]
     param (
         [parameter(Mandatory = $true)]
-        $Path
+        $Path,
+        [string]$User
     )
 
     if (-not (Test-Path $Path)) {
@@ -1156,17 +1233,9 @@ function Save-OfficeRegistry {
         "HKLM\Software\WOW6432Node\Microsoft\Office"
         "HKLM\Software\WOW6432Node\Policies\Microsoft\Office")
 
-    $err = $($logonUser = Get-LogonUser -ErrorAction Continue) 2>&1
-
-    if ($logonUser) {
-        Write-Log "Logon user $($logonUser.Name) ($($logonUser.SID))"
-        $logonUserHKCU = "HKEY_USERS\$($logonUser.SID)"
-        $registryKeys = $registryKeys | ForEach-Object {$_.Replace("HKCU", $logonUserHKCU)}
-    }
-    else {
-        if ($err) {
-            Write-Log "Get-LogonUser failed. $err"
-        }
+    $userRegRoot = Get-UserRegistryRoot $User -SkipRegistryPrefix
+    if ($userRegRoot) {
+        $registryKeys = $registryKeys | ForEach-Object {$_.Replace("HKCU", $userRegRoot)}
     }
 
     # Make sure NOT to use WOW64 version of reg.exe when running on 32bit PowerShell on 64bit OS.
@@ -1481,26 +1550,18 @@ function Get-OutlookProfile {
         [string]$User
     )
 
-    $baseKeyPath = "Registry::HKCU"
-
-    if ($User) {
-        try {
-            $account = New-Object System.Security.Principal.NTAccount($User)
-            $sid = $account.Translate([System.Security.Principal.SecurityIdentifier]).Value
-            $baseKeyPath = "Registry::HKEY_USERS\$sid"
-        }
-        catch {
-            Write-Error -Message "Cannot find the given user `"$User`"." -Exception $_.Exception
-            return
-        }
-    }
-    else {
+    if (-not $User) {
         $User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    }
+
+    $userRegRoot = Get-UserRegistryRoot $User
+    if (-not $userRegRoot) {
+        return
     }
 
     # List Outlook "profiles" keys
     $profiles = @(
-        $versionKeys = @(Get-ChildItem (Join-Path $baseKeyPath 'Software\Microsoft\Office\') -ErrorAction SilentlyContinue | Where-Object {$_.Name -match '\d\d\.0'})
+        $versionKeys = @(Get-ChildItem (Join-Path $userRegRoot 'Software\Microsoft\Office\') -ErrorAction SilentlyContinue | Where-Object {$_.Name -match '\d\d\.0'})
         if ($versionKeys.Count) {
             foreach ($versionKey in $versionKeys) {
                 Get-ChildItem (Join-Path $versionKey.PsPath '\Outlook\Profiles') -ErrorAction SilentlyContinue
@@ -1575,7 +1636,7 @@ function Save-CachedAutodiscover {
         [Parameter(Mandatory = $true)]
         # Where to save
         $Path,
-        # Target user
+        # Target user name
         [string]$User
     )
 
@@ -1586,6 +1647,9 @@ function Save-CachedAutodiscover {
     # Check %LOCALAPPDATA%\Microsoft\Outlook
     if ($User) {
         $localAppdata = Join-Path "C:\Users" "$User\AppData\Local"
+        if (-not (Test-Path $localAppdata)) {
+            $localAppdata = $env:LOCALAPPDATA
+        }
     }
     else {
         $localAppdata = $env:LOCALAPPDATA
@@ -1733,7 +1797,7 @@ function Save-OfficeModuleInfo {
     )
 
     $listingFinished = $sw.Elapsed
-    Write-Log "Listing $($items.Count) items took $($listingFinished.Milliseconds) ms."
+    Write-Log "Listing $($items.Count) items took $($listingFinished.TotalMilliseconds) ms."
 
     # Apply filters
     if ($Filters.Count) { # This is for PowerShell v2. PSv2 iterates a null collection.
@@ -1775,7 +1839,7 @@ function Save-OfficeModuleInfo {
 
 
     $sw.Stop()
-    Write-Log "Enumerating items took $(($sw.Elapsed - $listingFinished).Milliseconds) ms."
+    Write-Log "Enumerating items took $(($sw.Elapsed - $listingFinished).TotalMilliseconds) ms."
 }
 
 function Save-MSInfo32 {
@@ -2144,20 +2208,16 @@ function Stop-Procmon {
 
 function Start-TcoTrace {
     [CmdletBinding()]
-    param()
+    param(
+        [string]$User
+    )
 
     $officeInfo = Get-OfficeInfo -ErrorAction Stop
     $majorVersion = $officeInfo.Version.Split('.')[0]
 
     # Create registry key & values. Ignore errors (might fail due to existing values)
-    $logonUser = Get-LogonUser -ErrorAction SilentlyContinue
-    if ($logonUser) {
-        Write-Log "Found a logon user $($logonUser.Name) ($($logonUser.SID))."
-        $keypath = "Registry::HKEY_USERS\$($logonUser.SID)\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
-    }
-    else {
-        $keypath = "Registry::HKCU\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
-    }
+    $userRegRoot = Get-UserRegistryRoot -User $User -ErrorAction Stop
+    $keypath = Join-Path $userRegRoot "Software\Microsoft\Office\$majorVersion.0\Common\Debug"
 
     Write-Log "Using $keypath."
 
@@ -2178,7 +2238,8 @@ function Stop-TcoTrace {
     [CmdletBinding()]
     param(
         [parameter(Mandatory = $true)]
-        $Path
+        $Path,
+        [string]$User
     )
 
     if (-not (Test-Path $Path)) {
@@ -2190,14 +2251,8 @@ function Stop-TcoTrace {
     $majorVersion = $officeInfo.Version.Split('.')[0]
 
     # Remove registry values
-    $logonUser = Get-LogonUser -ErrorAction SilentlyContinue
-    if ($logonUser) {
-        Write-Log "Found a logon user $($logonUser.Name) ($($logonUser.SID))."
-        $keypath = "Registry::HKEY_USERS\$($logonUser.SID)\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
-    }
-    else {
-        $keypath = "Registry::HKCU\Software\Microsoft\Office\$majorVersion.0\Common\Debug"
-    }
+    $userRegRoot = Get-UserRegistryRoot -User $User -ErrorAction Stop
+    $keypath = Join-Path $userRegRoot "Software\Microsoft\Office\$majorVersion.0\Common\Debug"
 
     if (-not (Test-Path $keypath)) {
         Write-Warning "$keypath does not exist"
@@ -2987,11 +3042,19 @@ Get Outlook's COM addins
 #>
 function Get-OutlookAddin {
     [CmdletBinding()]
-    param()
+    param(
+        # User name or SID
+        [string]$User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot $User
+    if (-not $userRegRoot) {
+        return
+    }
 
     # Get keys under "Addins"
      $addinKeys = @(
-        @('Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\Office\Outlook\Addins', 'Registry::HKLM\SOFTWARE\Microsoft\Office\Outlook\Addins', 'Registry::HKCU\Software\Microsoft\Office\Outlook\Addins') | ForEach-Object {
+        @('Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\Office\Outlook\Addins', 'Registry::HKLM\SOFTWARE\Microsoft\Office\Outlook\Addins', (Join-Path $userRegRoot 'Software\Microsoft\Office\Outlook\Addins')) | ForEach-Object {
             Get-ChildItem $_ -ErrorAction SilentlyContinue
         }
      )
@@ -3135,13 +3198,15 @@ function Collect-OutlookInfo {
     try {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 0
+            New-Item -ItemType directory (Join-Path $tempPath 'Configuration') | Out-Null
+            $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
 
             # Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')
             # Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
 
-            Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
+            Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -User $LogonUser.SID -ErrorAction SilentlyContinue
             Get-ClickToRunConfiguration -ErrorAction SilentlyContinue | ForEach-Object { if ($_) {$_ | Export-Clixml -Path (Join-Path $tempPath 'Configuration\ClickToRunConfiguration.xml')}}
-            Get-OutlookAddin -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookAddin.xml')
+            Get-OutlookAddin -User $LogonUser.SID -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookAddin.xml')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
 
             Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
@@ -3152,7 +3217,6 @@ function Collect-OutlookInfo {
             Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
 
-            $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
             Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $tempPath 'Cached AutoDiscover')
             Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OfficeInfo.xml')
             Get-OutlookProfile -User $LogonUser.Name -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookProfile.xml')
