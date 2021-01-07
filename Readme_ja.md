@@ -1,7 +1,7 @@
 ﻿## 概要
 OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
-[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-12-17/OutlookTrace.psm1)
+[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2021-01-06/OutlookTrace.psm1)
 
 ## 利用方法
 
@@ -98,7 +98,7 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 Fiddler トレースを採取した場合には、手順 8 で指定したパスワードも併せてお寄せください。
 
 # ライセンス
-Copyright (c) 2020 Ryusuke Fujita
+Copyright (c) 2021 Ryusuke Fujita
 
 This software is released under the MIT License.  
 http://opensource.org/licenses/mit-license.php

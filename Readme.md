@@ -1,7 +1,7 @@
 ﻿## Overview
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2020-12-17/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2021-01-06/OutlookTrace.psm1)
 
 ## How to use
 1. Shutdown Outlook if it's running.
@@ -100,7 +100,7 @@ Send the zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder 
 If you captured a Fiddler trace, send the password used in step 8 too.
 
 ## License
-Copyright (c) 2020 Ryusuke Fujita
+Copyright (c) 2021 Ryusuke Fujita
 
 This software is released under the MIT License.  
 http://opensource.org/licenses/mit-license.php
