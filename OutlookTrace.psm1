@@ -2933,7 +2933,10 @@ function Test-Autodiscover {
 
     # Proxy Server
     # e.g. "http://myproxy:8080"
-    [string]$Proxy
+    [string]$Proxy,
+    
+    # Add "X-MapiHttpCapability: 1" to the header
+    [switch]$MapiHttpCapability = $true
     )
 
     $body = @"
@@ -2971,6 +2974,10 @@ function Test-Autodiscover {
 
     if ($Proxy) {
         $arguments['Proxy'] = $Proxy
+    }
+
+    if ($MapiHttpCapability) {
+        $arguments['Headers'].Add('X-MapiHttpCapability','1')
     }
 
     Invoke-WebRequest @arguments
