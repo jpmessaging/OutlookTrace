@@ -1571,7 +1571,7 @@ function Get-OutlookProfile {
     )
 
     if (-not $profiles.Count) {
-        Write-Log "There is no profiles for $User."
+        Write-Log "There are no profiles for $User."
         return
     }
 
@@ -2934,7 +2934,7 @@ function Test-Autodiscover {
     # Proxy Server
     # e.g. "http://myproxy:8080"
     [string]$Proxy,
-    
+
     # Add "X-MapiHttpCapability: 1" to the header
     [switch]$MapiHttpCapability = $true
     )
@@ -3444,7 +3444,7 @@ function Collect-OutlookInfo {
         }
 
         # Save process list again after traces
-        if ($Component -contains 'Configuration' -or $Component -contains 'All') {
+        if (($Component -contains 'Configuration' -or $Component -contains 'All') -and $Component.Count -gt 1) {
             Write-Log "Saving Win32_Process"
             Get-WmiObject -Class Win32_Process | ForEach-Object {
                 if ($_.ProcessName -eq 'Outlook.exe') {
