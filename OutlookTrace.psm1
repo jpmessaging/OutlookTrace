@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-01-06'
+$Version = 'v2021-01-14'
 
 # Outlook's ETW pvoviders
 $outlook2016Providers =
@@ -1307,7 +1307,7 @@ function Save-OSConfiguration {
     Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")
     Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")
     Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "JoinInformation.xml")
-    Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")    
+    Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")
 
     if (Get-Command 'Get-NetIPInterface' -ErrorAction SilentlyContinue) {
         Get-NetIPInterface -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "NetIPInterface.xml")
@@ -1670,11 +1670,15 @@ function Save-CachedAutodiscover {
     # Remove Hidden attribute
     foreach ($file in @(Get-ChildItem $Path -Force)) {
         if ((Get-ItemProperty $file.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
-            Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
+            if ($PSVersionTable.PSVersion.Major -gt 2) {
+                # Unfortunately, this does not work in PowerShellV2.
+                (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
+            }
+            else {
+                # This is for PSv2, but could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
+                Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
+            }
         }
-
-        # Unfortunately, this does not work in PowerShellV2.
-        # (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
     }
 }
 
@@ -2992,9 +2996,7 @@ function ConvertTo-CLSID {
     [CmdletBinding()]
     param(
         [parameter(Mandatory=$true)]
-        [string]$ProgID#,
-        #[ValidateSet('Guid', 'String')]
-        #[string]$ReturnType
+        [string]$ProgID
     )
 
     $def = @'
@@ -3017,7 +3019,7 @@ function ConvertTo-CLSID {
     if ($hr -ne $S_OK) {
         Write-Verbose -Message $("CLSIDFromProgID for `"$ProgID`" failed with 0x{0:x}. Trying ClickToRun registry." -f $hr)
 
-        # Try Click2Run Registry
+        # Try ClickToRun Registry
         $clsidProp = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\$ProgID\CLSID" -ErrorAction SilentlyContinue
         if ($clsidProp) {
             $CLSID = $clsidProp.'(default)'
@@ -3238,7 +3240,7 @@ function Collect-OutlookInfo {
             Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
 
-            Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $tempPath 'Cached AutoDiscover')
+            Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $tempPath 'Cached AutoDiscover') -ErrorAction SilentlyContinue
             Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OfficeInfo.xml')
             Get-OutlookProfile -User $LogonUser.Name -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookProfile.xml')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
