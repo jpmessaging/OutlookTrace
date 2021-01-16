@@ -1682,6 +1682,38 @@ function Save-CachedAutodiscover {
     }
 }
 
+function Remove-CachedAutodiscover {
+    [CmdletBinding()]
+    param(
+        # Target user name
+        [string]$User
+    )
+
+     # Check %LOCALAPPDATA%\Microsoft\Outlook
+     if ($User) {
+        $localAppdata = Join-Path "C:\Users" "$User\AppData\Local"
+        if (-not (Test-Path $localAppdata)) {
+            $localAppdata = $env:LOCALAPPDATA
+        }
+    }
+    else {
+        $localAppdata = $env:LOCALAPPDATA
+    }
+
+    $cachePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
+    if (-not (Test-Path $cachePath)) {
+        Write-Log "$cachePath is not found."
+        return
+    }
+
+    Write-Log "Searching $cachePath."
+
+    # Remove Autodiscover XML files
+    Get-ChildItem $cachePath -Filter '*Autod*.xml' -Force -Recurse | ForEach-Object {
+        Remove-Item $_.FullName -Force
+    }
+}
+
 function Start-LdapTrace {
     [CmdletBinding()]
     param(
@@ -3224,8 +3256,9 @@ function Collect-OutlookInfo {
             New-Item -ItemType directory (Join-Path $tempPath 'Configuration') | Out-Null
             $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
 
-            # Save-MicrosoftUpdate -Path (Join-Path $tempPath 'Configuration')
-            # Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 10
+            if ($LogonUser) {
+                $LogonUser | Export-Clixml -Path (Join-Path $tempPath 'Configuration\LogonUser.xml')
+            }
 
             Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -User $LogonUser.SID -ErrorAction SilentlyContinue
             Get-ClickToRunConfiguration -ErrorAction SilentlyContinue | ForEach-Object { if ($_) {$_ | Export-Clixml -Path (Join-Path $tempPath 'Configuration\ClickToRunConfiguration.xml')}}
@@ -3496,4 +3529,4 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
     $PSDefaultParameterValues.Add("Export-Clixml:Encoding", 'UTF8')
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-Click2RunConfiguration, Get-DeviceJoinStatus, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Collect-OutlookInfo
