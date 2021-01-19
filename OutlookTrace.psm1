@@ -2951,7 +2951,7 @@ function Test-Autodiscover {
     [CmdletBinding()]
     param(
     # Server to send an Autodiscover request. For Exchange Online, use 'outlook.office365.com'
-    [Parameter(Mandatory=$true)]
+    # When not specified, "autodiscover.{SMTP domain}" will be tried.
     [string]$Server,
 
     # Target Email address for Autodiscover
@@ -2972,8 +2972,8 @@ function Test-Autodiscover {
     # e.g. "http://myproxy:8080"
     [string]$Proxy,
 
-    # Add "X-MapiHttpCapability: 1" to the header
-    [switch]$MapiHttpCapability = $true
+    # Skip adding "X-MapiHttpCapability: 1" to the header
+    [switch]$SkipMapiHttpCapability
     )
 
     $body = @"
@@ -2986,39 +2986,124 @@ function Test-Autodiscover {
 </Autodiscover>
 "@
 
-    # Arguments for Invoke-WebRequest paramters
-    $arguments = @{
-        Method = 'Post'
-        Uri = "https://$Server/autodiscover/autodiscover.xml"
-        Headers =  @{'Content-Type'='text/xml'}
-        Body = $body
-        UseBasicParsing = $true
-    }
+    $mailDomain = $EmailAddress.Substring($EmailAddress.IndexOf("@") + 1)
 
-    switch -Wildcard ($PSCmdlet.ParameterSetName) {
-        'LegacyAuth' {
-            Write-Verbose "Credential is provided. Use it for legacy auth"
-            $arguments['Credential'] = $Credential
-            break
+    # These are the URL to try (+ redirect URLs).
+    # Note that the urls are tried in the reverse order because this is a stack.
+    $urls = New-Object System.Collections.Generic.Stack[string](,[string[]]@(
+        "http://autodiscover.$mailDomain/autodiscover/autodiscover.xml"
+        "https://autodiscover.$mailDomain/autodiscover/autodiscover.xml"
+        "https://$Server/autodiscover/autodiscover.xml"
+    ))
+
+    $step = 1
+
+    while ($urls.Count -gt 0) {
+        $url = $urls.Pop()
+
+        # Check if URL is valid (it could be invalid if $Server is not provided).
+        $uri = $null
+        if (-not [Uri]::TryCreate($url, [UriKind]::Absolute, [ref]$uri)) {
+            Write-Log "Skipping $url because it's invalid."
+            continue
         }
 
-        'ModernAuth' {
-            Write-Verbose "Token is provided. Use it for modern auth"
-            $arguments['Headers'].Add('Authorization',"Bearer $Token")
-            break
+        # Arguments for Invoke-WebRequest paramters
+        if ($uri.Scheme -eq 'https') {
+            $arguments = @{
+                Method = 'POST'
+                Uri = $uri
+                Headers =  @{'Content-Type'='text/xml'}
+                Body = $body
+                UseBasicParsing = $true
+            }
+
+            switch -Wildcard ($PSCmdlet.ParameterSetName) {
+                'LegacyAuth' {
+                    Write-Verbose "Credential is provided. Use it for legacy auth"
+                    $arguments['Credential'] = $Credential
+                    break
+                }
+
+                'ModernAuth' {
+                    Write-Verbose "Token is provided. Use it for modern auth"
+                    $arguments['Headers'].Add('Authorization',"Bearer $Token")
+                    break
+                }
+            }
+
+            if (-not $SkipMapiHttpCapability) {
+                $arguments['Headers'].Add('X-MapiHttpCapability','1')
+            }
+        }
+        else {
+            $arguments = @{
+                Method = 'GET'
+                Uri = $uri
+                MaximumRedirection = 0 # Just get 302 and don't follow the redirect.
+                UseBasicParsing = $true
+            }
+        }
+
+        if ($Proxy) {
+            $arguments['Proxy'] = $Proxy
+        }
+
+        # Make a web request.
+        Write-Log "Trying $($arguments.Method) $($arguments.Uri)"
+        $result = $null
+        $err = $($result = Invoke-WebRequest @arguments) 2>&1
+
+        # Check result
+        if ($result.StatusCode -eq 200) {
+            [PSCustomObject]@{
+                Step = $step++
+                URI = $uri
+                Success = $true
+                Result = $result
+            }
+            return
+        }
+        elseif ($uri.Scheme -eq 'http' -and $result.StatusCode -eq 302) {
+            # See if we got 302 with Location header
+            $redirectUrl = $null
+            if ($result.StatusCode -eq 302) {
+                $redirectUrl = $result.Headers['Location']
+            }
+
+            if ($redirectUrl) {
+                $result | Add-Member -MemberType ScriptMethod -Name 'ToString' -Force -Value {"Received a redirect URL $($this.Headers['Location'])"}
+                [PSCustomObject]@{
+                    Step = $step++
+                    URI = $uri
+                    Success = $true
+                    Result = $result
+                }
+
+                # Try the given redirect uri next
+                Write-Log "Received a redirect URL: $redirectUrl"
+                $urls.Push($redirectUrl)
+            }
+            else {
+                [PSCustomObject]@{
+                    Step = $step++
+                    URI = $uri
+                    Success = $false
+                    Result = $err
+                }
+            }
+        }
+        else {
+            [PSCustomObject]@{
+                Step = $step++
+                URI = $uri
+                Success = $false
+                Result = $err
+            }
         }
     }
-
-    if ($Proxy) {
-        $arguments['Proxy'] = $Proxy
-    }
-
-    if ($MapiHttpCapability) {
-        $arguments['Headers'].Add('X-MapiHttpCapability','1')
-    }
-
-    Invoke-WebRequest @arguments
 }
+
 
 <#
 .SYNOPSIS
