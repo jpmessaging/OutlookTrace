@@ -1,7 +1,7 @@
 ﻿## Overview
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2021-01-15/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2021-01-20/OutlookTrace.psm1)
 
 ## How to use
 1. Shutdown Outlook if it's running.
