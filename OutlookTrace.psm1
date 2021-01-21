@@ -3180,8 +3180,15 @@ function Get-OutlookAddin {
     }
 
     # Get keys under "Addins"
-     $addinKeys = @(
-        @('Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\Office\Outlook\Addins', 'Registry::HKLM\SOFTWARE\Microsoft\Office\Outlook\Addins', (Join-Path $userRegRoot 'Software\Microsoft\Office\Outlook\Addins')) | ForEach-Object {
+    $addinKeys = @(
+        @(
+            'Registry::HKLM\SOFTWARE\Microsoft\Office\Outlook\Addins'
+            'Registry::HKLM\SOFTWARE\WOW6432Node\Microsoft\Office\Outlook\Addins'
+            'Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\Office\Outlook\Addins'
+            'Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\Office\Outlook\AddIns'
+            Join-Path $userRegRoot 'Software\Microsoft\Office\Outlook\Addins'
+        ) |
+        ForEach-Object {
             Get-ChildItem $_ -ErrorAction SilentlyContinue
         }
      )
