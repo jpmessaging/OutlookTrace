@@ -839,14 +839,18 @@ function Save-EventLog {
         New-Item -ItemType directory $Path | Out-Null
     }
 
-    $logs = @("Application","System")
-    $logs += (wevtutil el) -like '*AAD*'
+    $logs = @(
+        'Application'
+        'System'
+        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD"
+    )
 
     foreach ($log in $logs) {
         $fileName = $log.Replace('/', '_') + '.evtx'
         $filePath = Join-Path $Path -ChildPath $fileName
         Write-Log "Saving $log to $filePath"
         wevtutil epl $log $filePath /ow
+        wevtutil al $filePath
     }
 }
 
@@ -1308,12 +1312,92 @@ function Save-OSConfiguration {
     Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")
     Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "JoinInformation.xml")
     Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")
-
-    if (Get-Command 'Get-NetIPInterface' -ErrorAction SilentlyContinue) {
-        Get-NetIPInterface -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "NetIPInterface.xml")
-    }
 }
 
+
+function Save-NetworkInfo {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory = $true)]
+        $Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+    }
+
+    # There are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
+    $commands = @(
+        'Get-NetAdapter -IncludeHidden'
+        'Get-NetAdapterAdvancedProperty'
+        'Get-NetAdapterBinding -IncludeHidden'
+        'Get-NetIpConfiguration -Detailed'
+        'Get-DnsClientNrptPolicy'
+        # 'Resolve-DnsName bing.com'
+        # 'ping bing.com -4'
+        # 'ping bing.com -6'
+        # 'Test-NetConnection bing.com -InformationLevel Detailed'
+        # 'Test-NetConnection bing.com -InformationLevel Detailed -CommonTCPPort HTTP'
+        'Get-NetRoute'
+        'Get-NetIPaddress'
+        'Get-NetLbfoTeam'
+        # 'Get-Service -Name:VMMS'
+        # 'Get-VMSwitch'
+        # 'Get-VMNetworkAdapter -all'
+        # 'Get-WindowsOptionalFeature -Online'
+        # 'Get-Service'
+        # 'Get-PnpDevice | Get-PnpDeviceProperty -KeyName DEVPKEY_Device_InstanceId,DEVPKEY_Device_DevNodeStatus,DEVPKEY_Device_ProblemCode'
+
+        'Get-NetIPInterface'
+        'ipconfig /all'
+
+        # Dump Windows Firewall config
+        'netsh advfirewall monitor show currentprofile' # current profiles
+        'netsh advfirewall monitor show firewall' # firewall configuration
+        'netsh advfirewall monitor show consec' # connection security configuration
+        'netsh advfirewall firewall show rule name=all verbose' # firewall rules
+        'netsh advfirewall consec show rule name=all verbose' # connection security rules
+        'netsh advfirewall monitor show firewall rule name=all'# firewall rules from Dynamic Store
+        'netsh advfirewall monitor show consec rule name=all' # connection security rules from Dynamic Store
+    )
+
+    foreach ($commandString in $commands) {
+        if ($commandString.IndexOf(' ') -ge 0) {
+            $commandName = $commandString.SubString(0, $commandString.IndexOf(' '))
+        }
+        else {
+            $commandName = $commandString
+        }
+
+        $command = Get-Command $commandName -ErrorAction SilentlyContinue
+
+        if (-not $command) {
+            Write-Log "$commandName is not available."
+            continue
+        }
+
+        $result = $null
+        $measure = Measure-Command {
+            $err = $($result = Invoke-Expression $commandString) 2>&1
+        }
+        Write-Log "$commandString took $($measure.TotalMilliseconds) ms."
+
+        if (-not $result) {
+            Write-Log "'$commandString' returned nothing. Error: $err"
+            continue
+        }
+
+        if ($command.CommandType -eq 'Application') {
+            # To be more strict, I could use [System.IO.Path]::GetInvalidFileNameChars(). But it's ok for now.
+            $fileName = $commandString.Replace('/', '-')
+            $result | Out-File -FilePath (Join-Path $Path "$fileName.txt")
+        }
+        else {
+            $fileName = $commandName.SubString($commandName.IndexOf('-') + 1)
+            $result | Export-Clixml -Path (Join-Path $Path "$fileName.xml")
+        }
+    }
+}
 
 function Get-ProxySetting {
     [CmdletBinding()]
@@ -3291,6 +3375,51 @@ function Get-DeviceJoinStatus {
     }
 }
 
+<#
+This function just starts C:\Windows\System32\gatherNetworkInfo.vbs and returns a process
+#>
+function Start-GatherNetworkInfo {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item -ItemType Directory -Path $Path -ErrorAction Stop | Out-Null
+    }
+
+    Invoke-Command {
+        $ErrorActionPreference = 'Continue'
+        Start-Process cscript.exe -ArgumentList "C:\windows\system32\gatherNetworkInfo.vbs" -WorkingDirectory $Path -PassThru
+    }
+}
+
+function Stop-GatherNetworkInfo {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Process,
+        [TimeSpan]$Timeout
+    )
+
+    Write-Log "Waiting for gatherNetworkInfo.vbs to finish $(if ($Timeout) {"with timeout $Timeout"})"
+    if ($null -eq $Timeout) {
+        $completed = $process.WaitForExit()
+    }
+    else {
+        $completed = $process.WaitForExit($Timeout.TotalMilliseconds)
+    }
+
+    if (-not $completed) {
+        Write-Log "gatherNetworkInfo reached timeout $Timeout"
+        $process.Kill()
+    }
+
+    $process.Dispose()
+}
+
+
 function Collect-OutlookInfo {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param (
@@ -3382,6 +3511,8 @@ function Collect-OutlookInfo {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
 
             Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
+
+            Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
 
             # Get processes and its user (PowerShell 4's Get-Process has -IncludeUserName, but I'm using WMI here for now).
             Write-Log "Saving Win32_Process."
@@ -3632,4 +3763,4 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
     $PSDefaultParameterValues.Add("Export-Clixml:Encoding", 'UTF8')
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Collect-OutlookInfo
