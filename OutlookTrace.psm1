@@ -2973,7 +2973,10 @@ function Test-Autodiscover {
     [string]$Proxy,
 
     # Skip adding "X-MapiHttpCapability: 1" to the header
-    [switch]$SkipMapiHttpCapability
+    [switch]$SkipMapiHttpCapability,
+
+    # Force Basic auth
+    [switch]$ForceBasicAuth
     )
 
     $body = @"
@@ -3021,7 +3024,14 @@ function Test-Autodiscover {
             switch -Wildcard ($PSCmdlet.ParameterSetName) {
                 'LegacyAuth' {
                     Write-Verbose "Credential is provided. Use it for legacy auth"
-                    $arguments['Credential'] = $Credential
+
+                    if ($ForceBasicAuth) {
+                        $base64Cred = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("$($Credential.UserName):$($Credential.GetNetworkCredential().Password)"))
+                        $arguments['Headers'].Add('Authorization',"Basic $base64Cred")
+                    }
+                    else {
+                        $arguments['Credential'] = $Credential
+                    }
                     break
                 }
 
