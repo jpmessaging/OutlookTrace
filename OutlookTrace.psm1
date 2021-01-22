@@ -3593,7 +3593,8 @@ function Collect-OutlookInfo {
         [Parameter(Mandatory=$true)]
         [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'WFP', 'All')]
         [array]$Component,
-        [switch]$SkipCabFile,
+        [ValidateSet('None', 'Mini', 'Full')]
+        $NetshReportMode = 'Mini',
         [int]$DumpCount = 3,
         [int]$DumpIntervalSeconds = 60,
         [switch]$StartOutlook
@@ -3710,14 +3711,7 @@ function Collect-OutlookInfo {
             Stop-NetshTrace
             Remove-Item (Join-Path $tempPath $tempNetshName) -Recurse -Force -ErrorAction SilentlyContinue
 
-            if ($SkipCabFile) {
-                $reportMode = 'None'
-            }
-            else {
-                $reportMode = 'Mini'
-            }
-
-            Start-NetshTrace -Path (Join-Path $tempPath 'Netsh') -RerpotMode $reportMode
+            Start-NetshTrace -Path (Join-Path $tempPath 'Netsh') -RerpotMode $NetshReportMode
             $netshTraceStarted = $true
         }
 
@@ -3841,7 +3835,7 @@ function Collect-OutlookInfo {
         throw
     }
     finally {
-        Write-Progress -Activity 'Stopping' -Status "Please wait." -PercentComplete -1
+        Write-Progress -Activity 'Stopping traces' -Status "Please wait." -PercentComplete -1
 
         if ($psrStarted) {
             Stop-PSR
@@ -3891,9 +3885,13 @@ function Collect-OutlookInfo {
             Write-Warning "Please stop FiddlerCap and save the capture manually."
         }
 
+        Write-Progress -Activity 'Stopping traces' -Status "Please wait." -Completed
+
         # Save the event logs after tracing is done
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
+            Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             Save-EventLog -Path (Join-Path $tempPath 'EventLog')
+            Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
         }
 
         # Save process list again after traces
@@ -3908,7 +3906,6 @@ function Collect-OutlookInfo {
             } | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
         }
 
-        Write-Progress -Activity 'Stopping' -Status 'Please wait.' -Completed
         Close-Log
     }
 
