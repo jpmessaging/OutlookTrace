@@ -1349,7 +1349,7 @@ function Save-NetworkInfo {
         New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
     }
 
-    # There are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
+    # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
     $commands = @(
         'Get-NetAdapter -IncludeHidden'
         'Get-NetAdapterAdvancedProperty'
@@ -1916,9 +1916,6 @@ function Start-SavingOfficeModuleInfo {
         return
     }
 
-    $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
-    $outputName = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
-
     # Create a named event for inter PS process communication
     $eventName = [Guid]::NewGuid().ToString()
     $namedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset, $eventName)
@@ -1992,12 +1989,14 @@ function Start-SavingOfficeModuleInfo {
 
         $namedEvent.Close()
 
-    } -ArgumentList $Path, $officeInfo, $Filters, $outputName, $eventName
+    } -ArgumentList $Path, $officeInfo, $Filters, 'OfficeModuleInfo', $eventName
 
     New-Object PSCustomObject -Property @{
         Job = $job
         Event = $namedEvent # To be closed by Stop-SavingOfficeModuleInfo
     }
+
+    Write-Log "Job (ID: $($job.Id)) has started. A Named Event (Handle: $($namedEvent.Handle), Name: '$eventName') is created"
 }
 
 function Stop-SavingOfficeModuleInfo {
@@ -2017,12 +2016,21 @@ function Stop-SavingOfficeModuleInfo {
         $namedEvent = $JobDescriptor.Event
 
         # Wait for the job up to timeout
-        Wait-Job -Job $job -Timeout $TimeoutSecond | Out-Null
+        Write-Log "Waiting for the job (ID: $($job.Id)) up to $TimeoutSecond seconds."
+        if (Wait-Job -Job $job -Timeout $TimeoutSecond) {
+            # https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/wait-job
+            # > This cmdlet returns job objects that represent the completed jobs. If the wait ends because the value of the Timeout parameter is exceeded, Wait-Job does not return any objects.
+            Write-Log "Job was completed."
+        }
+        else {
+            Write-Log "Job did not complete. It will be stopped by event signal."
+        }
 
         # Signal the event and close
         try {
             $namedEvent.Set() | Out-Null
             $namedEvent.Close()
+            Write-Log "Event (Handle: $($namedEvent.Handle)) was closed."
         }
         catch {
             Write-Error -ErrorRecord $_
@@ -2033,6 +2041,7 @@ function Stop-SavingOfficeModuleInfo {
         Stop-Job -Job $job
         # Receive-Job -Job $job
         Remove-Job -Job $job
+        Write-Log "Job (ID: $($job.Id)) was removed."
     }
 }
 
@@ -3652,6 +3661,9 @@ function Collect-OutlookInfo {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 0
             New-Item -ItemType directory (Join-Path $tempPath 'Configuration') | Out-Null
+
+            $savingOfficeModuleInfoDescriptor = Start-SavingOfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
+
             $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
 
             if ($LogonUser) {
@@ -3659,28 +3671,30 @@ function Collect-OutlookInfo {
             }
 
             Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -User $LogonUser.SID -ErrorAction SilentlyContinue
-            Get-ClickToRunConfiguration -ErrorAction SilentlyContinue | ForEach-Object { if ($_) {$_ | Export-Clixml -Path (Join-Path $tempPath 'Configuration\ClickToRunConfiguration.xml')}}
-            Get-OutlookAddin -User $LogonUser.SID -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookAddin.xml')
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
 
-            Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
+            #Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
             #$Filters = 'outlook\.exe', 'umoutlookaddin\.dll', 'mso\.dll', 'mso\d\d.+\.dll', 'olmapi32\.dll', 'emsmdb32\.dll', 'wwlib\.dll'
             #Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -Filters $Filters -ErrorAction SilentlyContinue
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
 
-            Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
-
-            Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $tempPath 'Cached AutoDiscover') -ErrorAction SilentlyContinue
             Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OfficeInfo.xml')
             Get-OutlookProfile -User $LogonUser.Name -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookProfile.xml')
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
+            Get-OutlookAddin -User $LogonUser.SID -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookAddin.xml')
+            Get-ClickToRunConfiguration -ErrorAction SilentlyContinue | ForEach-Object { if ($_) {$_ | Export-Clixml -Path (Join-Path $tempPath 'Configuration\ClickToRunConfiguration.xml')}}
 
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
+
+            Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $tempPath 'Cached AutoDiscover') -ErrorAction SilentlyContinue
+            Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
             Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
+
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
 
             Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
 
-            # Get processes and its user (PowerShell 4's Get-Process has -IncludeUserName, but I'm using WMI here for now).
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
+
+            # Get processes and its user (only for Outlook.exe). (PowerShell 4's Get-Process has -IncludeUserName, but I'm using WMI here for now).
             Write-Log "Saving Win32_Process."
             Get-WmiObject -Class Win32_Process | ForEach-Object {
                 if ($_.ProcessName -eq 'Outlook.exe') {
@@ -3889,6 +3903,11 @@ function Collect-OutlookInfo {
 
         # Save the event logs after tracing is done
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
+            $timeout = 30 # seconds
+            Write-Progress -Activity 'Saving Office module info' -Status "Please wait up to $timeout seconds" -PercentComplete -1
+            Stop-SavingOfficeModuleInfo -JobDescriptor $savingOfficeModuleInfoDescriptor -TimeoutSecond $timeout -ErrorAction SilentlyContinue
+            Write-Progress -Activity 'Saving Office module info' -Status 'Please wait.' -Completed
+
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             Save-EventLog -Path (Join-Path $tempPath 'EventLog')
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
