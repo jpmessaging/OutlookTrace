@@ -286,7 +286,9 @@ function Start-NetshTrace {
     param (
         [parameter(Mandatory = $true)]
         $Path,
-        $FileName = 'nettrace-winhttp-webio.etl'
+        $FileName = 'nettrace-winhttp-webio.etl',
+        [ValidateSet('None', 'Mini', 'Full')]
+        $RerpotMode = 'None'
     )
 
     if (-not (Test-Path $Path)) {
@@ -323,19 +325,30 @@ function Start-NetshTrace {
     $traceFile = Join-Path $Path -ChildPath $FileName
     $err = $($stdout = Invoke-Command  {
         $ErrorActionPreference = 'Continue'
-        & $netshexe trace start scenario=$scenario capture=yes tracefile="`"$traceFile`"" overwrite=yes maxSize=2000
+        & $netshexe trace start scenario=$scenario capture=yes tracefile="`"$traceFile`"" overwrite=yes maxSize=2000  # correlation=yes
     }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
         Write-Error "netsh failed.`nexit code: $LASTEXITCODE; stdout: $stdout; error: $err"
         return
     }
+
+    # Even with "report=no" (by default), "HKEY_CURRENT_USER\System\CurrentControlSet\Control\NetTrace\Session\MiniReportEnabled" might be be set to 1
+    # (This depends on Win10 version with a scenario. For InternetClient_dbg scenario, Win10 2004 and above does not generate mini report).
+    # In order to suppress generating a minireport (i.e. C:\Windows\System32\gatherNetworkInfo.vbs), set MiniReportEnabled to 0 before netsh trace stop.
+    $netshRegPath = 'HKCU:\System\CurrentControlSet\Control\NetTrace\Session\'
+    switch ($RerpotMode) {
+        'None' { Set-ItemProperty -Path $netshRegPath -Name 'MiniReportEnabled' -Type DWord -Value 0; break }
+        'Mini' { Set-ItemProperty -Path $netshRegPath -Name 'MiniReportEnabled' -Type DWord -Value 1; break}
+        'Full' { Set-ItemProperty -Path $netshRegPath -Name 'ReportEnabled' -Type DWord -Value 1; break }
+    }
+
+    Write-Log "RerpotMode $RerpotMode is configured."
 }
 
 function Stop-NetshTrace {
     [CmdletBinding()]
     param (
-        [switch]$SkipCabFile,
         $SessionName = "NetTrace"
     )
 
@@ -369,40 +382,50 @@ function Stop-NetshTrace {
         return
     }
 
-    if ($SkipCabFile) {
-        # Manually stop the session
-        Write-Log "Stopping $SessionName with Stop-EtwSession"
-        Stop-EtwSession -SessionName $SessionName | Out-Null
+    # Get a netsh trace report mode
+    $sessionProps = Get-ItemProperty 'HKCU:\System\CurrentControlSet\Control\NetTrace\Session\'
+    $reportMode = 'None'
+
+    if ($sessionProps.ReportEnabled) {
+        $reportMode = 'Full'
+    }
+    elseif ($sessionProps.MiniReportEnabled) {
+        $reportMode = 'Mini'
+    }
+
+    Write-Log "ReportMode $reportMode is found."
+
+    $statusMsg = "This might take a while. "
+    if ($reportMode -eq 'Mini' -or $reportMode -eq 'Full') {
+        $statusMsg += "Generating a $reportMode Report"
+    }
+
+    Write-Progress -Activity "Stopping netsh trace" -Status $statusMsg -PercentComplete -1
+
+    if ($env:PROCESSOR_ARCHITEW6432) {
+        $netshexe = Join-Path $env:SystemRoot 'SysNative\netsh.exe'
     }
     else {
-        Write-Log "Stopping $SessionName with netsh trace stop"
-        Write-Progress -Activity "Stopping netsh trace" -Status "This might take a while" -PercentComplete -1
-
-        if ($env:PROCESSOR_ARCHITEW6432) {
-            $netshexe = Join-Path $env:SystemRoot 'SysNative\netsh.exe'
-        }
-        else {
-            $netshexe = Join-Path $env:SystemRoot 'System32\netsh.exe'
-        }
-
-        if (-not (Get-Command $netshexe -ErrorAction SilentlyContinue)) {
-            Write-Error "Cannot find $netshexe."
-            return
-        }
-
-        $err = $($stdout = Invoke-Command {
-            $ErrorActionPreference = 'Continue'
-            & $netshexe trace stop
-        }) 2>&1
-
-        if ($err -or $LASTEXITCODE -ne 0) {
-            Write-Error "Failed to stop netsh trace ($SessionName). exit code: $LASTEXITCODE; stdout: $stdout; error: $err"
-            # This is temporary for debugging issue "Data Collector Set was not found."
-            $sessions
-            return
-        }
-        Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
+        $netshexe = Join-Path $env:SystemRoot 'System32\netsh.exe'
     }
+
+    if (-not (Get-Command $netshexe -ErrorAction SilentlyContinue)) {
+        Write-Error "Cannot find $netshexe."
+        return
+    }
+
+    Write-Log "Stopping $SessionName with netsh trace stop"
+
+    $err = $($stdout = Invoke-Command {
+        $ErrorActionPreference = 'Continue'
+        & $netshexe trace stop
+    }) 2>&1
+
+    if ($err -or $LASTEXITCODE -ne 0) {
+        Write-Error "Failed to stop netsh trace ($SessionName). exit code: $LASTEXITCODE; stdout: $stdout; error: $err"
+    }
+
+    Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
 }
 
 # Instead of logman, use Win32 QueryAllTracesW, StopTraceW.
@@ -3541,19 +3564,24 @@ function Collect-OutlookInfo {
             # When netsh trace is run for the first time, it does not capture packets (even with "capture=yes").
             # To workaround, netsh is started and stopped immediately.
             $tempNetshName = 'netsh_test'
-            Start-NetshTrace -Path $tempPath -FileName "$tempNetshName.etl"
-            Stop-NetshTrace -SkipCabFile
-            Remove-Item (Join-Path $tempPath "$tempNetshName.etl") -Force -ErrorAction SilentlyContinue
+            Start-NetshTrace -Path (join-path $tempPath $tempNetshName) -FileName "$tempNetshName.etl" -RerpotMode 'None'
+            Stop-NetshTrace
             Remove-Item (Join-Path $tempPath $tempNetshName) -Recurse -Force -ErrorAction SilentlyContinue
 
-            Start-NetshTrace -Path (Join-Path $tempPath 'Netsh')
+            if ($SkipCabFile) {
+                $reportMode = 'None'
+            }
+            else {
+                $reportMode = 'Mini'
+            }
+
+            Start-NetshTrace -Path (Join-Path $tempPath 'Netsh') -RerpotMode $reportMode
             $netshTraceStarted = $true
         }
 
         if ($Component -contains 'Outlook' -or $Component -contains 'All') {
             # Stop a lingering session if any.
             Stop-OutlookTrace -ErrorAction SilentlyContinue
-            Start-OutlookTrace -Path (Join-Path $tempPath 'Outlook')
             $outlookTraceStarted = $true
         }
 
@@ -3678,7 +3706,7 @@ function Collect-OutlookInfo {
         }
 
         if ($netshTraceStarted) {
-            Stop-NetshTrace -SkipCabFile:$SkipCabFile
+            Stop-NetshTrace
         }
 
         if ($outlookTraceStarted) {
