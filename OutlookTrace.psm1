@@ -1894,6 +1894,148 @@ function Stop-LdapTrace {
     Remove-Item $keypath -ErrorAction SilentlyContinue | Out-Null
 }
 
+function Start-SavingOfficeModuleInfo {
+    [CmdletBinding()]
+    param(
+        [parameter(Mandatory = $true)]
+        $Path,
+        # filter items by their name using -match (e.g. 'outlook.exe','mso\d\d.*\.dll'). These are treated as "OR".
+        [string[]]$Filters
+    )
+
+    if (-not (Test-Path $Path)){
+        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+    }
+
+    $Path = Resolve-Path $Path
+
+    # If MS Office is not installed, bail.
+    $officeInfo = Get-OfficeInfo -ErrorAction SilentlyContinue
+    if (-not $officeInfo) {
+        Write-Error "MS Office is not installed."
+        return
+    }
+
+    $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
+    $outputName = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
+
+    # Create a named event for inter PS process communication
+    $eventName = [Guid]::NewGuid().ToString()
+    $namedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset, $eventName)
+
+    $job =
+    Start-Job -ScriptBlock {
+        param (
+            $Path,
+            $OfficeInfo,
+            $Filters,
+            $OutputFileName,
+            $EventName
+        )
+
+        $namedEvent = [System.Threading.EventWaitHandle]::OpenExisting($EventName)
+
+        $officePaths = @(
+            $OfficeInfo.InstallPath
+
+            if ($env:CommonProgramFiles) {
+                Join-Path $env:CommonProgramFiles 'microsoft shared'
+            }
+
+            if (${env:CommonProgramFiles(x86)}) {
+                Join-Path ${env:CommonProgramFiles(x86)} 'microsoft shared'
+            }
+        )
+
+        # Get exe and dll
+        # It's slightly faster to run gci twice with -Filter than running once with -Include *exe, *.dll
+        $items = @(
+            foreach ($officePath in $officePaths) {
+                Get-ChildItem -Path $officePath -Filter *.exe -Recurse -ErrorAction SilentlyContinue
+                Get-ChildItem -Path $officePath -Filter *.dll -Recurse -ErrorAction SilentlyContinue
+            }
+        )
+
+        # Apply filters
+        if ($Filters.Count) { # This is for PowerShell v2. PSv2 iterates a null collection.
+            $items = $items | Where-Object {
+                foreach ($filter in $Filters) {
+                    if ($_.Name -match $filter) {
+                        $true
+                        break
+                    }
+                }
+            }
+        }
+
+        @(
+        foreach ($item in $items) {
+            if ($item.VersionInfo.FileVersionRaw) {
+                $fileVersion = $item.VersionInfo.FileVersionRaw
+            }
+            else {
+                $fileVersion = $item.VersionInfo.FileVersion
+            }
+
+            New-Object PSCustomObject -Property @{
+                Name = $item.Name
+                FullName = $item.FullName
+                #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
+                FileVersion = $fileVersion
+            }
+
+            #  If event is signaled, finish
+            if ($namedEvent.WaitOne(0)) {
+                break
+            }
+        }) | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$OutputFileName.xml") -Encoding UTF8
+
+        $namedEvent.Close()
+
+    } -ArgumentList $Path, $officeInfo, $Filters, $outputName, $eventName
+
+    New-Object PSCustomObject -Property @{
+        Job = $job
+        Event = $namedEvent # To be closed by Stop-SavingOfficeModuleInfo
+    }
+}
+
+function Stop-SavingOfficeModuleInfo {
+    [CmdletBinding()]
+    param(
+        # Returned from Start-SavingOfficeModuleInfo
+        [Parameter(Mandatory = $true, ValueFromPipeline=$true)]
+        $JobDescriptor,
+
+        # Number of seconds to wait for the job.
+        # Default value is -1 and this will block till the job completes
+        [int]$TimeoutSecond = -1
+    )
+
+    process {
+        $job = $JobDescriptor.job
+        $namedEvent = $JobDescriptor.Event
+
+        # Wait for the job up to timeout
+        Wait-Job -Job $job -Timeout $TimeoutSecond | Out-Null
+
+        # Signal the event and close
+        try {
+            $namedEvent.Set() | Out-Null
+            $namedEvent.Close()
+        }
+        catch {
+            Write-Error -ErrorRecord $_
+        }
+
+        # Let the job finish
+        Wait-Job -Job $job | Out-Null
+        Stop-Job -Job $job
+        # Receive-Job -Job $job
+        Remove-Job -Job $job
+    }
+}
+
 function Save-OfficeModuleInfo {
     [CmdletBinding()]
     param (
@@ -3791,4 +3933,4 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
     $PSDefaultParameterValues.Add("Export-Clixml:Encoding", 'UTF8')
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Collect-OutlookInfo
