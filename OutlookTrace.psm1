@@ -124,7 +124,7 @@ function Open-Log {
     # Open a file & add header
     try {
         [IO.StreamWriter]$Script:logWriter = [IO.File]::AppendText($Path)
-        $Script:logWriter.WriteLine("date-time,delta(ms),function,info")
+        $Script:logWriter.WriteLine("date-time,thread_relative_delta(ms),thread,function,info")
     }
     catch {
         Write-Error -ErrorRecord $_
@@ -147,6 +147,8 @@ function Write-Log {
     $currentTime = Get-Date
     $currentTimeFormatted = $currentTime.ToString('o')
 
+    # Delta time is relative to thread.
+    # Each thread has it's own copy of lastLogTime now.
     [TimeSpan]$delta = 0;
     if ($Script:lastLogTime) {
         $delta = $currentTime.Subtract($Script:lastLogTime)
@@ -156,13 +158,23 @@ function Write-Log {
     $sb = New-Object System.Text.StringBuilder
     $sb.Append($currentTimeFormatted).Append(',') | Out-Null
     $sb.Append($delta.TotalMilliseconds).Append(',') | Out-Null
+    $sb.Append([System.Threading.Thread]::CurrentThread.ManagedThreadId).Append(',') | Out-Null
     $sb.Append((Get-PSCallStack)[1].Command).Append(',') | Out-Null
     $sb.Append('"').Append($Text.Replace('"', "'")).Append('"') | Out-Null
 
-    $Script:logWriter.WriteLine($sb.ToString())
+    # Protect from concurrent write
+    [System.Threading.Monitor]::Enter($Script:logWriter)
+    try {
+        $Script:logWriter.WriteLine($sb.ToString())
+    }
+    finally {
+        [System.Threading.Monitor]::Exit($Script:logWriter)
+    }
 
     $sb = $null
     $Script:lastLogTime = $currentTime
+
+
 }
 
 function Close-Log {
@@ -171,6 +183,153 @@ function Close-Log {
         $Script:logWriter.Close()
         $Script:logWriter = $null
         $Script:lastLogTime = $null
+    }
+}
+
+function Start-Task {
+    [CmdletBinding()]
+    param (
+        [Parameter(ParameterSetName='Command', Mandatory=$true)]
+        $Command,
+        [Parameter(ParameterSetName='Command', Mandatory=$true)]
+        $Parameters,
+        [Parameter(ParameterSetName='Script', Mandatory=$true)]
+        [string]$Script
+    )
+
+    if (-not $Script:initialSessionState) {
+        # Set up a Runspace InitialSessionState
+        Write-Log "Setting up a InitialSessionState."
+        $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+
+        # Add functions from this script module. This will find all the functions including non-exported ones.
+        Get-Command -Module $MyInvocation.MyCommand.Module | ForEach-Object {
+            $initialSessionState.Commands.Add($(
+                New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($_.Name, $_.ScriptBlock)
+            ))
+        }
+
+        # Cache it.
+        [initialsessionstate]$Script:initialSessionState = $initialSessionState
+    }
+
+    # Add logWriter for Write-Log. Since variables' state might change, they must be added every time (e.g. logWriter might already be closed).
+    $initialSessionState.Variables.Add($(
+        New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList 'logWriter', $Script:logWriter, $null
+    ))
+
+    # Create a PowerShell instance and set paramters.
+    switch -Wildcard ($PSCmdlet.ParameterSetName) {
+        'Command' {
+            # Add the given command if it has a ScriptBlock
+            $cmd = Get-Command $Command -ErrorAction Stop
+
+            if ($cmd.ScriptBlock) {
+                $Script:initialSessionState.Commands.Add($(
+                    New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($cmd.Name, $cmd.ScriptBlock)
+                ))
+            }
+
+            [PowerShell]$ps = [PowerShell]::Create($Script:initialSessionState)
+            $ps.AddCommand($Command) | Out-Null
+            break
+        }
+
+        'Script' {
+            [PowerShell]$ps = [PowerShell]::Create($Script:initialSessionState)
+            $ps.AddScript($Script) | Out-Null
+            break
+        }
+    }
+
+    if ($Parameters) {
+        $Parameters.GetEnumerator() | ForEach-Object {
+            $ps.AddParameter($_.Key, $_.Value) | Out-Null
+        }
+    }
+
+    # Start the command
+    $ar = $ps.BeginInvoke()
+
+    New-Object PSCustomObject -Property @{
+        AsyncResult = $ar
+        PowerShell = $ps
+    }
+}
+
+function Wait-Task {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
+        $Task,
+        # By default, it wait indefinitely
+        # TimeSpan that represents -1 milliseconds is to wait indefinitely.
+        [TimeSpan]$Timeout = [TimeSpan]::FromMilliseconds(-1)
+    )
+
+    process {
+        foreach ($t in $Task) {
+            [IAsyncResult]$ar = $t.AsyncResult
+            if ($ar.AsyncWaitHandle.WaitOne($Timeout)) {
+                $t
+            }
+        }
+    }
+}
+
+function Receive-Task {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
+        $Task
+    )
+
+    process {
+        foreach ($t in $Task) {
+            [powershell]$ps = $t.PowerShell
+            [IAsyncResult]$ar = $t.AsyncResult
+
+            $ar.AsyncWaitHandle.WaitOne() | Out-Null
+            $ps.EndInvoke($ar)
+
+            if ($ps.HadErrors) {
+                $ps.Streams.Error | ForEach-Object {
+                    Write-Error -ErrorRecord $_
+                }
+            }
+        }
+    }
+}
+
+function Remove-Task {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        $Task
+    )
+
+    process {
+        foreach ($t in $Task) {
+            [powershell]$ps = $t.PowerShell
+            [IAsyncResult]$ar = $t.AsyncResult
+
+            # Note: Disposing PowerShell instance will stop the currently running command & its thread.
+            # So there's no need to call EndInvoke() if the you don't need the result.
+            $ps.Dispose()
+            $ar.AsyncWaitHandle.Close()
+        }
+    }
+}
+
+function Stop-Task {
+    param (
+        [Parameter(Mandatory = $true)]
+        $Task
+    )
+
+    process {
+    [powershell]$ps = $Task.PowerShell
+    $ps.Stop()
     }
 }
 
@@ -333,7 +492,7 @@ function Start-NetshTrace {
         return
     }
 
-    # Even with "report=no" (by default), "HKEY_CURRENT_USER\System\CurrentControlSet\Control\NetTrace\Session\MiniReportEnabled" might be be set to 1
+    # Even with "report=no" (by default), "HKEY_CURRENT_USER\System\CurrentControlSet\Control\NetTrace\Session\MiniReportEnabled" might be set to 1.
     # (This depends on Win10 version with a scenario. For InternetClient_dbg scenario, Win10 2004 and above does not generate mini report).
     # In order to suppress generating a minireport (i.e. C:\Windows\System32\gatherNetworkInfo.vbs), set MiniReportEnabled to 0 before netsh trace stop.
     $netshRegPath = 'HKCU:\System\CurrentControlSet\Control\NetTrace\Session\'
@@ -851,7 +1010,7 @@ function Compress-Folder {
     }
 }
 
-function Save-EventLog {
+function Save-EventLog_old {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
@@ -872,9 +1031,53 @@ function Save-EventLog {
         $fileName = $log.Replace('/', '_') + '.evtx'
         $filePath = Join-Path $Path -ChildPath $fileName
         Write-Log "Saving $log to $filePath"
-        wevtutil epl $log $filePath /ow
-        wevtutil al $filePath
+
+        $err = $(wevtutil epl $log $filePath /ow) 2>&1
+        if ($err) {
+            # Some event logs need admin privilege to export.
+            Write-Log "$err"
+        }
+        else {
+            # archive-log fails with "The directory name is invalid" when not running with admin privilege
+            $err = $(wevtutil al $filePath) 2>&1
+            if ($err) {
+                Write-Log "$err"
+            }
+        }
     }
+}
+
+<#
+Multithreaded version of Save-EventLog_old
+#>
+function Save-EventLog {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        $Path
+    )
+
+    if (-not (Test-Path $Path -ErrorAction Stop)) {
+        New-Item -ItemType directory $Path | Out-Null
+    }
+    $Path = Resolve-Path $Path
+
+    $logs = @(
+        'Application'
+        'System'
+        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD"
+    )
+
+    $tasks = @(
+        foreach ($log in $logs) {
+            $fileName = $log.Replace('/', '_') + '.evtx'
+            $filePath = Join-Path $Path -ChildPath $fileName
+            Write-Log "Saving $log to $filePath"
+            Start-Task -Script "wevtutil epl `"$log`" `"$filePath`" /ow; wevtutil al `"$filePath`""
+        }
+    )
+
+    $tasks | Wait-Task | Remove-Task
 }
 
 function Get-MicrosoftUpdate_old {
@@ -1406,7 +1609,7 @@ function Save-NetworkInfo {
         Write-Log "$commandString took $($measure.TotalMilliseconds) ms."
 
         if (-not $result) {
-            Write-Log "'$commandString' returned nothing. Error: $err"
+            Write-Log "$commandString returned nothing. Error: $err"
             continue
         }
 
@@ -1894,7 +2097,153 @@ function Stop-LdapTrace {
     Remove-Item $keypath -ErrorAction SilentlyContinue | Out-Null
 }
 
+
+
 function Start-SavingOfficeModuleInfo {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Path,
+        # Filter items by their name using -match (e.g. 'outlook.exe','mso\d\d.*\.dll'). These are treated as "OR".
+        [string[]]$Filters
+    )
+
+    if (-not (Test-Path $Path)){
+        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+    }
+
+    $Path = Resolve-Path $Path
+
+    $cts = New-Object System.Threading.CancellationTokenSource
+    $task = Start-Task -Command 'Save-OfficeModuleInfo' -Parameters @{Path = $Path; Filters = $Filters; CancellationToken = $cts.Token}
+
+    New-Object PSCustomObject -Property @{
+        Task = $task
+        CancellationTokenSource = $cts
+    }
+}
+
+function Stop-SavingOfficeModuleInfo {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        # Returned by Start-SavingOfficeModuleInfo
+        $Descriptor,
+        [TimeSpan]$Timeout = [timespan]::FromMilliseconds(-1)
+    )
+
+    $Task = $Descriptor.Task
+    $CancellationTokenSource = $Descriptor.CancellationTokenSource
+
+    if (Wait-Task $Task -Timeout $Timeout)  {
+        Write-Log "Task SavingOfficeModuleInfo is complete."
+    }
+    else {
+        Write-Log "Task SavingOfficeModuleInfo timed out after $($Timeout.TotalSeconds) seconds. Task will be canceled."
+    }
+
+    $CancellationTokenSource.Cancel()
+
+    Receive-Task $Task
+    Remove-Task $Task
+}
+
+function Save-OfficeModuleInfo {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory = $true)]
+        $Path,
+        # filter items by their name using -match (e.g. 'outlook.exe','mso\d\d.*\.dll'). These are treated as "OR".
+        [string[]]$Filters,
+        [Threading.CancellationToken]$CancellationToken
+    )
+
+    if (-not (Test-Path $Path)){
+        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+    }
+
+    # If MS Office is not installed, bail.
+    $officeInfo = Get-OfficeInfo -ErrorAction SilentlyContinue
+    if (-not $officeInfo) {
+        Write-Error "MS Office is not installed."
+        return
+    }
+
+    $officePaths = @(
+        $officeInfo.InstallPath
+
+        if ($env:CommonProgramFiles) {
+            Join-Path $env:CommonProgramFiles 'microsoft shared'
+        }
+
+        if (${env:CommonProgramFiles(x86)}) {
+            Join-Path ${env:CommonProgramFiles(x86)} 'microsoft shared'
+        }
+    )
+
+    Write-Log "officePaths are $officePaths"
+
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    # Get exe and dll
+    # It's slightly faster to run gci twice with -Filter than running once with -Include *exe, *.dll
+    $items = @(
+        foreach ($officePath in $officePaths) {
+            Get-ChildItem -Path $officePath -Filter *.exe -Recurse -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $officePath -Filter *.dll -Recurse -ErrorAction SilentlyContinue
+        }
+    )
+
+    $listingFinished = $sw.Elapsed
+    Write-Log "Listing $($items.Count) items took $($listingFinished.TotalMilliseconds) ms."
+
+    # Apply filters
+    if ($Filters.Count) { # This is for PowerShell v2. PSv2 iterates a null collection.
+        $items = $items | Where-Object {
+            foreach ($filter in $Filters) {
+                if ($_.Name -match $filter) {
+                    $true
+                    break
+                }
+            }
+        }
+    }
+
+    $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
+    $name = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
+
+    @(
+    foreach ($item in $items) {
+        if ($item.VersionInfo.FileVersionRaw) {
+            $fileVersion = $item.VersionInfo.FileVersionRaw
+        }
+        else {
+            $fileVersion = $item.VersionInfo.FileVersion
+        }
+
+        New-Object PSCustomObject -Property @{
+            Name = $item.Name
+            FullName = $item.FullName
+            #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
+            FileVersion = $fileVersion
+        }
+
+        if ($CancellationToken.IsCancellationRequested) {
+            Write-Log "Cancel request acknowledged."
+            break
+        }
+
+    }) | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml") -Encoding UTF8
+
+    $sw.Stop()
+    Write-Log "Enumerating items took $(($sw.Elapsed - $listingFinished).TotalMilliseconds) ms."
+}
+
+<#
+This is an old implementation using a PowerShell Job.
+Not used currently but I'm keeping it for a reference in future development.
+#>
+function Start-SavingOfficeModuleInfo_PSJob {
     [CmdletBinding()]
     param(
         [parameter(Mandatory = $true)]
@@ -1993,16 +2342,20 @@ function Start-SavingOfficeModuleInfo {
 
     New-Object PSCustomObject -Property @{
         Job = $job
-        Event = $namedEvent # To be closed by Stop-SavingOfficeModuleInfo
+        Event = $namedEvent # To be closed by Stop-SavingOfficeModuleInfo_PSJob
     }
 
     Write-Log "Job (ID: $($job.Id)) has started. A Named Event (Handle: $($namedEvent.Handle), Name: '$eventName') is created"
 }
 
-function Stop-SavingOfficeModuleInfo {
+<#
+This is an old implementation using a PowerShell Job. Counterpart of Start-SavingOfficeModuleInfo_PSJob
+Not used currently but I'm keeping it for a reference in future development.
+#>
+function Stop-SavingOfficeModuleInfo_PSJob {
     [CmdletBinding()]
     param(
-        # Returned from Start-SavingOfficeModuleInfo
+        # Returned from Start-SavingOfficeModuleInfo_PSJob
         [Parameter(Mandatory = $true, ValueFromPipeline=$true)]
         $JobDescriptor,
 
@@ -2043,98 +2396,6 @@ function Stop-SavingOfficeModuleInfo {
         Remove-Job -Job $job
         Write-Log "Job (ID: $($job.Id)) was removed."
     }
-}
-
-function Save-OfficeModuleInfo {
-    [CmdletBinding()]
-    param (
-        [parameter(Mandatory = $true)]
-        $Path,
-        # filter items by their name using -match (e.g. 'outlook.exe','mso\d\d.*\.dll'). These are treated as "OR".
-        [string[]]$Filters,
-        [TimeSpan]$Timeout
-    )
-
-    if (-not (Test-Path $Path)){
-        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
-    }
-
-    # If MS Office is not installed, bail.
-    $officeInfo = Get-OfficeInfo -ErrorAction SilentlyContinue
-    if (-not $officeInfo) {
-        Write-Error "MS Office is not installed."
-        return
-    }
-
-    $officePaths = @(
-        $officeInfo.InstallPath
-
-        if ($env:CommonProgramFiles) {
-            Join-Path $env:CommonProgramFiles 'microsoft shared'
-        }
-
-        if (${env:CommonProgramFiles(x86)}) {
-            Join-Path ${env:CommonProgramFiles(x86)} 'microsoft shared'
-        }
-    )
-
-    Write-Log "officePaths are $officePaths"
-
-    $sw = [System.Diagnostics.Stopwatch]::StartNew()
-
-    # Get exe and dll
-    # It's slightly faster to run gci twice with -Filter than running once with -Include *exe, *.dll
-    $items = @(
-        foreach ($officePath in $officePaths) {
-            Get-ChildItem -Path $officePath -Filter *.exe -Recurse -ErrorAction SilentlyContinue
-            Get-ChildItem -Path $officePath -Filter *.dll -Recurse -ErrorAction SilentlyContinue
-        }
-    )
-
-    $listingFinished = $sw.Elapsed
-    Write-Log "Listing $($items.Count) items took $($listingFinished.TotalMilliseconds) ms."
-
-    # Apply filters
-    if ($Filters.Count) { # This is for PowerShell v2. PSv2 iterates a null collection.
-        $items = $items | Where-Object {
-            foreach ($filter in $Filters) {
-                if ($_.Name -match $filter) {
-                    $true
-                    break
-                }
-            }
-        }
-    }
-
-    $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
-    $name = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
-
-    @(
-    foreach ($item in $items) {
-        if ($item.VersionInfo.FileVersionRaw) {
-            $fileVersion = $item.VersionInfo.FileVersionRaw
-        }
-        else {
-            $fileVersion = $item.VersionInfo.FileVersion
-        }
-
-        New-Object PSCustomObject -Property @{
-            Name = $item.Name
-            FullName = $item.FullName
-            #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
-            FileVersion = $fileVersion
-        }
-
-        # If timeout is reached, bail.
-        if ($Timeout -and $sw.Elapsed -gt $Timeout) {
-            Write-Log "Timeout $Timeout is reached. returning."
-            break
-        }
-    }) | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
-
-
-    $sw.Stop()
-    Write-Log "Enumerating items took $(($sw.Elapsed - $listingFinished).TotalMilliseconds) ms."
 }
 
 function Save-MSInfo32 {
@@ -3662,7 +3923,14 @@ function Collect-OutlookInfo {
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 0
             New-Item -ItemType directory (Join-Path $tempPath 'Configuration') | Out-Null
 
-            $savingOfficeModuleInfoDescriptor = Start-SavingOfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue
+            # First start tasks that might take a while.
+            $networkInfoTask = Start-Task -Command 'Save-NetworkInfo' -Parameters @{Path = (Join-Path $tempPath 'Configuration\NetworkInfo'); ErrorAction = 'SilentlyContinue'}
+            #Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
+
+            $cts = New-Object System.Threading.CancellationTokenSource
+            $officeModuleInfoTask = Start-Task -Command 'Save-OfficeModuleInfo' -Parameters @{Path = (Join-Path $tempPath 'Configuration'); CancellationToken = $cts.Token}
+            # $Filters = 'outlook\.exe', 'umoutlookaddin\.dll', 'mso\.dll', 'mso\d\d.+\.dll', 'olmapi32\.dll', 'emsmdb32\.dll', 'wwlib\.dll'
+            # Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
 
             $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
 
@@ -3670,12 +3938,13 @@ function Collect-OutlookInfo {
                 $LogonUser | Export-Clixml -Path (Join-Path $tempPath 'Configuration\LogonUser.xml')
             }
 
-            Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -User $LogonUser.SID -ErrorAction SilentlyContinue
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
+            $officeRegistryTask = Start-Task -Command 'Save-OfficeRegistry' -Parameters @{Path = (Join-Path $tempPath 'Configuration'); User = $LogonUser.SID; ErrorAction = 'SilentlyContinue'}
+            # Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -User $LogonUser.SID -ErrorAction SilentlyContinue
 
-            #Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
-            #$Filters = 'outlook\.exe', 'umoutlookaddin\.dll', 'mso\.dll', 'mso\d\d.+\.dll', 'olmapi32\.dll', 'emsmdb32\.dll', 'wwlib\.dll'
-            #Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -Filters $Filters -ErrorAction SilentlyContinue
+            $oSConfigurationTask = Start-Task -Command 'Save-OSConfiguration' -Parameters @{Path = (Join-Path $tempPath 'Configuration'); ErrorAction = 'SilentlyContinue'}
+            # Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
+
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
 
             Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OfficeInfo.xml')
             Get-OutlookProfile -User $LogonUser.Name -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookProfile.xml')
@@ -3683,14 +3952,10 @@ function Collect-OutlookInfo {
             Get-ClickToRunConfiguration -ErrorAction SilentlyContinue | ForEach-Object { if ($_) {$_ | Export-Clixml -Path (Join-Path $tempPath 'Configuration\ClickToRunConfiguration.xml')}}
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
-
             Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $tempPath 'Cached AutoDiscover') -ErrorAction SilentlyContinue
-            Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
-            Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
-
-            Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
+            Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
 
@@ -3732,6 +3997,7 @@ function Collect-OutlookInfo {
         if ($Component -contains 'Outlook' -or $Component -contains 'All') {
             # Stop a lingering session if any.
             Stop-OutlookTrace -ErrorAction SilentlyContinue
+            Start-OutlookTrace -Path (Join-Path $tempPath 'Outlook')
             $outlookTraceStarted = $true
         }
 
@@ -3901,12 +4167,33 @@ function Collect-OutlookInfo {
 
         Write-Progress -Activity 'Stopping traces' -Status "Please wait." -Completed
 
-        # Save the event logs after tracing is done
+        # Wait for the tasks started earlier and save the event logs after tracing is done
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
-            $timeout = 30 # seconds
-            Write-Progress -Activity 'Saving Office module info' -Status "Please wait up to $timeout seconds" -PercentComplete -1
-            Stop-SavingOfficeModuleInfo -JobDescriptor $savingOfficeModuleInfoDescriptor -TimeoutSecond $timeout -ErrorAction SilentlyContinue
+
+            [TimeSpan]$timeout = [TimeSpan]::FromSeconds(30)
+            Write-Progress -Activity 'Saving Office module info' -Status "Please wait up to $timeout" -PercentComplete -1
+
+            if (Wait-Task $officeModuleInfoTask -Timeout $timeout)  {
+                Write-Log "Task SavingOfficeModuleInfo is complete."
+            }
+            else {
+                Write-Log "Task SavingOfficeModuleInfo timed out after $($timeout.TotalSeconds) seconds. Task will be canceled."
+                $cts.Cancel()
+            }
+
+            $officeModuleInfoTask | Remove-Task
+            #Stop-SavingOfficeModuleInfo -Descriptor $officeModuleInfoTaskDesc -Timeout $timeout
             Write-Progress -Activity 'Saving Office module info' -Status 'Please wait.' -Completed
+
+            $oSConfigurationTask | Wait-Task | Remove-Task
+
+            Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -PercentComplete -1
+            $officeRegistryTask | Wait-Task | Remove-Task
+            Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -Completed
+
+            Write-Progress -Activity 'Saving network info' -Status "Please wait." -PercentComplete -1
+            $networkInfoTask | Wait-Task | Remove-Task
+            Write-Progress -Activity 'Saving network info' -Status "Please wait." -Completed
 
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             Save-EventLog -Path (Join-Path $tempPath 'EventLog')
@@ -3949,4 +4236,4 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
     $PSDefaultParameterValues.Add("Export-Clixml:Encoding", 'UTF8')
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Collect-OutlookInfo
+# Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Collect-OutlookInfo
