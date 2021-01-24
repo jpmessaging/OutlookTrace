@@ -1010,46 +1010,6 @@ function Compress-Folder {
     }
 }
 
-function Save-EventLog_old {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory=$true)]
-        $Path
-    )
-
-    if (-not (Test-Path $Path -ErrorAction Stop)) {
-        New-Item -ItemType directory $Path | Out-Null
-    }
-
-    $logs = @(
-        'Application'
-        'System'
-        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD"
-    )
-
-    foreach ($log in $logs) {
-        $fileName = $log.Replace('/', '_') + '.evtx'
-        $filePath = Join-Path $Path -ChildPath $fileName
-        Write-Log "Saving $log to $filePath"
-
-        $err = $(wevtutil epl $log $filePath /ow) 2>&1
-        if ($err) {
-            # Some event logs need admin privilege to export.
-            Write-Log "$err"
-        }
-        else {
-            # archive-log fails with "The directory name is invalid" when not running with admin privilege
-            $err = $(wevtutil al $filePath) 2>&1
-            if ($err) {
-                Write-Log "$err"
-            }
-        }
-    }
-}
-
-<#
-Multithreaded version of Save-EventLog_old
-#>
 function Save-EventLog {
     [CmdletBinding()]
     param (
@@ -1080,67 +1040,6 @@ function Save-EventLog {
     $tasks | Wait-Task | Remove-Task
 }
 
-function Get-MicrosoftUpdate_old {
-    [CmdletBinding()]
-    param(
-        [switch]$OfficeOnly,
-        [switch]$AppliedOnly
-    )
-
-    # Constants
-    # https://docs.microsoft.com/en-us/windows/desktop/api/msi/nf-msi-msienumpatchesexa
-    $PatchState = @{
-        1 = 'MSIPATCHSTATE_APPLIED'
-        2 = 'MSIPATCHSTATE_SUPERSEDED'
-        4 = 'MSIPATCHSTATE_OBSOLETED'
-        8 = 'MSIPATCHSTATE_REGISTERED'
-        15 = 'MSIPATCHSTATE_ALL'
-    }
-
-    $productsKey = Get-ChildItem -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products -ErrorAction SilentlyContinue
-
-    if ($OfficeOnly) {
-        $productsKey = Get-ChildItem -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products -ErrorAction SilentlyContinue | Where-Object {$_.Name -match "F01FEC"}
-    }
-
-    $result = @(
-        foreach ($key in $productsKey) {
-            $patches = Get-ChildItem -Path Registry::$($key.Name) | Where-Object {$_.PSChildName -eq 'Patches' -and $_.SubKeyCount -gt 0} | Get-ChildItem | Get-ItemProperty
-
-            if (-not $patches) {
-                continue
-            }
-
-            foreach ($patch in $patches) {
-                # extract KB number
-                $KB = $null
-                if ($patch.MoreInfoURL -match 'https?://support.microsoft.com/kb/(?<KB>\d+)') {
-                    $KB = $Matches['KB']
-                }
-
-                <#
-                MsiGetPatchInfoExW
-                https://docs.microsoft.com/en-us/windows/desktop/api/msi/nf-msi-msigetpatchinfoexw
-                Returns "1" if this patch is currently applied to the product. Returns "2" if this patch is superseded by another patch. Returns "4" if this patch is obsolete. These values correspond to the constants the dwFilter parameter of MsiEnumPatchesEx uses.
-                #>
-                New-Object PSCustomObject -Property @{
-                    DisplayName = $patch.DisplayName
-                    KB = $KB
-                    MoreInfoURL = $patch.MoreInfoURL
-                    Installed = $patch.Installed
-                    PatchState = $PatchState[$patch.State]
-                }
-            }
-        }
-    )
-
-    if ($AppliedOnly) {
-        $result = $result | Where-Object {$_.PatchState -eq 'MSIPATCHSTATE_APPLIED'}
-    }
-
-    $result
-}
-
 function Get-MicrosoftUpdate {
     [CmdletBinding()]
     param(
@@ -1157,11 +1056,6 @@ function Get-MicrosoftUpdate {
         8 = 'MSIPATCHSTATE_REGISTERED'
         15 = 'MSIPATCHSTATE_ALL'
     }
-
-    # if ($env:PROCESSOR_ARCHITEW6432 -and -not ('Microsoft.Win32.RegistryView' -as [type])) {
-    #     Write-Error "32bit PowerShell is running on 64bit OS and .NET 4.0 is not used. Please run 64bit PowerShell."
-    #     return
-    # }
 
     $hklm = $productsKey = $null
     try {
@@ -2097,57 +1991,6 @@ function Stop-LdapTrace {
     Remove-Item $keypath -ErrorAction SilentlyContinue | Out-Null
 }
 
-
-
-function Start-SavingOfficeModuleInfo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        $Path,
-        # Filter items by their name using -match (e.g. 'outlook.exe','mso\d\d.*\.dll'). These are treated as "OR".
-        [string[]]$Filters
-    )
-
-    if (-not (Test-Path $Path)){
-        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
-    }
-
-    $Path = Resolve-Path $Path
-
-    $cts = New-Object System.Threading.CancellationTokenSource
-    $task = Start-Task -Command 'Save-OfficeModuleInfo' -Parameters @{Path = $Path; Filters = $Filters; CancellationToken = $cts.Token}
-
-    New-Object PSCustomObject -Property @{
-        Task = $task
-        CancellationTokenSource = $cts
-    }
-}
-
-function Stop-SavingOfficeModuleInfo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        # Returned by Start-SavingOfficeModuleInfo
-        $Descriptor,
-        [TimeSpan]$Timeout = [timespan]::FromMilliseconds(-1)
-    )
-
-    $Task = $Descriptor.Task
-    $CancellationTokenSource = $Descriptor.CancellationTokenSource
-
-    if (Wait-Task $Task -Timeout $Timeout)  {
-        Write-Log "Task SavingOfficeModuleInfo is complete."
-    }
-    else {
-        Write-Log "Task SavingOfficeModuleInfo timed out after $($Timeout.TotalSeconds) seconds. Task will be canceled."
-    }
-
-    $CancellationTokenSource.Cancel()
-
-    Receive-Task $Task
-    Remove-Task $Task
-}
-
 function Save-OfficeModuleInfo {
     [CmdletBinding()]
     param (
@@ -2242,6 +2085,7 @@ function Save-OfficeModuleInfo {
 <#
 This is an old implementation using a PowerShell Job.
 Not used currently but I'm keeping it for a reference in future development.
+This uses a named kernel event object for inter PS process (i.e. Job) communication.
 #>
 function Start-SavingOfficeModuleInfo_PSJob {
     [CmdletBinding()]
@@ -2857,7 +2701,7 @@ function Get-OfficeInfo {
 
             $keysToSearch = @(
                 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
-                    # 32bit MSI is under Wow6432Node.
+                # 32bit MSI is under Wow6432Node.
                 'SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
             )
 
@@ -2934,20 +2778,6 @@ function Get-OfficeInfo {
 
     if (-not $installPath){
         Write-Error "Microsoft Office is not installed"
-
-        # This is temporary: Export data for debugging
-        <#
-        $path = Get-Location | Select-Object -ExpandProperty Path
-        foreach ($key in @('HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall')){
-            $filePath = Join-Path $path -ChildPath "$($key.Replace("\","_")).reg.txt"
-            $(reg export $key $filePath) 2>&1 | Out-Null
-
-            if ($LASTEXITCODE -eq 0) {
-                Write-Warning "Please send $filePath to the engineer."
-            }
-        }
-        #>
-
         return
     }
 
@@ -4236,4 +4066,4 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
     $PSDefaultParameterValues.Add("Export-Clixml:Encoding", 'UTF8')
 }
 
-# Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Collect-OutlookInfo
