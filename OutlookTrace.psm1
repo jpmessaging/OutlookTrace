@@ -13,6 +13,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 #>
 
 $Version = 'v2021-01-20'
+#Requires -Version 4.0
 
 # Outlook's ETW pvoviders
 $outlook2016Providers =
@@ -210,7 +211,8 @@ function Start-Task {
         }
 
         # Cache it.
-        [initialsessionstate]$Script:initialSessionState = $initialSessionState
+        # Note: Type name alias "initialsessionstate" should be available, but I'm using the full name to be safe.
+        [System.Management.Automation.Runspaces.InitialSessionState]$Script:initialSessionState = $initialSessionState
     }
 
     # Add logWriter for Write-Log. Since variables' state might change, they must be added every time (e.g. logWriter might already be closed).
@@ -3309,7 +3311,8 @@ function Test-Autodiscover {
 
     # Legacy auth credential.
     [Parameter(ParameterSetName='LegacyAuth', Mandatory=$true)]
-    [PSCredential]$Credential,
+    [System.Management.Automation.PSCredential]
+    $Credential,
 
     # Modern auth access token.
     # To mock an Office client, use ClientId 'd3590ed6-52b3-4102-aeff-aad2292ab01c' and Scope 'https://outlook.office.com/.default'
@@ -4015,7 +4018,9 @@ function Collect-OutlookInfo {
             #Stop-SavingOfficeModuleInfo -Descriptor $officeModuleInfoTaskDesc -Timeout $timeout
             Write-Progress -Activity 'Saving Office module info' -Status 'Please wait.' -Completed
 
+            Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -PercentComplete -1
             $oSConfigurationTask | Wait-Task | Remove-Task
+            Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -Completed
 
             Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -PercentComplete -1
             $officeRegistryTask | Wait-Task | Remove-Task
