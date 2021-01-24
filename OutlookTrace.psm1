@@ -187,6 +187,57 @@ function Close-Log {
     }
 }
 
+function Open-TaskRunspace {
+    [CmdletBinding()]
+    param(
+        $MaxRunspaces = $env:NUMBER_OF_PROCESSORS,
+        [System.Management.Automation.PSVariable[]]$Variables,
+        [switch]$IncludeScriptVariables
+    )
+
+    if (-not $Script:runspacePool) {
+        Write-Log "Setting up a Runspace with a initialSessionState. MaxRunspaces: $MaxRunspaces."
+        $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+
+        # Add functions from this script module. This will find all the functions including non-exported ones.
+        Get-Command -Module $MyInvocation.MyCommand.Module | ForEach-Object {
+            $initialSessionState.Commands.Add($(
+                New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($_.Name, $_.ScriptBlock)
+            ))
+        }
+
+        if ($IncludeScriptVariables) {
+            foreach ($_ in @(Get-Variable -Scope Script)) {
+                if ($_.Name -ne 'true' -and $_.Value) {
+                    $InitialSessionState.Variables.Add($(
+                        New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
+                    ))
+                }
+            }
+        }
+
+        foreach ($_ in $Variables) {
+            $InitialSessionState.Variables.Add($(
+                New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
+            ))
+        }
+
+        [System.Management.Automation.Runspaces.RunspacePool]$Script:runspacePool = [runspacefactory]::CreateRunspacePool(1, $MaxRunspaces, $initialSessionState, $Host)
+        $Script:runspacePool.Open()
+        Write-Log "RunspacePool ($($Script:runspacePool.InstanceId.ToString())) is Opened."
+    }
+}
+
+function Close-TaskRunspace {
+    [CmdletBinding()]
+    param()
+
+    $id = $Script:runspacePool.InstanceId.ToString()
+    $Script:runspacePool.Close()
+    $Script:runspacePool = $null
+    Write-Log "RunspacePool ($id) is Closed."
+}
+
 function Start-Task {
     [CmdletBinding()]
     param (
@@ -198,55 +249,31 @@ function Start-Task {
         [string]$Script
     )
 
-    if (-not $Script:initialSessionState) {
-        # Set up a Runspace InitialSessionState
-        Write-Log "Setting up a InitialSessionState."
-        $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
-
-        # Add functions from this script module. This will find all the functions including non-exported ones.
-        Get-Command -Module $MyInvocation.MyCommand.Module | ForEach-Object {
-            $initialSessionState.Commands.Add($(
-                New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($_.Name, $_.ScriptBlock)
-            ))
-        }
-
-        # Cache it.
-        # Note: Type name alias "initialsessionstate" should be available, but I'm using the full name to be safe.
-        [System.Management.Automation.Runspaces.InitialSessionState]$Script:initialSessionState = $initialSessionState
+    if (-not $Script:runspacePool) {
+        Write-Error -Message "Open-TaskRunspace must be called in advance."
+        return
     }
 
-    # Add logWriter for Write-Log. Since variables' state might change, they must be added every time (e.g. logWriter might already be closed).
-    $Script:initialSessionState.Variables.Add($(
-        New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList 'logWriter', $Script:logWriter, $null
-    ))
+    # Create a PowerShell instance and set paramters if any.
+    [PowerShell]$ps = [PowerShell]::Create()
+    $ps.RunspacePool = $Script:runspacePool
 
-    # Create a PowerShell instance and set paramters.
     switch -Wildcard ($PSCmdlet.ParameterSetName) {
         'Command' {
-            # Add the given command if it has a ScriptBlock
-            $cmd = Get-Command $Command -ErrorAction Stop
+            $ps.AddCommand($Command) | Out-Null
 
-            if ($cmd.ScriptBlock) {
-                $Script:initialSessionState.Commands.Add($(
-                    New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($cmd.Name, $cmd.ScriptBlock)
-                ))
+            if ($Parameters) {
+                $Parameters.GetEnumerator() | ForEach-Object {
+                    $ps.AddParameter($_.Key, $_.Value) | Out-Null
+                }
             }
 
-            [PowerShell]$ps = [PowerShell]::Create($Script:initialSessionState)
-            $ps.AddCommand($Command) | Out-Null
             break
         }
 
         'Script' {
-            [PowerShell]$ps = [PowerShell]::Create($Script:initialSessionState)
             $ps.AddScript($Script) | Out-Null
             break
-        }
-    }
-
-    if ($Parameters) {
-        $Parameters.GetEnumerator() | ForEach-Object {
-            $ps.AddParameter($_.Key, $_.Value) | Out-Null
         }
     }
 
@@ -330,8 +357,10 @@ function Stop-Task {
     )
 
     process {
-    [powershell]$ps = $Task.PowerShell
-    $ps.Stop()
+        foreach ($t in $Task) {
+            [powershell]$ps = $t.PowerShell
+            $ps.Stop()
+        }
     }
 }
 
@@ -2078,7 +2107,7 @@ function Save-OfficeModuleInfo {
             break
         }
 
-    }) | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml") -Encoding UTF8
+    }) | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml") #-Encoding UTF8
 
     $sw.Stop()
     Write-Log "Enumerating items took $(($sw.Elapsed - $listingFinished).TotalMilliseconds) ms."
@@ -3750,6 +3779,10 @@ function Collect-OutlookInfo {
     }
     Write-Log "Parameters $($sb.ToString())"
 
+    # To use Start-Task, make sure to open runspaces first and close it when finished.
+    # Open-TaskRunspace -Variables (Get-Variable 'logWriter')
+    Open-TaskRunspace -IncludeScriptVariables
+
     Write-Log "Starting traces"
     try {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
@@ -4003,32 +4036,39 @@ function Collect-OutlookInfo {
         # Wait for the tasks started earlier and save the event logs after tracing is done
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
 
-            [TimeSpan]$timeout = [TimeSpan]::FromSeconds(30)
-            Write-Progress -Activity 'Saving Office module info' -Status "Please wait up to $timeout" -PercentComplete -1
+            if ($officeModuleInfoTask) {
+                [TimeSpan]$timeout = [TimeSpan]::FromSeconds(30)
+                Write-Progress -Activity 'Saving Office module info' -Status "Please wait up to $timeout" -PercentComplete -1
 
-            if (Wait-Task $officeModuleInfoTask -Timeout $timeout)  {
-                Write-Log "Task SavingOfficeModuleInfo is complete."
+                if (Wait-Task $officeModuleInfoTask -Timeout $timeout)  {
+                    Write-Log "Task SavingOfficeModuleInfo is complete."
+                }
+                else {
+                    Write-Log "Task SavingOfficeModuleInfo timed out after $($timeout.TotalSeconds) seconds. Task will be canceled."
+                    $cts.Cancel()
+                }
+
+                $officeModuleInfoTask | Wait-Task | Remove-Task
+                Write-Progress -Activity 'Saving Office module info' -Status 'Please wait.' -Completed
             }
-            else {
-                Write-Log "Task SavingOfficeModuleInfo timed out after $($timeout.TotalSeconds) seconds. Task will be canceled."
-                $cts.Cancel()
+
+            if ($oSConfigurationTask) {
+                Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -PercentComplete -1
+                $oSConfigurationTask | Wait-Task | Remove-Task
+                Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -Completed
             }
 
-            $officeModuleInfoTask | Remove-Task
-            #Stop-SavingOfficeModuleInfo -Descriptor $officeModuleInfoTaskDesc -Timeout $timeout
-            Write-Progress -Activity 'Saving Office module info' -Status 'Please wait.' -Completed
+            if ($officeRegistryTask) {
+                Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -PercentComplete -1
+                $officeRegistryTask | Wait-Task | Remove-Task
+                Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -Completed
+            }
 
-            Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -PercentComplete -1
-            $oSConfigurationTask | Wait-Task | Remove-Task
-            Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -Completed
-
-            Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -PercentComplete -1
-            $officeRegistryTask | Wait-Task | Remove-Task
-            Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -Completed
-
-            Write-Progress -Activity 'Saving network info' -Status "Please wait." -PercentComplete -1
-            $networkInfoTask | Wait-Task | Remove-Task
-            Write-Progress -Activity 'Saving network info' -Status "Please wait." -Completed
+            if ($networkInfoTask) {
+                Write-Progress -Activity 'Saving network info' -Status "Please wait." -PercentComplete -1
+                $networkInfoTask | Wait-Task | Remove-Task
+                Write-Progress -Activity 'Saving network info' -Status "Please wait." -Completed
+            }
 
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             Save-EventLog -Path (Join-Path $tempPath 'EventLog')
@@ -4047,6 +4087,7 @@ function Collect-OutlookInfo {
             } | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
         }
 
+        Close-TaskRunspace
         Close-Log
     }
 
@@ -4064,7 +4105,6 @@ function Collect-OutlookInfo {
     Write-Host "The collected data is `"$(Join-Path $Path $zipFileName).zip`"" -ForegroundColor Green
     Invoke-Item $Path
 }
-
 
 # Configure Export-Clixml to use UTF8 by default.
 if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Contains("Export-CliXml:Encoding")) {
