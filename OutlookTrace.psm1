@@ -192,7 +192,7 @@ function Start-Task {
     param (
         [Parameter(ParameterSetName='Command', Mandatory=$true)]
         $Command,
-        [Parameter(ParameterSetName='Command', Mandatory=$true)]
+        [Parameter(ParameterSetName='Command')]
         $Parameters,
         [Parameter(ParameterSetName='Script', Mandatory=$true)]
         [string]$Script
@@ -216,7 +216,7 @@ function Start-Task {
     }
 
     # Add logWriter for Write-Log. Since variables' state might change, they must be added every time (e.g. logWriter might already be closed).
-    $initialSessionState.Variables.Add($(
+    $Script:initialSessionState.Variables.Add($(
         New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList 'logWriter', $Script:logWriter, $null
     ))
 
