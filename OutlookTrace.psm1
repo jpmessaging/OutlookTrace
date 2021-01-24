@@ -262,10 +262,8 @@ function Start-Task {
         'Command' {
             $ps.AddCommand($Command) | Out-Null
 
-            if ($Parameters) {
-                $Parameters.GetEnumerator() | ForEach-Object {
-                    $ps.AddParameter($_.Key, $_.Value) | Out-Null
-                }
+            foreach ($key in $Parameters.Keys) {
+                $ps.AddParameter($key, $Parameters[$key]) | Out-Null
             }
 
             break
@@ -310,7 +308,8 @@ function Receive-Task {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
-        $Task
+        $Task,
+        [switch]$AutoRemoveTask
     )
 
     process {
@@ -325,6 +324,10 @@ function Receive-Task {
                 $ps.Streams.Error | ForEach-Object {
                     Write-Error -ErrorRecord $_
                 }
+            }
+
+            if ($AutoRemoveTask) {
+                Remove-Task $t
             }
         }
     }
@@ -1464,7 +1467,6 @@ function Save-OSConfiguration {
     Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "JoinInformation.xml")
     Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")
 }
-
 
 function Save-NetworkInfo {
     [CmdletBinding()]
