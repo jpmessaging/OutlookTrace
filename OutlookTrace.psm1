@@ -3729,7 +3729,8 @@ function Collect-OutlookInfo {
         $NetshReportMode = 'Mini',
         [int]$DumpCount = 3,
         [int]$DumpIntervalSeconds = 60,
-        [switch]$StartOutlook
+        [switch]$StartOutlook,
+        [switch]$SkipZip
     )
 
     # Explicitly check admin rights
@@ -4089,6 +4090,10 @@ function Collect-OutlookInfo {
 
         Close-TaskRunspace
         Close-Log
+    }
+
+    if ($SkipZip) {
+        return
     }
 
     $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
