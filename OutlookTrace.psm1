@@ -136,13 +136,20 @@ function Write-Log {
     [CmdletBinding()]
     param (
         [Parameter(ValueFromPipeline=$true)]
-        [string]$Message
+        [string]$Message,
+        [Parameter(ValueFromPipeline=$true)]
+        [System.Management.Automation.ErrorRecord]$ErrorRecord
     )
 
     process {
         # Ignore null or an empty string.
         if (-not $Message) {
             return
+        }
+
+        # If ErrorRecord is provided, use it.
+        if ($ErrorRecord) {
+            $Message += ";ScriptCallStack: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ''))"
         }
 
         # If Open-Log is not called beforehand, just output to verbose.
@@ -3849,6 +3856,10 @@ function Stop-GatherNetworkInfo {
     $process.Dispose()
 }
 
+<#
+Get processes and its user (only for Outlook.exe).
+PowerShell 4's Get-Process has -IncludeUserName, but I'm using WMI here for now.
+#>
 function Save-Process {
     [CmdletBinding()]
     param(
@@ -3958,12 +3969,12 @@ function Collect-OutlookInfo {
             # $Filters = 'outlook\.exe', 'umoutlookaddin\.dll', 'mso\.dll', 'mso\d\d.+\.dll', 'olmapi32\.dll', 'emsmdb32\.dll', 'wwlib\.dll'
             # Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
 
-            $networkInfoTask = Start-Task -Command 'Save-NetworkInfo' -Parameters @{Path = $NetworkDir; ErrorAction = 'SilentlyContinue'}
+            $networkInfoTask = Start-Task -Command 'Save-NetworkInfo' -Parameters @{Path = $NetworkDir}
             # Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
             # Save-NetworkInfoMT -Path (Join-Path $tempPath 'Configuration\NetworkInfo_MT') -ErrorAction SilentlyContinue
 
             $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
-            $officeRegistryTask = Start-Task -Command 'Save-OfficeRegistry' -Parameters @{Path = $RegistryDir; User = $LogonUser.SID; ErrorAction = 'SilentlyContinue'}
+            $officeRegistryTask = Start-Task -Command 'Save-OfficeRegistry' -Parameters @{Path = $RegistryDir; User = $LogonUser.SID}
             # Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -User $LogonUser.SID -ErrorAction SilentlyContinue
 
             $oSConfigurationTask = Start-Task -Command 'Save-OSConfiguration' -Parameters @{Path = $OSDir}
@@ -3971,21 +3982,19 @@ function Collect-OutlookInfo {
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
 
-            Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $OfficeDir 'OfficeInfo.xml')
-            Get-OutlookProfile -User $LogonUser.Name -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookProfile.xml')
-            Get-OutlookAddin -User $LogonUser.SID -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookAddin.xml')
-            Get-ClickToRunConfiguration -ErrorAction SilentlyContinue | ForEach-Object { if ($_) {$_ | Export-Clixml -Path (Join-Path $OfficeDir 'ClickToRunConfiguration.xml')}}
+            $(Get-OfficeInfo  | Export-Clixml -Path (Join-Path $OfficeDir 'OfficeInfo.xml')) 2>&1 | Write-Log
+            $(Get-OutlookProfile -User $LogonUser.Name | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookProfile.xml')) 2>&1 | Write-Log
+            $(Get-OutlookAddin -User $LogonUser.SID | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookAddin.xml')) 2>&1 | Write-Log
+            $(if ($o = Get-ClickToRunConfiguration) {$o | Export-Clixml -Path (Join-Path $OfficeDir 'ClickToRunConfiguration.xml')}) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
-            Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $OfficeDir 'Cached AutoDiscover') -ErrorAction SilentlyContinue
+            $(Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $OfficeDir 'Cached AutoDiscover')) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
-            Save-MSIPC -Path $MSIPCDir -ErrorAction SilentlyContinue
+            $(Save-MSIPC -Path $MSIPCDir) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
-
-            # Get processes and its user (only for Outlook.exe). (PowerShell 4's Get-Process has -IncludeUserName, but I'm using WMI here for now).
-            Save-Process -Path $OSDir
+            $(Save-Process -Path $OSDir) 2>&1 | Write-Log
 
             if ($LogonUser) {
                 $LogonUser | Export-Clixml -Path (Join-Path $OSDir 'LogonUser.xml')
@@ -4191,26 +4200,26 @@ function Collect-OutlookInfo {
         # Save the event logs after tracing is done and wait for the tasks started earlier and
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
-            Save-EventLog -Path $EventDir -ErrorAction SilentlyContinue
+            $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
 
             if ($oSConfigurationTask) {
                 Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -PercentComplete -1
-                $oSConfigurationTask | Receive-Task -AutoRemoveTask -ErrorAction SilentlyContinue
+                $($oSConfigurationTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
                 Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -Completed
                 Write-Log "oSConfigurationTask is complete."
             }
 
             if ($officeRegistryTask) {
                 Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -PercentComplete -1
-                $officeRegistryTask | Receive-Task -AutoRemoveTask -ErrorAction SilentlyContinue
+                $($officeRegistryTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
                 Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -Completed
                 Write-Log "officeRegistryTask is complete."
             }
 
             if ($networkInfoTask) {
                 Write-Progress -Activity 'Saving network info' -Status "Please wait." -PercentComplete -1
-                $networkInfoTask | Receive-Task -AutoRemoveTask -ErrorAction SilentlyContinue
+                $($networkInfoTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
                 Write-Progress -Activity 'Saving network info' -Status "Please wait." -Completed
                 Write-Log "networkInfoTask is complete."
             }
@@ -4227,7 +4236,7 @@ function Collect-OutlookInfo {
                     $cts.Cancel()
                 }
 
-                $officeModuleInfoTask | Receive-Task -AutoRemoveTask -ErrorAction SilentlyContinue
+                $($officeModuleInfoTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
                 Write-Progress -Activity 'Saving Office module info' -Status 'Please wait.' -Completed
             }
 
