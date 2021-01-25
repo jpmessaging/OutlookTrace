@@ -135,45 +135,52 @@ function Open-Log {
 function Write-Log {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true,ValueFromPipeline=$true)]
+        [Parameter(ValueFromPipeline=$true)]
         [string]$Message
     )
 
-    # If Open-Log is not called beforehand, just output to verbose.
-    if (-not $Script:logWriter) {
-        Write-Verbose $Message
-        return
+    process {
+        # Ignore null or an empty string.
+        if (-not $Message) {
+            return
+        }
+
+        # If Open-Log is not called beforehand, just output to verbose.
+        if (-not $Script:logWriter) {
+            Write-Verbose $Message
+            return
+        }
+
+        $currentTime = Get-Date
+        $currentTimeFormatted = $currentTime.ToString('o')
+
+        # Delta time is relative to thread.
+        # Each thread has it's own copy of lastLogTime now.
+        [TimeSpan]$delta = 0;
+        if ($Script:lastLogTime) {
+            $delta = $currentTime.Subtract($Script:lastLogTime)
+        }
+
+        # Format as CSV:
+        $sb = New-Object System.Text.StringBuilder
+        $sb.Append($currentTimeFormatted).Append(',') | Out-Null
+        $sb.Append($delta.TotalMilliseconds).Append(',') | Out-Null
+        $sb.Append([System.Threading.Thread]::CurrentThread.ManagedThreadId).Append(',') | Out-Null
+        $sb.Append((Get-PSCallStack)[1].Command).Append(',') | Out-Null
+        $sb.Append('"').Append($Message.Replace('"', "'")).Append('"') | Out-Null
+
+        # Protect from concurrent write
+        [System.Threading.Monitor]::Enter($Script:logWriter)
+        try {
+            $Script:logWriter.WriteLine($sb.ToString())
+        }
+        finally {
+            [System.Threading.Monitor]::Exit($Script:logWriter)
+        }
+
+        $sb = $null
+        $Script:lastLogTime = $currentTime
     }
-
-    $currentTime = Get-Date
-    $currentTimeFormatted = $currentTime.ToString('o')
-
-    # Delta time is relative to thread.
-    # Each thread has it's own copy of lastLogTime now.
-    [TimeSpan]$delta = 0;
-    if ($Script:lastLogTime) {
-        $delta = $currentTime.Subtract($Script:lastLogTime)
-    }
-
-    # Format as CSV:
-    $sb = New-Object System.Text.StringBuilder
-    $sb.Append($currentTimeFormatted).Append(',') | Out-Null
-    $sb.Append($delta.TotalMilliseconds).Append(',') | Out-Null
-    $sb.Append([System.Threading.Thread]::CurrentThread.ManagedThreadId).Append(',') | Out-Null
-    $sb.Append((Get-PSCallStack)[1].Command).Append(',') | Out-Null
-    $sb.Append('"').Append($Message.Replace('"', "'")).Append('"') | Out-Null
-
-    # Protect from concurrent write
-    [System.Threading.Monitor]::Enter($Script:logWriter)
-    try {
-        $Script:logWriter.WriteLine($sb.ToString())
-    }
-    finally {
-        [System.Threading.Monitor]::Exit($Script:logWriter)
-    }
-
-    $sb = $null
-    $Script:lastLogTime = $currentTime
 }
 
 function Close-Log {
@@ -276,7 +283,7 @@ function Start-Task {
     # Start the command
     $ar = $ps.BeginInvoke()
 
-    New-Object PSCustomObject -Property @{
+    [PSCustomObject]@{
         AsyncResult = $ar
         PowerShell = $ps
     }
@@ -1033,7 +1040,7 @@ function Compress-Folder {
             $filesRemoved = $true
         }
 
-        New-Object PSCustomObject -Property @{
+        [PSCustomObject]@{
             ZipFilePath = $zipFilePath.ToString()
             FilesRemoved = $filesRemoved -eq $true
         }
@@ -1144,7 +1151,7 @@ function Get-MicrosoftUpdate {
                         $KB = $Matches['KB']
                     }
 
-                    New-Object PSCustomObject -Property @{
+                    [PSCustomObject]@{
                         DisplayName = $displayName
                         KB = $KB
                         MoreInfoURL = $moreInfoURL
@@ -1210,7 +1217,7 @@ function Get-InstalledUpdate
 
         foreach ($item in $items) {
             # https://docs.microsoft.com/en-us/windows/win32/shell/folder-getdetailsof
-            New-Object PSCustomObject -Property @{
+            [PSCustomObject]@{
                 Name        = $item.Name
                 Program     = $appUpdates.GetDetailsOf($item, 2)
                 Version     = $appUpdates.GetDetailsOf($item, 3)
@@ -1275,7 +1282,7 @@ function Get-LogonUser {
 
     $sid = ConvertTo-UserSID $userName
 
-    $Script:LogonUser = New-Object PSCustomObject -Property @{
+    $Script:LogonUser = [PSCustomObject]@{
         Name = $userName
         SID = $sid
     }
@@ -1456,15 +1463,24 @@ function Save-OSConfiguration {
         New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
     }
 
-    Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_ComputerSystem.xml")
-    Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_OperatingSystem.xml")
+    $(Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_ComputerSystem.xml")) 2>&1 | Write-Log
+    $(Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_OperatingSystem.xml")) 2>&1 | Write-Log
 
-    Get-ProxySetting | Export-Clixml -Path $(Join-Path $Path -ChildPath "ProxySetting.xml")
-    Get-NLMConnectivity | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")
-    Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")
-    Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")
-    Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "JoinInformation.xml")
-    Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")
+    # $(Get-ProxySetting | Export-Clixml -Path $(Join-Path $Path -ChildPath "ProxySetting.xml")) 2>&1 | Write-Log
+    # $(Get-NLMConnectivity | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")) 2>&1 | Write-Log
+    # $(Get-WSCAntivirus | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")) 2>&1 | Write-Log
+
+    # $(Get-InstalledUpdate | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")) 2>&1 | Write-Log
+    # $(Get-JoinInformation | Export-Clixml -Path $(Join-Path $Path -ChildPath "JoinInformation.xml")) 2>&1 | Write-Log
+    # $(Get-DeviceJoinStatus | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")) 2>&1 | Write-Log
+
+    $(if ($o = Get-ProxySetting) { $o | Export-Clixml -Path $(Join-Path $Path -ChildPath "ProxySetting.xml")}) 2>&1 | Write-Log
+    $(if ($o = Get-NLMConnectivity) { $o | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")}) 2>&1 | Write-Log
+    $(if ($o = Get-WSCAntivirus) { $o | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")}) 2>&1 | Write-Log
+
+    $(if ($o = Get-InstalledUpdate) { $o | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")}) 2>&1 | Write-Log
+    $(if ($o = Get-JoinInformation) { $o | Export-Clixml -Path $(Join-Path $Path -ChildPath "JoinInformation.xml")}) 2>&1 | Write-Log
+    $(if ($o = Get-DeviceJoinStatus) { $o | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")}) 2>&1 | Write-Log
 }
 
 function Save-OSConfigurationMT {
@@ -1759,7 +1775,7 @@ public static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURR
     Write-Log "UserIE*** properties correspond to WINHTTP_CURRENT_USER_IE_PROXY_CONFIG obtained by WinHttpGetIEProxyConfigForCurrentUser. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info"
     Write-Log "WinHttp*** properties correspond to WINHTTP_PROXY_INFO obtained by WinHttpGetDefaultProxyConfiguration. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config"
 
-    New-Object PSCustomObject -Property $props
+    [PSCustomObject]$props
 }
 
 function Get-NLMConnectivity {
@@ -1802,7 +1818,7 @@ function Get-NLMConnectivity {
         }
     }
 
-    New-Object PSCustomObject -Property @{
+    [PSCustomObject]@{
         IsConnectedToInternet = $isConnectedToInternet
         Connectivity = $connectivity
     }
@@ -1838,7 +1854,7 @@ function Get-WSCAntivirus {
     # Catch it and convert it a non-terminating error so that the caller can ignore with ErrorAction.
     try {
         $hr = [Win32.WSC]::WscGetSecurityProviderHealth($WSC_SECURITY_PROVIDER_ANTIVIRUS, [ref]$health)
-        New-Object PSCustomObject -Property @{
+        [PSCustomObject]@{
             HRESULT = $hr
             Health  = $health
         }
@@ -1890,7 +1906,7 @@ public enum NETSETUP_JOIN_STATUS
         return
     }
 
-    New-Object PSCustomObject -Property @{
+    [PSCustomObject]@{
         Name = $name
         JoinStatus = [Enum]::GetName([Win32.NetAPI+NETSETUP_JOIN_STATUS], $status)
     }
@@ -1968,7 +1984,7 @@ function Get-OutlookProfile {
             $CACHE_DELEGATE_PIM = $true
         }
 
-        New-Object PSCustomObject -Property @{
+        [PSCustomObject]@{
             User = $User
             Profile = $profile.Name
             CachedMode = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
@@ -1976,7 +1992,6 @@ function Get-OutlookProfile {
             DownloadSharedFolders = $CACHE_DELEGATE_PIM
             PR_PROFILE_CONFIG_FLAGS = $flags
         }
-
 
         $profile.Close()
     }
@@ -2214,7 +2229,7 @@ function Save-OfficeModuleInfo {
             $fileVersion = $item.VersionInfo.FileVersion
         }
 
-        New-Object PSCustomObject -Property @{
+        [PSCustomObject]@{
             Name = $item.Name
             FullName = $item.FullName
             #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
@@ -2317,7 +2332,7 @@ function Start-SavingOfficeModuleInfo_PSJob {
                 $fileVersion = $item.VersionInfo.FileVersion
             }
 
-            New-Object PSCustomObject -Property @{
+            [PSCustomObject]@{
                 Name = $item.Name
                 FullName = $item.FullName
                 #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
@@ -2334,7 +2349,7 @@ function Start-SavingOfficeModuleInfo_PSJob {
 
     } -ArgumentList $Path, $officeInfo, $Filters, 'OfficeModuleInfo', $eventName
 
-    New-Object PSCustomObject -Property @{
+    [PSCustomObject]@{
         Job = $job
         Event = $namedEvent # To be closed by Stop-SavingOfficeModuleInfo_PSJob
     }
@@ -2562,7 +2577,7 @@ function Start-FiddlerCap {
         }
     }
 
-    New-Object PSCustomObject -Property @{
+    [PSCustomObject]@{
         FiddlerPath = $fiddlerPath
     }
 }
@@ -2704,7 +2719,7 @@ function Start-Procmon {
     }
 
     Write-Log "Procmon successfully started"
-    New-Object PSObject -Property @{
+    [PSCustomObject]@{
         ProcmonPath = $procmonFile
         ProcmonProcessId = $process.Id
         PMLFile = $pmlFile
@@ -2873,7 +2888,7 @@ function Get-OfficeInfo {
                     $modifyPath =  $subKey.GetValue('ModifyPath')
 
                     if (($displayName -like "Microsoft Office*" -or $displayName  -like "Microsoft 365 Apps*") -and $displayIcon -and $modifyPath -notlike "*MUI*") {
-                        New-Object PSObject -Property @{
+                        [PSCustomObject]@{
                             Version = $subKey.GetValue('DisplayVersion')
                             Location = $subKey.GetValue('InstallLocation')
                             DisplayName = $displayName
@@ -2937,7 +2952,7 @@ function Get-OfficeInfo {
     }
 
     $Script:OfficeInfoCache =
-    New-Object PSCustomObject -Property @{
+    [PSCustomObject]@{
         DisplayName = $displayName
         Version = $version
         InstallPath = $installPath
@@ -3168,7 +3183,7 @@ function Save-Dump {
         Write-Log "Calling Win32 MiniDumpWriteDump"
         # Note: 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4) | MiniDumpWithFullMemory (2)
         if ([Win32.DbgHelp]::MiniDumpWriteDump($process.Handle, $ProcessId, $dumpFileStream.Handle, 0x61826, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)) {
-            New-Object PSObject -Property @{
+            [PSCustomObject]@{
                 ProcessID = $process.Id
                 ProcessName = $process.Name
                 DumpFile = $dumpFile
@@ -3614,7 +3629,6 @@ function Test-Autodiscover {
     }
 }
 
-
 <#
 .SYNOPSIS
 Convert a ProgID to CLSID
@@ -3667,7 +3681,7 @@ function ConvertTo-CLSID {
         $pCLSIDString = [IntPtr]::Zero
     }
 
-    New-Object PSCustomObject -Property @{
+    [PSCustomObject]@{
         GUID = $CLSID
         String = $CLSIDString
     }
@@ -3762,7 +3776,7 @@ function Get-OutlookAddin {
             $props['ThreadingModel'] = $inproc32.ThreadingModel
         }
 
-        New-Object PSCustomObject -Property $props
+        [PSCustomObject]$props
      }
 
     # Close all the keys
@@ -3952,7 +3966,7 @@ function Collect-OutlookInfo {
             $officeRegistryTask = Start-Task -Command 'Save-OfficeRegistry' -Parameters @{Path = $RegistryDir; User = $LogonUser.SID; ErrorAction = 'SilentlyContinue'}
             # Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -User $LogonUser.SID -ErrorAction SilentlyContinue
 
-            $oSConfigurationTask = Start-Task -Command 'Save-OSConfiguration' -Parameters @{Path = $OSDir; ErrorAction = 'SilentlyContinue'}
+            $oSConfigurationTask = Start-Task -Command 'Save-OSConfiguration' -Parameters @{Path = $OSDir}
             # Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
