@@ -1070,7 +1070,7 @@ function Save-EventLog {
         }
     )
 
-    $tasks | Wait-Task | Remove-Task
+    $tasks | Receive-Task -AutoRemoveTask
 }
 
 function Get-MicrosoftUpdate {
@@ -1491,7 +1491,7 @@ function Save-OSConfigurationMT {
 
     Write-Verbose "waiting for tasks..."
 
-    $tasks | Wait-Task | Receive-Task -AutoRemoveTask
+    $tasks | Receive-Task -AutoRemoveTask
 }
 
 function Save-NetworkInfo {
@@ -1662,7 +1662,7 @@ function Save-NetworkInfoMT {
     )
 
     Write-Log "Waiting for tasks to complete."
-    $tasks | Wait-Task | Receive-Task -AutoRemoveTask
+    $tasks | Receive-Task -AutoRemoveTask
     Write-Log "All tasks are complete."
 }
 
@@ -2021,14 +2021,17 @@ function Save-CachedAutodiscover {
     # Remove Hidden attribute
     foreach ($file in @(Get-ChildItem $Path -Force)) {
         if ((Get-ItemProperty $file.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
-            if ($PSVersionTable.PSVersion.Major -gt 2) {
-                # Unfortunately, this does not work in PowerShellV2.
+            try {
+                # Unfortunately, this does not work before PowerShellV5.
                 (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
+                continue
             }
-            else {
-                # This is for PSv2, but could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
-                Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
+            catch {
+                # ignore error
             }
+
+            # This could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
+            Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
         }
     }
 }
@@ -3832,6 +3835,26 @@ function Stop-GatherNetworkInfo {
     $process.Dispose()
 }
 
+function Save-Process {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        $Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item -ItemType Directory -Path $Path -ErrorAction Stop | Out-Null
+    }
+
+    Write-Log "Saving Win32_Process"
+    Get-WmiObject -Class Win32_Process | ForEach-Object {
+        if ($_.ProcessName -eq 'Outlook.exe') {
+            $owner = $_.GetOwner()
+            $_ | Add-Member -MemberType NoteProperty -Name 'User' -Value "$($owner.Domain)\$($owner.User)"
+        }
+        $_
+    } | Export-Clixml -Path (Join-Path $Path "Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
+}
 
 function Collect-OutlookInfo {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -3903,56 +3926,56 @@ function Collect-OutlookInfo {
     Write-Log "Starting traces"
     try {
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
+            # Sub directory names
+            $ConfigDir = Join-Path $tempPath 'Configuration'
+            $OSDir = Join-Path $ConfigDir 'OS'
+            $OfficeDir =  Join-Path $ConfigDir 'Office'
+            $RegistryDir = Join-Path $ConfigDir 'Registry'
+            $NetworkDir = Join-Path $ConfigDir 'Network'
+            $MSIPCDir = Join-Path $ConfigDir 'MSIPC'
+            $EventDir = Join-Path $ConfigDir 'EventLog'
+
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 0
-            New-Item -ItemType directory (Join-Path $tempPath 'Configuration') | Out-Null
+            New-Item -Path $ConfigDir -ItemType directory | Out-Null
 
             # First start tasks that might take a while.
-            $networkInfoTask = Start-Task -Command 'Save-NetworkInfo' -Parameters @{Path = (Join-Path $tempPath 'Configuration\NetworkInfo'); ErrorAction = 'SilentlyContinue'}
-            # Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
-            # Save-NetworkInfoMT -Path (Join-Path $tempPath 'Configuration\NetworkInfo_MT') -ErrorAction SilentlyContinue
-
             $cts = New-Object System.Threading.CancellationTokenSource
-            $officeModuleInfoTask = Start-Task -Command 'Save-OfficeModuleInfo' -Parameters @{Path = (Join-Path $tempPath 'Configuration'); CancellationToken = $cts.Token}
+            $officeModuleInfoTask = Start-Task -Command 'Save-OfficeModuleInfo' -Parameters @{Path = $OfficeDir; CancellationToken = $cts.Token}
             # $Filters = 'outlook\.exe', 'umoutlookaddin\.dll', 'mso\.dll', 'mso\d\d.+\.dll', 'olmapi32\.dll', 'emsmdb32\.dll', 'wwlib\.dll'
             # Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
 
+            $networkInfoTask = Start-Task -Command 'Save-NetworkInfo' -Parameters @{Path = $NetworkDir; ErrorAction = 'SilentlyContinue'}
+            # Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
+            # Save-NetworkInfoMT -Path (Join-Path $tempPath 'Configuration\NetworkInfo_MT') -ErrorAction SilentlyContinue
+
             $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
-
-            if ($LogonUser) {
-                $LogonUser | Export-Clixml -Path (Join-Path $tempPath 'Configuration\LogonUser.xml')
-            }
-
-            $officeRegistryTask = Start-Task -Command 'Save-OfficeRegistry' -Parameters @{Path = (Join-Path $tempPath 'Configuration'); User = $LogonUser.SID; ErrorAction = 'SilentlyContinue'}
+            $officeRegistryTask = Start-Task -Command 'Save-OfficeRegistry' -Parameters @{Path = $RegistryDir; User = $LogonUser.SID; ErrorAction = 'SilentlyContinue'}
             # Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -User $LogonUser.SID -ErrorAction SilentlyContinue
 
-            $oSConfigurationTask = Start-Task -Command 'Save-OSConfiguration' -Parameters @{Path = (Join-Path $tempPath 'Configuration'); ErrorAction = 'SilentlyContinue'}
+            $oSConfigurationTask = Start-Task -Command 'Save-OSConfiguration' -Parameters @{Path = $OSDir; ErrorAction = 'SilentlyContinue'}
             # Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
 
-            Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OfficeInfo.xml')
-            Get-OutlookProfile -User $LogonUser.Name -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookProfile.xml')
-            Get-OutlookAddin -User $LogonUser.SID -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $tempPath 'Configuration\OutlookAddin.xml')
-            Get-ClickToRunConfiguration -ErrorAction SilentlyContinue | ForEach-Object { if ($_) {$_ | Export-Clixml -Path (Join-Path $tempPath 'Configuration\ClickToRunConfiguration.xml')}}
+            Get-OfficeInfo -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $OfficeDir 'OfficeInfo.xml')
+            Get-OutlookProfile -User $LogonUser.Name -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookProfile.xml')
+            Get-OutlookAddin -User $LogonUser.SID -ErrorAction SilentlyContinue | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookAddin.xml')
+            Get-ClickToRunConfiguration -ErrorAction SilentlyContinue | ForEach-Object { if ($_) {$_ | Export-Clixml -Path (Join-Path $OfficeDir 'ClickToRunConfiguration.xml')}}
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
-            Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $tempPath 'Cached AutoDiscover') -ErrorAction SilentlyContinue
+            Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $OfficeDir 'Cached AutoDiscover') -ErrorAction SilentlyContinue
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
-            Save-MSIPC -Path (Join-Path $tempPath 'MSIPC') -ErrorAction SilentlyContinue
+            Save-MSIPC -Path $MSIPCDir -ErrorAction SilentlyContinue
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
 
             # Get processes and its user (only for Outlook.exe). (PowerShell 4's Get-Process has -IncludeUserName, but I'm using WMI here for now).
-            Write-Log "Saving Win32_Process."
-            Get-WmiObject -Class Win32_Process | ForEach-Object {
-                if ($_.ProcessName -eq 'Outlook.exe') {
-                    $_ | Select-Object *, @{N='User'; E={$owner = $_.GetOwner();"$($owner.Domain)\$($owner.User)"}}
-                }
-                else {
-                    $_
-                }
-            } | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
+            Save-Process -Path $OSDir
+
+            if ($LogonUser) {
+                $LogonUser | Export-Clixml -Path (Join-Path $OSDir 'LogonUser.xml')
+            }
 
             # Do we need MSInfo32?
             # Save-MSInfo32 -Path $tempPath
@@ -3970,7 +3993,7 @@ function Collect-OutlookInfo {
             # When netsh trace is run for the first time, it does not capture packets (even with "capture=yes").
             # To workaround, netsh is started and stopped immediately.
             $tempNetshName = 'netsh_test'
-            Start-NetshTrace -Path (join-path $tempPath $tempNetshName) -FileName "$tempNetshName.etl" -RerpotMode 'None'
+            Start-NetshTrace -Path (Join-Path $tempPath $tempNetshName) -FileName "$tempNetshName.etl" -RerpotMode 'None'
             Stop-NetshTrace
             Remove-Item (Join-Path $tempPath $tempNetshName) -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -4151,58 +4174,53 @@ function Collect-OutlookInfo {
 
         Write-Progress -Activity 'Stopping traces' -Status "Please wait." -Completed
 
-        # Wait for the tasks started earlier and save the event logs after tracing is done
+        # Save the event logs after tracing is done and wait for the tasks started earlier and
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
+            Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
+            Save-EventLog -Path $EventDir -ErrorAction SilentlyContinue
+            Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
+
+            if ($oSConfigurationTask) {
+                Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -PercentComplete -1
+                $oSConfigurationTask | Receive-Task -AutoRemoveTask -ErrorAction SilentlyContinue
+                Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -Completed
+                Write-Log "oSConfigurationTask is complete."
+            }
+
+            if ($officeRegistryTask) {
+                Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -PercentComplete -1
+                $officeRegistryTask | Receive-Task -AutoRemoveTask -ErrorAction SilentlyContinue
+                Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -Completed
+                Write-Log "officeRegistryTask is complete."
+            }
+
+            if ($networkInfoTask) {
+                Write-Progress -Activity 'Saving network info' -Status "Please wait." -PercentComplete -1
+                $networkInfoTask | Receive-Task -AutoRemoveTask -ErrorAction SilentlyContinue
+                Write-Progress -Activity 'Saving network info' -Status "Please wait." -Completed
+                Write-Log "networkInfoTask is complete."
+            }
 
             if ($officeModuleInfoTask) {
                 [TimeSpan]$timeout = [TimeSpan]::FromSeconds(30)
                 Write-Progress -Activity 'Saving Office module info' -Status "Please wait up to $timeout" -PercentComplete -1
 
                 if (Wait-Task $officeModuleInfoTask -Timeout $timeout)  {
-                    Write-Log "Task SavingOfficeModuleInfo is complete."
+                    Write-Log "officeModuleInfoTask is complete."
                 }
                 else {
-                    Write-Log "Task SavingOfficeModuleInfo timed out after $($timeout.TotalSeconds) seconds. Task will be canceled."
+                    Write-Log "officeModuleInfoTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled."
                     $cts.Cancel()
                 }
 
-                $officeModuleInfoTask | Wait-Task | Receive-Task -AutoRemoveTask
+                $officeModuleInfoTask | Receive-Task -AutoRemoveTask -ErrorAction SilentlyContinue
                 Write-Progress -Activity 'Saving Office module info' -Status 'Please wait.' -Completed
             }
 
-            if ($oSConfigurationTask) {
-                Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -PercentComplete -1
-                $oSConfigurationTask | Wait-Task | Receive-Task -AutoRemoveTask
-                Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -Completed
+            # Save process list again after traces
+            if ($Component.Count -gt 1) {
+                Save-Process -Path $OSDir
             }
-
-            if ($officeRegistryTask) {
-                Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -PercentComplete -1
-                $officeRegistryTask | Wait-Task | Receive-Task -AutoRemoveTask
-                Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -Completed
-            }
-
-            if ($networkInfoTask) {
-                Write-Progress -Activity 'Saving network info' -Status "Please wait." -PercentComplete -1
-                $networkInfoTask | Wait-Task | Receive-Task -AutoRemoveTask
-                Write-Progress -Activity 'Saving network info' -Status "Please wait." -Completed
-            }
-
-            Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
-            Save-EventLog -Path (Join-Path $tempPath 'EventLog')
-            Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
-        }
-
-        # Save process list again after traces
-        if (($Component -contains 'Configuration' -or $Component -contains 'All') -and $Component.Count -gt 1) {
-            Write-Log "Saving Win32_Process"
-            Get-WmiObject -Class Win32_Process | ForEach-Object {
-                if ($_.ProcessName -eq 'Outlook.exe') {
-                    $owner = $_.GetOwner()
-                    $_ | Add-Member -MemberType NoteProperty -Name 'User' -Value "$($owner.Domain)\$($owner.User)"
-                }
-                $_
-            } | Export-Clixml -Path (Join-Path $tempPath "Configuration\Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
         }
 
         Close-TaskRunspace
