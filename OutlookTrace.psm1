@@ -136,12 +136,12 @@ function Write-Log {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true,ValueFromPipeline=$true)]
-        [string]$Text
+        [string]$Message
     )
 
     # If Open-Log is not called beforehand, just output to verbose.
     if (-not $Script:logWriter) {
-        Write-Verbose $Text
+        Write-Verbose $Message
         return
     }
 
@@ -161,7 +161,7 @@ function Write-Log {
     $sb.Append($delta.TotalMilliseconds).Append(',') | Out-Null
     $sb.Append([System.Threading.Thread]::CurrentThread.ManagedThreadId).Append(',') | Out-Null
     $sb.Append((Get-PSCallStack)[1].Command).Append(',') | Out-Null
-    $sb.Append('"').Append($Text.Replace('"', "'")).Append('"') | Out-Null
+    $sb.Append('"').Append($Message.Replace('"', "'")).Append('"') | Out-Null
 
     # Protect from concurrent write
     [System.Threading.Monitor]::Enter($Script:logWriter)
@@ -174,8 +174,6 @@ function Write-Log {
 
     $sb = $null
     $Script:lastLogTime = $currentTime
-
-
 }
 
 function Close-Log {
@@ -322,7 +320,8 @@ function Receive-Task {
 
             if ($ps.HadErrors) {
                 $ps.Streams.Error | ForEach-Object {
-                    Write-Error -ErrorRecord $_
+                    # Include the ErrorRecord's InvocationInfo so that it's easier to understand the origin of error.
+                    Write-Error -Message "Task's Error:`n$($_.InvocationInfo.MyCommand): $($_.Exception.Message)`n$($_.InvocationInfo.PositionMessage)"  -Exception $_.Exception
                 }
             }
 
@@ -1468,6 +1467,33 @@ function Save-OSConfiguration {
     Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")
 }
 
+function Save-OSConfigurationMT {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory = $true)]
+        $Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+    }
+
+    $tasks = @(
+    Start-Task -Script "Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_ComputerSystem.xml")"
+    Start-Task -Script "Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_OperatingSystem.xml")"
+    Start-Task -Script "Get-ProxySetting | Export-Clixml -Path $(Join-Path $Path -ChildPath "ProxySetting.xml")"
+    Start-Task -Script "Get-NLMConnectivity | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")"
+    Start-Task -Script "Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")"
+    Start-Task -Script "Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")"
+    Start-Task -Script "Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "JoinInformation.xml")"
+    Start-Task -Script "Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")"
+    )
+
+    Write-Verbose "waiting for tasks..."
+
+    $tasks | Wait-Task | Receive-Task -AutoRemoveTask
+}
+
 function Save-NetworkInfo {
     [CmdletBinding()]
     param (
@@ -1550,6 +1576,94 @@ function Save-NetworkInfo {
             $result | Export-Clixml -Path (Join-Path $Path "$fileName.xml")
         }
     }
+}
+
+
+function Save-NetworkInfoMT {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory = $true)]
+        $Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+    }
+
+    # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
+    $commands = @(
+        'Get-NetAdapter -IncludeHidden'
+        'Get-NetAdapterAdvancedProperty'
+        'Get-NetAdapterBinding -IncludeHidden'
+        'Get-NetIpConfiguration -Detailed'
+        'Get-DnsClientNrptPolicy'
+        # 'Resolve-DnsName bing.com'
+        # 'ping bing.com -4'
+        # 'ping bing.com -6'
+        # 'Test-NetConnection bing.com -InformationLevel Detailed'
+        # 'Test-NetConnection bing.com -InformationLevel Detailed -CommonTCPPort HTTP'
+        'Get-NetRoute'
+        'Get-NetIPaddress'
+        'Get-NetLbfoTeam'
+        # 'Get-Service -Name:VMMS'
+        # 'Get-VMSwitch'
+        # 'Get-VMNetworkAdapter -all'
+        # 'Get-WindowsOptionalFeature -Online'
+        # 'Get-Service'
+        # 'Get-PnpDevice | Get-PnpDeviceProperty -KeyName DEVPKEY_Device_InstanceId,DEVPKEY_Device_DevNodeStatus,DEVPKEY_Device_ProblemCode'
+
+        'Get-NetIPInterface'
+        'ipconfig /all'
+
+        # Dump Windows Firewall config
+        'netsh advfirewall monitor show currentprofile' # current profiles
+        'netsh advfirewall monitor show firewall' # firewall configuration
+        'netsh advfirewall monitor show consec' # connection security configuration
+        'netsh advfirewall firewall show rule name=all verbose' # firewall rules
+        'netsh advfirewall consec show rule name=all verbose' # connection security rules
+        'netsh advfirewall monitor show firewall rule name=all'# firewall rules from Dynamic Store
+        'netsh advfirewall monitor show consec rule name=all' # connection security rules from Dynamic Store
+    )
+
+    Write-Log "Starting $($commands.Count) tasks."
+
+    $tasks = @(
+    foreach ($commandString in $commands) {
+        if ($commandString.IndexOf(' ') -ge 0) {
+            $commandName = $commandString.SubString(0, $commandString.IndexOf(' '))
+        }
+        else {
+            $commandName = $commandString
+        }
+
+        $command = Get-Command $commandName -ErrorAction SilentlyContinue
+
+        if (-not $command) {
+            Write-Log "$commandName is not available."
+            continue
+        }
+
+        # $logmsg = "Running $commandString"
+
+        if ($command.CommandType -eq 'Application') {
+            # To be more strict, I could use [System.IO.Path]::GetInvalidFileNameChars(). But it's ok for now.
+            $fileName = $commandString.Replace('/', '-')
+
+            $commandString += " | Out-File -FilePath `"$(Join-Path $Path "$fileName.txt")`""
+        }
+        else {
+            $fileName = $commandName.SubString($commandName.IndexOf('-') + 1)
+            $commandString += " | Export-Clixml -Path `"$(Join-Path $Path "$fileName.xml")`""
+        }
+
+        # $commandString += "; Write-Log  `"$logmsg`""
+        Start-Task -Script $commandString
+    }
+    )
+
+    Write-Log "Waiting for tasks to complete."
+    $tasks | Wait-Task | Receive-Task -AutoRemoveTask
+    Write-Log "All tasks are complete."
 }
 
 function Get-ProxySetting {
@@ -3794,7 +3908,8 @@ function Collect-OutlookInfo {
 
             # First start tasks that might take a while.
             $networkInfoTask = Start-Task -Command 'Save-NetworkInfo' -Parameters @{Path = (Join-Path $tempPath 'Configuration\NetworkInfo'); ErrorAction = 'SilentlyContinue'}
-            #Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
+            # Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
+            # Save-NetworkInfoMT -Path (Join-Path $tempPath 'Configuration\NetworkInfo_MT') -ErrorAction SilentlyContinue
 
             $cts = New-Object System.Threading.CancellationTokenSource
             $officeModuleInfoTask = Start-Task -Command 'Save-OfficeModuleInfo' -Parameters @{Path = (Join-Path $tempPath 'Configuration'); CancellationToken = $cts.Token}
@@ -4051,25 +4166,25 @@ function Collect-OutlookInfo {
                     $cts.Cancel()
                 }
 
-                $officeModuleInfoTask | Wait-Task | Remove-Task
+                $officeModuleInfoTask | Wait-Task | Receive-Task -AutoRemoveTask
                 Write-Progress -Activity 'Saving Office module info' -Status 'Please wait.' -Completed
             }
 
             if ($oSConfigurationTask) {
                 Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -PercentComplete -1
-                $oSConfigurationTask | Wait-Task | Remove-Task
+                $oSConfigurationTask | Wait-Task | Receive-Task -AutoRemoveTask
                 Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -Completed
             }
 
             if ($officeRegistryTask) {
                 Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -PercentComplete -1
-                $officeRegistryTask | Wait-Task | Remove-Task
+                $officeRegistryTask | Wait-Task | Receive-Task -AutoRemoveTask
                 Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -Completed
             }
 
             if ($networkInfoTask) {
                 Write-Progress -Activity 'Saving network info' -Status "Please wait." -PercentComplete -1
-                $networkInfoTask | Wait-Task | Remove-Task
+                $networkInfoTask | Wait-Task | Receive-Task -AutoRemoveTask
                 Write-Progress -Activity 'Saving network info' -Status "Please wait." -Completed
             }
 
@@ -4113,9 +4228,13 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-# Configure Export-Clixml to use UTF8 by default.
+# Configure Export-Clixml & Out-File to use UTF8 by default.
 if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Contains("Export-CliXml:Encoding")) {
     $PSDefaultParameterValues.Add("Export-Clixml:Encoding", 'UTF8')
+}
+
+if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Contains("Out-File:Encoding")) {
+    $PSDefaultParameterValues.Add("Out-File:Encoding", 'utf8')
 }
 
 Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Collect-OutlookInfo
