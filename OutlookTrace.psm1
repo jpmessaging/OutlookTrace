@@ -221,7 +221,7 @@ function Open-TaskRunspace {
         if ($IncludeScriptVariables) {
             foreach ($_ in @(Get-Variable -Scope Script)) {
                 if ($_.Name -ne 'true' -and $_.Value) {
-                    $InitialSessionState.Variables.Add($(
+                    $initialSessionState.Variables.Add($(
                         New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
                     ))
                 }
@@ -229,7 +229,7 @@ function Open-TaskRunspace {
         }
 
         foreach ($_ in $Variables) {
-            $InitialSessionState.Variables.Add($(
+            $initialSessionState.Variables.Add($(
                 New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
             ))
         }
@@ -4249,12 +4249,13 @@ function Collect-OutlookInfo {
         Close-TaskRunspace
         Close-Log
     }
-
+    
+    $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
     if ($SkipZip) {
+        Rename-Item -Path $tempPath  -NewName $zipFileName
         return
     }
-
-    $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
+    
     Compress-Folder -Path $tempPath -ZipFileName $zipFileName -Destination $Path | Out-Null
 
     if (Test-Path $tempPath) {
