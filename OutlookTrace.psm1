@@ -2841,6 +2841,192 @@ function Stop-TcoTrace {
     }
 }
 
+<#
+.SYNOPSIS
+Start tttracer.exe to launch a given executable.
+#>
+function Start-TTD {
+    [CmdletBinding()]
+    param(
+        # Folder to save to.
+        [Parameter(Mandatory=$true)]
+        $Path,
+        # Executable path (e.g. C:\Windows\System32\notepad.exe)
+        [Parameter(Mandatory=$true)]
+        $Executable
+    )
+
+    # Check if tttracer.exe is available (Win10 RS5 and above should include it)
+    if (-not ($tttracer = Get-Command 'tttracer.exe' -ErrorAction SilentlyContinue)) {
+        Write-Error "tttracer.exe is not available."
+        return
+    }
+
+    # Make sure $Executable exists.
+    if (-not (Test-Path $Executable)) {
+        Write-Error "Cannot find $Executable."
+        return
+    }
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+
+    # Form the output file name.
+    $runFileName = [IO.Path]::GetFileNameWithoutExtension($Executable)
+    $outPath = Join-Path $Path "$($runFileName)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
+
+    $stdout = Join-Path $Path 'stdout.txt'
+    $stderr = Join-Path $Path 'stderr.txt'
+
+    # Get the existing process(es) of the target executable.
+    $existingProcesses = @(Get-Process -Name $([IO.Path]::GetFileNameWithoutExtension($Executable)) -ErrorAction SilentlyContinue)
+
+    $err = $($process = Invoke-Command {
+        $ErrorActionPreference = 'Continue'
+        Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "`"$Executable`"" -PassThru  -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    }) 2>&1
+
+    if (-not $process -or $process.HasExited) {
+        Write-Error "tttracer.exe failed to start. ExitCode: $($process.ExitCode); Error: $err."
+        $process.Dispose()
+        return
+    }
+
+    # Find out the new process instantiated by tttracer.exe. This might take a little of time.
+    $targetProcess = $null
+    $maxRetry = 3
+
+    foreach ($i in 1..$maxRetry) {
+        $newProcesses = @(Get-Process -Name $([IO.Path]::GetFileNameWithoutExtension($Executable)) -ErrorAction SilentlyContinue)
+
+        foreach ($p in $newProcesses) {
+            $matched = $existingProcesses | Where-Object {$_.ID -eq $p.ID}
+            if ($matched.Count -eq 0) {
+                $targetProcess = $p
+                break
+            }
+            continue
+        }
+
+        if (-not $targetProcess) {
+            Start-Sleep -Second $i
+        }
+    }
+
+    if (-not $targetProcess) {
+        Write-Error "Cannot find the new instance of $([IO.Path]::GetFileNameWithoutExtension($Executable))."
+        return
+    }
+
+    [PSCustomObject]@{
+        TTTracerProcess = $process
+        TargetProcess = $targetProcess
+        OutputFile = "$outPath.run"
+    }
+}
+
+function Stop-TTD {
+    [CmdletBinding()]
+    param(
+        # The returned object of Start-TTD
+        [Parameter(Mandatory=$true)]
+        $Descriptor
+    )
+
+    $tttracerProcess = $Descriptor.TTTracerProcess
+    $targetProcess = $Descriptor.TargetProcess
+
+    if (-not ($tttracer = Get-Command 'tttracer.exe' -ErrorAction SilentlyContinue)) {
+        Write-Error "tttracer.exe is not available."
+        return
+    }
+
+    if (-not ($tttracerProcess.ID -and $targetProcess.ID)) {
+        Write-Error "Invalid input. tttracer PID: $($tttracerProcess.ID), target process PID: $($targetProcess.ID)"
+        return
+    }
+
+    Write-Log "Stopping tttracer.exe. tttracer PID: $($tttracerProcess.ID), $($targetProcess.Name) PID: $($targetProcess.ID)."
+
+    $err = $($message = & $tttracer -stop $Descriptor.TargetProcess.ID) 2>&1
+
+    # Wait-Process writes a non-terminating error when the process has exited. Ignore this error.
+    $(Wait-Process -InputObject $tttracerProcess -ErrorAction SilentlyContinue) 2>&1 | Out-Null
+
+    # Non zero exitcode indicates an error.
+    if ($LASTEXITCODE -ne 0 -or -not $tttracerProcess.HasExited) {
+        Write-Error "`"tttracer -stop`" failed. ExitCode: $($tttracerProcess.ExitCode)."
+    }
+
+    [PSCustomObject]@{
+        TTTracerExitCode = $tttracerProcess.ExitCode
+        Message = $message
+        Error = $err
+    }
+
+    $tttracerProcess.Dispose()
+    $targetProcess.Dispose()
+}
+
+function Attach-TTD {
+    [CmdletBinding()]
+    param(
+        # Folder to save to.
+        [Parameter(Mandatory=$true)]
+        $Path,
+        # ProcessID of the process to attach to.
+        [Parameter(Mandatory=$true)]
+        $ProcessID
+    )
+
+    # Check if tttracer.exe is available (Win10 RS5 and above should include it)
+    if (-not ($tttracer = Get-Command 'tttracer.exe' -ErrorAction SilentlyContinue)) {
+        Write-Error "tttracer.exe is not available."
+        return
+    }
+
+    if ($targetProcess = Get-Process -Id $ProcessID -ErrorAction SilentlyContinue) {
+        $name = $targetProcess.Name
+    }
+    else {
+        Write-Error "Cannot find a process with PID $ProcessID."
+        return
+    }
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+
+    # Form the output file name.
+    $outPath = Join-Path $Path "$($name)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
+
+    $stdout = Join-Path $Path 'stdout.txt'
+    $stderr = Join-Path $Path 'stderr.txt'
+
+    $err = $($process = Invoke-Command {
+        $ErrorActionPreference = 'Continue'
+        Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "-attach $ProcessID" -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    }) 2>&1
+
+    # Must wait for a little to see if tttracer succeeded.
+    # Wait-Process writes a non-terminating error when timeout occurs. Note that timeout here is a good thing; tttracer is still running.
+    $timeout = $(Wait-Process -InputObject $process -Timeout 3 <#seconds#>) 2>&1
+    if ($timeout) {
+        # Seems successful
+        [PSCustomObject]@{
+            TTTracerProcess = $process
+            TargetProcess = $targetProcess
+            OutputFile = "$outPath.run"
+        }
+
+        return
+    }
+
+    $stderrContent = Get-Content $stderr
+    Write-Error "tttracer.exe failed to attach. ExitCode: $($process.ExitCode); Error: $err.`n$stderrContent"
+}
+
 function Get-OfficeInfo {
     [CmdletBinding()]
     param(
@@ -4286,4 +4472,4 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
     $PSDefaultParameterValues.Add("Out-File:Encoding", 'utf8')
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Collect-OutlookInfo
