@@ -149,7 +149,7 @@ function Write-Log {
 
         # If ErrorRecord is provided, use it.
         if ($ErrorRecord) {
-            $Message += ";ScriptCallStack: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ''))"
+            $Message += " ;ScriptCallStack: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
         }
 
         # If Open-Log is not called beforehand, just output to verbose.
@@ -3964,19 +3964,25 @@ function Collect-OutlookInfo {
             New-Item -Path $ConfigDir -ItemType directory | Out-Null
 
             # First start tasks that might take a while.
+
+            Write-Log "Starting officeModuleInfoTask."
             $cts = New-Object System.Threading.CancellationTokenSource
             $officeModuleInfoTask = Start-Task -Command 'Save-OfficeModuleInfo' -Parameters @{Path = $OfficeDir; CancellationToken = $cts.Token}
             # $Filters = 'outlook\.exe', 'umoutlookaddin\.dll', 'mso\.dll', 'mso\d\d.+\.dll', 'olmapi32\.dll', 'emsmdb32\.dll', 'wwlib\.dll'
             # Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
 
+            Write-Log "Starting networkInfoTask."
             $networkInfoTask = Start-Task -Command 'Save-NetworkInfo' -Parameters @{Path = $NetworkDir}
             # Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
             # Save-NetworkInfoMT -Path (Join-Path $tempPath 'Configuration\NetworkInfo_MT') -ErrorAction SilentlyContinue
 
             $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
+
+            Write-Log "Starting officeRegistryTask."
             $officeRegistryTask = Start-Task -Command 'Save-OfficeRegistry' -Parameters @{Path = $RegistryDir; User = $LogonUser.SID}
             # Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -User $LogonUser.SID -ErrorAction SilentlyContinue
 
+            Write-Log "Starting oSConfigurationTask."
             $oSConfigurationTask = Start-Task -Command 'Save-OSConfiguration' -Parameters @{Path = $OSDir}
             # Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
 
@@ -4229,7 +4235,7 @@ function Collect-OutlookInfo {
                 Write-Progress -Activity 'Saving Office module info' -Status "Please wait up to $timeout" -PercentComplete -1
 
                 if (Wait-Task $officeModuleInfoTask -Timeout $timeout)  {
-                    Write-Log "officeModuleInfoTask is complete."
+                    Write-Log "officeModuleInfoTask is complete before timeout."
                 }
                 else {
                     Write-Log "officeModuleInfoTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled."
@@ -4238,6 +4244,7 @@ function Collect-OutlookInfo {
 
                 $($officeModuleInfoTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
                 Write-Progress -Activity 'Saving Office module info' -Status 'Please wait.' -Completed
+                Write-Log "officeRegistryTask is complete."
             }
 
             # Save process list again after traces
@@ -4249,13 +4256,13 @@ function Collect-OutlookInfo {
         Close-TaskRunspace
         Close-Log
     }
-    
+
     $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
     if ($SkipZip) {
         Rename-Item -Path $tempPath  -NewName $zipFileName
         return
     }
-    
+
     Compress-Folder -Path $tempPath -ZipFileName $zipFileName -Destination $Path | Out-Null
 
     if (Test-Path $tempPath) {
