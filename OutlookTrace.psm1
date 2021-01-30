@@ -2873,14 +2873,11 @@ function Start-TTD {
     }
 
     # Form the output file name.
-    $runFileName = [IO.Path]::GetFileNameWithoutExtension($Executable)
-    $outPath = Join-Path $Path "$($runFileName)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
+    $targetName = [IO.Path]::GetFileNameWithoutExtension($Executable)
+    $outPath = Join-Path $Path "$($targetName)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
 
     $stdout = Join-Path $Path 'stdout.txt'
     $stderr = Join-Path $Path 'stderr.txt'
-
-    # Get the existing process(es) of the target executable.
-    $existingProcesses = @(Get-Process -Name $([IO.Path]::GetFileNameWithoutExtension($Executable)) -ErrorAction SilentlyContinue)
 
     $err = $($process = Invoke-Command {
         $ErrorActionPreference = 'Continue'
@@ -2893,29 +2890,21 @@ function Start-TTD {
         return
     }
 
-    # Find out the new process instantiated by tttracer.exe. This might take a little of time.
+    # Find out the new process instantiated by tttracer.exe. This might take a bit.
+    # The new process starts as a child process of tttracer.exe.
     $targetProcess = $null
     $maxRetry = 3
-
     foreach ($i in 1..$maxRetry) {
-        $newProcesses = @(Get-Process -Name $([IO.Path]::GetFileNameWithoutExtension($Executable)) -ErrorAction SilentlyContinue)
-
-        foreach ($p in $newProcesses) {
-            $matched = $existingProcesses | Where-Object {$_.ID -eq $p.ID}
-            if ($matched.Count -eq 0) {
-                $targetProcess = $p
-                break
-            }
-            continue
+        if ($newProcess = Get-WmiObject Win32_Process -Filter "Name='$targetName.exe' AND ParentProcessId='$($process.Id)'")  {
+            $targetProcess = Get-Process -Id $newProcess.ProcessId
+            break
         }
 
-        if (-not $targetProcess) {
-            Start-Sleep -Second $i
-        }
+        Start-Sleep -Seconds $i
     }
 
     if (-not $targetProcess) {
-        Write-Error "Cannot find the new instance of $([IO.Path]::GetFileNameWithoutExtension($Executable))."
+        Write-Error "Cannot find the new instance of $targetName."
         return
     }
 
@@ -2949,20 +2938,21 @@ function Stop-TTD {
 
     Write-Log "Stopping tttracer.exe. tttracer PID: $($tttracerProcess.ID), $($targetProcess.Name) PID: $($targetProcess.ID)."
 
-    $err = $($message = & $tttracer -stop $Descriptor.TargetProcess.ID) 2>&1
+    $message = & $tttracer -stop $tttracerProcess.ID
+    $exitCode = $LASTEXITCODE
 
     # Wait-Process writes a non-terminating error when the process has exited. Ignore this error.
     $(Wait-Process -InputObject $tttracerProcess -ErrorAction SilentlyContinue) 2>&1 | Out-Null
 
     # Non zero exitcode indicates an error.
-    if ($LASTEXITCODE -ne 0 -or -not $tttracerProcess.HasExited) {
-        Write-Error "`"tttracer -stop`" failed. ExitCode: $($tttracerProcess.ExitCode)."
+    if ($exitCode -ne 0 -or -not $tttracerProcess.HasExited) {
+        Write-Error $("`"tttracer -stop`" failed. ExitCode: 0x{0:x}" -f $exitCode)
     }
 
     [PSCustomObject]@{
-        TTTracerExitCode = $tttracerProcess.ExitCode
+        ExitCode = $exitCode  # This is the exit code of "tttracer -stop"
+        TTTracerExitCode = $tttracerProcess.ExitCode # This is the exit code of tttracer that has been attached to the target process. This may not be available.
         Message = $message
-        Error = $err
     }
 
     $tttracerProcess.Dispose()
@@ -2987,7 +2977,7 @@ function Attach-TTD {
     }
 
     if ($targetProcess = Get-Process -Id $ProcessID -ErrorAction SilentlyContinue) {
-        $name = $targetProcess.Name
+        $targetName = $targetProcess.Name
     }
     else {
         Write-Error "Cannot find a process with PID $ProcessID."
@@ -2999,7 +2989,13 @@ function Attach-TTD {
     }
 
     # Form the output file name.
-    $outPath = Join-Path $Path "$($name)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
+    $outPath = Join-Path $Path "$($targetName)_$(Get-Date -Format "yyyyMMdd_HHmmss")_%"
+
+    # If a folder path is used, it must not end with "\". If that's the case remove it.
+    # $outPath = $Path
+    # if ($outPath.EndsWith([IO.Path]::DirectorySeparatorChar)) {
+    #     $outPath = $outPath.Substring(0, $outPath.Length - 1)
+    # }
 
     $stdout = Join-Path $Path 'stdout.txt'
     $stderr = Join-Path $Path 'stderr.txt'
@@ -3012,6 +3008,7 @@ function Attach-TTD {
     # Must wait for a little to see if tttracer succeeded.
     # Wait-Process writes a non-terminating error when timeout occurs. Note that timeout here is a good thing; tttracer is still running.
     $timeout = $(Wait-Process -InputObject $process -Timeout 3 <#seconds#>) 2>&1
+
     if ($timeout) {
         # Seems successful
         [PSCustomObject]@{
@@ -3024,7 +3021,8 @@ function Attach-TTD {
     }
 
     $stderrContent = Get-Content $stderr
-    Write-Error "tttracer.exe failed to attach. ExitCode: $($process.ExitCode); Error: $err.`n$stderrContent"
+    $exitCodeHex = "0x{0:x}" -f $process.ExitCode
+    Write-Error "tttracer.exe failed to attach. ExitCode: $exitCodeHex; Error: $err.`n$stderrContent"
 }
 
 function Get-OfficeInfo {
@@ -4151,6 +4149,9 @@ function Collect-OutlookInfo {
 
             # First start tasks that might take a while.
 
+            # MSInfo32 takes a long time. Currently disabled.
+            # $msinfo32Task = Start-Task -Command 'Save-MSInfo32' -Parameters @{Path = $OSDir}
+
             Write-Log "Starting officeModuleInfoTask."
             $cts = New-Object System.Threading.CancellationTokenSource
             $officeModuleInfoTask = Start-Task -Command 'Save-OfficeModuleInfo' -Parameters @{Path = $OfficeDir; CancellationToken = $cts.Token}
@@ -4192,8 +4193,6 @@ function Collect-OutlookInfo {
                 $LogonUser | Export-Clixml -Path (Join-Path $OSDir 'LogonUser.xml')
             }
 
-            # Do we need MSInfo32?
-            # Save-MSInfo32 -Path $tempPath
             Write-Progress -Activity "Saving configuration" -Status "Done" -Completed
         }
 
@@ -4431,6 +4430,12 @@ function Collect-OutlookInfo {
                 $($officeModuleInfoTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
                 Write-Progress -Activity 'Saving Office module info' -Status 'Please wait.' -Completed
                 Write-Log "officeRegistryTask is complete."
+            }
+
+            if ($msinfo32Task) {
+                Write-Progress -Activity 'Saving MSInfo32' -Status 'Please wait.' -PercentComplete -1
+                $($msinfo32Task | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
+                Write-Progress -Activity 'Saving MSInfo32' -Status 'Please wait.' -Completed
             }
 
             # Save process list again after traces
