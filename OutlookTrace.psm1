@@ -542,6 +542,7 @@ function Start-NetshTrace {
     # Even with "report=no" (by default), "HKEY_CURRENT_USER\System\CurrentControlSet\Control\NetTrace\Session\MiniReportEnabled" might be set to 1.
     # (This depends on Win10 version with a scenario. For InternetClient_dbg scenario, Win10 2004 and above does not generate mini report).
     # In order to suppress generating a minireport (i.e. C:\Windows\System32\gatherNetworkInfo.vbs), set MiniReportEnabled to 0 before netsh trace stop.
+    # * You could set "report=disabled", but if you want the mini report specifically (not Full report), you need to manually configure the registry value.
     $netshRegPath = 'HKCU:\System\CurrentControlSet\Control\NetTrace\Session\'
     switch ($RerpotMode) {
         'None' { Set-ItemProperty -Path $netshRegPath -Name 'MiniReportEnabled' -Type DWord -Value 0; break }
@@ -1305,7 +1306,7 @@ function ConvertTo-UserSID {
     )
 
     try {
-        $account = New-Object System.Security.Principal.NTAccount($userName)
+        $account = New-Object System.Security.Principal.NTAccount($UserName)
         $sid = $account.Translate([System.Security.Principal.SecurityIdentifier]).Value
         return $sid
     }
@@ -1378,6 +1379,68 @@ function Get-UserRegistryRoot {
     }
 
     $userRegRoot
+}
+
+<#
+.SYNOPSIS
+Get a given user's profile path (i.e. same as USERPROFILE environment variable)
+#>
+function Get-UserProfilePath {
+    [CmdletBinding()]
+    param(
+        # User name or SID
+        [string]$User
+    )
+
+    if (-not $User) {
+        $User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    }
+
+    # If user SID is given use it as it is; otherwise convert SID. when failed to convert, just return. An ErrorRecord will be written to error stream by ConvertTo-UserSID
+    if (Test-SID $User) {
+        $userSID = $User
+    }
+    else {
+        $userSID = ConvertTo-UserSID $User
+        if (-not $userSID) {
+            return
+        }
+    }
+
+    # Get the value of ProfileImagePath
+    $userProfile = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$userSID\"
+    $userProfile.ProfileImagePath
+}
+
+<#
+.SYNOPSIS
+Get a given user's shell folder path (e.g. "LocalAppData", "Desktop" etc.)
+#>
+function Get-UserShellFolder {
+    [CmdletBinding()]
+    param(
+        # User name or SID
+        [string]$User,
+        [parameter(Mandatory = $true)]
+        # Shell folder name (e.g. "AppData", "Desktop", "Local AppData" etc.)
+        [string]$ShellFolderName
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+    if (-not $userRegRoot) {
+        return
+    }
+
+    $shellFolders = Get-ItemProperty $(Join-Path $userRegRoot "SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
+    $folderPath = $shellFolders.$ShellFolderName
+
+    if (-not $folderPath) {
+        return
+    }
+
+    # Folder path is like "%USERPROFILE%\AppData\Local". Replace USERPROFILE.
+    $userProfile = Get-UserProfilePath $User
+    $folderPath.Replace('%USERPROFILE%', $userProfile)
 }
 
 function Save-OfficeRegistry {
@@ -2014,25 +2077,21 @@ function Save-CachedAutodiscover {
         [string]$User
     )
 
-    if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
-    }
-
     # Check %LOCALAPPDATA%\Microsoft\Outlook
-    if ($User) {
-        $localAppdata = Join-Path "C:\Users" "$User\AppData\Local"
-        if (-not (Test-Path $localAppdata)) {
-            $localAppdata = $env:LOCALAPPDATA
-        }
+    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
+        $cachePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
     }
     else {
-        $localAppdata = $env:LOCALAPPDATA
+        return
     }
 
-    $cachePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
     if (-not (Test-Path $cachePath)) {
         Write-Log "$cachePath is not found."
         return
+    }
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
     }
 
     Write-Log "Searching $cachePath."
@@ -2066,17 +2125,13 @@ function Remove-CachedAutodiscover {
     )
 
      # Check %LOCALAPPDATA%\Microsoft\Outlook
-     if ($User) {
-        $localAppdata = Join-Path "C:\Users" "$User\AppData\Local"
-        if (-not (Test-Path $localAppdata)) {
-            $localAppdata = $env:LOCALAPPDATA
-        }
+    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
+        $cachePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
     }
     else {
-        $localAppdata = $env:LOCALAPPDATA
+        return
     }
 
-    $cachePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
     if (-not (Test-Path $cachePath)) {
         Write-Log "$cachePath is not found."
         return
@@ -3403,25 +3458,29 @@ function Save-Dump {
 function Save-MSIPC {
     [CmdletBinding()]
     param (
-        [parameter(Mandatory=$true)]
-        $Path
+        [Parameter(Mandatory=$true)]
+        $Path,
+        $User
     )
 
-    if (-not (Test-Path $Path -ErrorAction Stop)){
-        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
-    }
-
     # MSIPC info is in %LOCALAPPDATA%\Microsoft\MSIPC
-    $msipcPath = [Environment]::ExpandEnvironmentVariables('%LOCALAPPDATA%\Microsoft\MSIPC')
+    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
+        $msipcPath = Join-Path $localAppdata 'Microsoft\MSIPC'
+    }
+    else {
+        return
+    }
 
     if (-not (Test-Path $msipcPath)) {
         Write-Error "$msipcPath does not exist"
         return
     }
 
-    # Copy only folders (i.e. skip drm files)
-    # Copy-Item (Join-Path $msipcPath '*') -Destination $Path -Recurse
+    if (-not (Test-Path $Path -ErrorAction Stop)){
+        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+    }
 
+    # Copy only folders (i.e. skip drm files)
     # gci -Directory is only available for PowerShell V3 and above. To support PowerShell V2 clients, Where-Object is used here.
     foreach ($folder in @(Get-ChildItem $msipcPath | Where-Object {$_.PSIsContainer})) {
         $dest = Join-Path $Path $folder.Name
@@ -4184,7 +4243,7 @@ function Collect-OutlookInfo {
             $(Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $OfficeDir 'Cached AutoDiscover')) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
-            $(Save-MSIPC -Path $MSIPCDir) 2>&1 | Write-Log
+            $(Save-MSIPC -Path $MSIPCDir -User $LogonUser.SID) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
             $(Save-Process -Path $OSDir) 2>&1 | Write-Log
