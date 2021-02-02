@@ -3981,7 +3981,7 @@ function Get-OutlookAddin {
 
      foreach ($addin in $addinKeys) {
         $props = @{}
-        $props['Path'] = $addin.Namecls
+        $props['Path'] = $addin.Name
 
         $props['ProgID'] = $addin.PSChildName
 
