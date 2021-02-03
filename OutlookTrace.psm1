@@ -2934,6 +2934,8 @@ function Start-TTD {
     $stdout = Join-Path $Path 'stdout.txt'
     $stderr = Join-Path $Path 'stderr.txt'
 
+    Write-Log "TTD launching $Executable."
+
     $err = $($process = Invoke-Command {
         $ErrorActionPreference = 'Continue'
         Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "`"$Executable`"" -PassThru  -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
@@ -2963,6 +2965,8 @@ function Start-TTD {
         return
     }
 
+    Write-Log "Target process $($targetProcess.Name) (PID: $($targetProcess.Id)) has started."
+
     [PSCustomObject]@{
         TTTracerProcess = $process
         TargetProcess = $targetProcess
@@ -2981,6 +2985,11 @@ function Stop-TTD {
     $tttracerProcess = $Descriptor.TTTracerProcess
     $targetProcess = $Descriptor.TargetProcess
 
+    if (-not (Get-Process -Id $targetProcess.Id -ErrorAction SilentlyContinue)) {
+        Write-Log "Target process $($targetProcess.Name) (PID: $($targetProcess.Id)) does not exist."
+        return
+    }
+
     if (-not ($tttracer = Get-Command 'tttracer.exe' -ErrorAction SilentlyContinue)) {
         Write-Error "tttracer.exe is not available."
         return
@@ -2993,7 +3002,7 @@ function Stop-TTD {
 
     Write-Log "Stopping tttracer.exe. tttracer PID: $($tttracerProcess.ID), $($targetProcess.Name) PID: $($targetProcess.ID)."
 
-    $message = & $tttracer -stop $tttracerProcess.ID
+    $message = & $tttracer -stop $targetProcess.ID
     $exitCode = $LASTEXITCODE
 
     # Wait-Process writes a non-terminating error when the process has exited. Ignore this error.
@@ -3011,7 +3020,7 @@ function Stop-TTD {
     }
 
     $tttracerProcess.Dispose()
-    $targetProcess.Dispose()
+    # $targetProcess.Dispose()
 }
 
 function Attach-TTD {
@@ -3044,7 +3053,7 @@ function Attach-TTD {
     }
 
     # Form the output file name.
-    $outPath = Join-Path $Path "$($targetName)_$(Get-Date -Format "yyyyMMdd_HHmmss")_%"
+    $outPath = Join-Path $Path "$($targetName)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
 
     # If a folder path is used, it must not end with "\". If that's the case remove it.
     # $outPath = $Path
@@ -3062,7 +3071,7 @@ function Attach-TTD {
 
     # Must wait for a little to see if tttracer succeeded.
     # Wait-Process writes a non-terminating error when timeout occurs. Note that timeout here is a good thing; tttracer is still running.
-    $timeout = $(Wait-Process -InputObject $process -Timeout 3 <#seconds#>) 2>&1
+    $timeout = $(Wait-Process -InputObject $process -Timeout 3 <#seconds#> -ErrorAction Continue) 2>&1
 
     if ($timeout) {
         # Seems successful
@@ -4130,7 +4139,7 @@ function Collect-OutlookInfo {
         [Parameter(Mandatory=$true)]
         $Path,
         [Parameter(Mandatory=$true)]
-        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'WFP', 'All')]
+        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'All')]
         [array]$Component,
         [ValidateSet('None', 'Mini', 'Full')]
         $NetshReportMode = 'Mini',
@@ -4151,14 +4160,20 @@ function Collect-OutlookInfo {
         return
     }
 
-    # MS Office must be installed to collect Outlook & TCO.
+    # MS Office must be installed to collect Outlook, TCO, or TTD.
     # This is just a fail fast. Start-OutlookTrace/TCOTrace fail anyway.
-    if ($Component -contains 'Outlook' -or $Component -contains 'TCO' -or $Component -contains 'All') {
+    if ($Component -contains 'Outlook' -or $Component -contains 'TCO' -or $Component -contains 'TTD' -or $Component -contains 'All') {
         $err = $(Get-OfficeInfo -ErrorAction Continue | Out-Null) 2>&1
         if ($err) {
             Write-Error "Component `"Outlook`" and/or `"TCO`" is specified, but installation of Microsoft Office is not found. $err"
             return
         }
+    }
+
+    if ($Component -contains 'TTD' -and -not (Get-Command 'tttracer.exe' -ErrorAction SilentlyContinue)) {
+        $os = Get-WmiObject -Class 'Win32_OperatingSystem'
+        Write-Error "tttracer is not available on this machine. $($os.Caption) ($($os.Version))."
+        return
     }
 
     if (-not (Test-Path $Path -ErrorAction Stop)){
@@ -4343,7 +4358,36 @@ function Collect-OutlookInfo {
             }
         }
 
-        if ($StartOutlook) {
+        if ($Component -contains 'TTD') {
+            # If Outlook is already running, attach to it. Otherwise, let tttracer launch it.
+            if ($outlookProcess = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue) {
+                Write-Log "TTD attaching to Outlook (PID $($outlookProcess.Id))."
+                $ttd = Attach-TTD -Path (Join-Path $tempPath 'TTD')  -ProcessID  $outlookProcess.Id -ErrorAction Stop
+            }
+            else {
+                $outlookExe = $null
+                $officeInfo = Get-OfficeInfo
+                $executables = @(Get-ChildItem -Path $officeInfo.InstallPath -Filter 'Outlook.exe' -File -Recurse)
+
+                if ($executables.Count -eq 1) {
+                    $outlookExe = $executables[0]
+                }
+                else {
+                    # For ClickToRun, there might be more than one Outlook.exe; downloaded Outlook.exe under the Office installation path.
+                    # e.g. C:\Program Files\Microsoft Office\Updates\Download\PackageFiles\7ABA93E3-58C2-4BEE-AB49-3438C9F29D70\root\Office16\Outlook.exe
+                    # Pick the one without 'PackageFiles' in the path.
+                    $outlookExe = $executables | Where-Object {$_.FullName -notlike '*PackageFiles*'} | Select-Object -First 1
+                }
+
+                Write-Log "TTD launching Outlook"
+                $ttd = Start-TTD -Path (Join-Path $tempPath 'TTD') -Executable $outlookExe.FullName -ErrorAction Stop
+                Write-Host "Outlook has started. It might take some time for Outlook to appear." -ForegroundColor Green
+            }
+
+            $ttdStarted = $true
+        }
+
+        <# if ($StartOutlook) {
             # Does Outlook.exe already exist?
             $existingProcesss = Get-Process 'Outlook' -ErrorAction SilentlyContinue
             if ($existingProcesss) {
@@ -4381,9 +4425,9 @@ function Collect-OutlookInfo {
             if ($process) {
                 $process.Dispose()
             }
-        }
+        } #>
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted){
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted) {
             Write-Log "Waiting for the user to stop"
             Read-Host "Hit enter to stop"
         }
@@ -4441,13 +4485,27 @@ function Collect-OutlookInfo {
             Remove-WerDumpKey -TargetProcess 'Outlook.exe'
         }
 
+        if ($ttdStarted) {
+            $(Stop-TTD $ttd | Out-Null) 2>&1 | Write-Log
+
+            # Outlook might be holding the TTD file.
+            # Tell the user to stop Outlook and wait for the process to shutdown.
+            if (-not $ttd.TargetProcess.HasExited) {
+                Write-Log "Waiting for the user to shutdown Outlook."
+                Write-Host "TTD Tracing is stopped. Please shutdown Outlook" -ForegroundColor Green
+                Write-Progress -Activity 'Stopping traces' -Status "Please shutdown Outlook." -PercentComplete -1
+            }
+
+            $(Wait-Process -InputObject $ttd.TargetProcess -ErrorAction Continue) 2>&1 | Write-Log
+        }
+
         if ($fiddlerCapStarted) {
             Write-Warning "Please stop FiddlerCap and save the capture manually."
         }
 
         Write-Progress -Activity 'Stopping traces' -Status "Please wait." -Completed
 
-        # Save the event logs after tracing is done and wait for the tasks started earlier and
+        # Save the event logs after tracing is done and wait for the tasks started earlier.
         if ($Component -contains 'Configuration' -or $Component -contains 'All') {
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
@@ -4508,6 +4566,7 @@ function Collect-OutlookInfo {
     }
 
     $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
+
     if ($SkipZip) {
         Rename-Item -Path $tempPath  -NewName $zipFileName
         return
