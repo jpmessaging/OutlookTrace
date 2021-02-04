@@ -4148,7 +4148,6 @@ function Collect-OutlookInfo {
         $NetshReportMode = 'Mini',
         [int]$DumpCount = 3,
         [int]$DumpIntervalSeconds = 60,
-        [switch]$StartOutlook,
         [switch]$SkipZip
     )
 
@@ -4389,46 +4388,6 @@ function Collect-OutlookInfo {
 
             $ttdStarted = $true
         }
-
-        <# if ($StartOutlook) {
-            # Does Outlook.exe already exist?
-            $existingProcesss = Get-Process 'Outlook' -ErrorAction SilentlyContinue
-            if ($existingProcesss) {
-                # Let the user to save & close Outlook.
-                Write-Warning "Outlook is already running. PID = $($existingProcesss.Id)."
-                Write-Warning "Please save data and close Outlook."
-                Write-Progress -Activity "Waiting for Outlook to close." -Status "Please save data and close Outlook." -PercentComplete -1
-
-                Wait-Process -InputObject $existingProcesss
-
-                Write-Progress -Activity "Waiting for Outlook to close." -Status "Done." -Completed
-                $existingProcesss.Dispose()
-            }
-
-            # Start a new instance of Outlook
-            $process = $null
-
-            $err = $($process = Invoke-Command {
-                $ErrorActionPreference = 'Continue'
-                try {
-                    Start-Process 'Outlook.exe' -PassThru
-                }
-                catch {
-                    Write-Error -ErrorRecord $_
-                }
-            }) 2>&1
-
-            if (-not $process -or $process.HasExited) {
-                Write-Error "StartOutlook parameter is specified, but Outlook failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
-                return
-            }
-
-            Write-Host "Outlook has started. PID = $($process.Id)." -ForegroundColor Green
-
-            if ($process) {
-                $process.Dispose()
-            }
-        } #>
 
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted) {
             Write-Log "Waiting for the user to stop"
