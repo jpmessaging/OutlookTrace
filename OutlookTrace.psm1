@@ -602,12 +602,9 @@ function Stop-NetshTrace {
 
     Write-Log "ReportMode $reportMode is found."
 
-    $statusMsg = "This might take a while. "
-    if ($reportMode -eq 'Mini' -or $reportMode -eq 'Full') {
-        $statusMsg += "Generating a $reportMode Report"
+    if ($reportMode -ne 'None') {
+        Write-Progress -Activity "Stopping netsh trace" -Status "This might take a while. Generating a $reportMode Report" -PercentComplete -1
     }
-
-    Write-Progress -Activity "Stopping netsh trace" -Status $statusMsg -PercentComplete -1
 
     if ($env:PROCESSOR_ARCHITEW6432) {
         $netshexe = Join-Path $env:SystemRoot 'SysNative\netsh.exe'
@@ -4403,8 +4400,29 @@ function Collect-OutlookInfo {
     finally {
         Write-Progress -Activity 'Stopping traces' -Status "Please wait." -PercentComplete -1
 
-        if ($psrStarted) {
-            Stop-PSR
+        if ($ttdStarted) {
+            $(Stop-TTD $ttd -KeepTargetProcess | Out-Null) 2>&1 | Write-Log
+
+            # Outlook might be holding the TTD file.
+            # Tell the user to stop Outlook and wait for the process to shutdown.
+            if (-not $ttd.TargetProcess.HasExited) {
+                Write-Log "Waiting for the user to shutdown Outlook."
+                Write-Host "TTD Tracing is stopped. Please shutdown Outlook" -ForegroundColor Green
+                Write-Progress -Activity 'Stopping traces' -Status "Please shutdown Outlook." -PercentComplete -1
+
+                # Wait for Outlook to be stopped. Nudge the user once in a while.
+                while ($true) {
+                    $timeout = $(Wait-Process -InputObject $ttd.TargetProcess -Timeout 30 -ErrorAction Continue) 2>&1
+                    if ($timeout) {
+                        Write-Host "Please shutdown Outlook." -ForegroundColor Green
+                    }
+                    else {
+                        break
+                    }
+                }
+            }
+
+            $ttd.TargetProcess.Dispose()
         }
 
         if ($netshTraceStarted) {
@@ -4447,33 +4465,12 @@ function Collect-OutlookInfo {
             Remove-WerDumpKey -TargetProcess 'Outlook.exe'
         }
 
-        if ($ttdStarted) {
-            $(Stop-TTD $ttd -KeepTargetProcess | Out-Null) 2>&1 | Write-Log
-
-            # Outlook might be holding the TTD file.
-            # Tell the user to stop Outlook and wait for the process to shutdown.
-            if (-not $ttd.TargetProcess.HasExited) {
-                Write-Log "Waiting for the user to shutdown Outlook."
-                Write-Host "TTD Tracing is stopped. Please shutdown Outlook" -ForegroundColor Green
-                Write-Progress -Activity 'Stopping traces' -Status "Please shutdown Outlook." -PercentComplete -1
-
-                # Wait for Outlook to be stopped. Nudge the user once in a while.
-                while ($true) {
-                    $timeout = $(Wait-Process -InputObject $ttd.TargetProcess -Timeout 30 -ErrorAction Continue) 2>&1
-                    if ($timeout) {
-                        Write-Host "Please shutdown Outlook." -ForegroundColor Green
-                    }
-                    else {
-                        break
-                    }
-                }
-            }
-
-            $ttd.TargetProcess.Dispose()
-        }
-
         if ($fiddlerCapStarted) {
             Write-Warning "Please stop FiddlerCap and save the capture manually."
+        }
+
+        if ($psrStarted) {
+            Stop-PSR
         }
 
         Write-Progress -Activity 'Stopping traces' -Status "Please wait." -Completed
