@@ -42,6 +42,9 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 
     ※ 採取するコンポーネントに Fiddler を含めた場合、[FiddlerCap Web Recorder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
 
+    <details>
+        <summary>Fiddler 開始方法</summary>
+    
     1. [HTTPS 通信を解読] にチェックを入れます。
     2. 以下の説明が表示されたら、内容を確認して [OK] をクリックします。
 
@@ -70,10 +73,13 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 
     4. [1. キャプチャ開始] をクリックします。
         自動的にブラウザが起動されたら、そのブラウザはクローズいただいて結構です。
-
+    </details>
 8. Outlook を起動して、現象を再現させます。
 9. 採取するコンポーネントに Fiddler を含めた場合、以下の手順で停止して保存します。
 
+    <details>
+        <summary>Fiddler 停止方法</summary>
+        
     1. [2. キャプチャ停止] をクリックします。
     2. [3. キャプチャ保存] をクリックします。
     3. [ファイルの種類] で `Password-Protected Capture (*.saz)` を選択します。
@@ -91,7 +97,7 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
         拇印 (sha1): ***
         拇印 (md5):
         ```
-
+    </details>
 10. コンソールに Enter キーを入力しトレースを停止します。
 
 手順 6 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。

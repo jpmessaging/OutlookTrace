@@ -4496,7 +4496,16 @@ function Collect-OutlookInfo {
                 Write-Progress -Activity 'Stopping traces' -Status "Please shutdown Outlook." -PercentComplete -1
             }
 
-            $(Wait-Process -InputObject $ttd.TargetProcess -ErrorAction Continue) 2>&1 | Write-Log
+            # Wait for Outlook to be stopped. Nugdge the user once in a while.
+            while ($true) {
+                $timeout = $(Wait-Process -InputObject $ttd.TargetProcess -Timeout 30 -ErrorAction Continue) 2>&1
+                if ($timeout) {
+                    Write-Host "Please shutdown Outlook." -ForegroundColor Green
+                }
+                else {
+                    break
+                }
+            }
         }
 
         if ($fiddlerCapStarted) {
