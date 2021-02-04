@@ -4139,7 +4139,7 @@ function Collect-OutlookInfo {
         [Parameter(Mandatory=$true)]
         $Path,
         [Parameter(Mandatory=$true)]
-        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'All')]
+        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'WFP', 'TTD')]
         [array]$Component,
         [ValidateSet('None', 'Mini', 'Full')]
         $NetshReportMode = 'Mini',
@@ -4162,7 +4162,7 @@ function Collect-OutlookInfo {
 
     # MS Office must be installed to collect Outlook, TCO, or TTD.
     # This is just a fail fast. Start-OutlookTrace/TCOTrace fail anyway.
-    if ($Component -contains 'Outlook' -or $Component -contains 'TCO' -or $Component -contains 'TTD' -or $Component -contains 'All') {
+    if ($Component -contains 'Outlook' -or $Component -contains 'TCO' -or $Component -contains 'TTD') {
         $err = $(Get-OfficeInfo -ErrorAction Continue | Out-Null) 2>&1
         if ($err) {
             Write-Error "Component `"Outlook`" and/or `"TCO`" is specified, but installation of Microsoft Office is not found. $err"
@@ -4208,7 +4208,7 @@ function Collect-OutlookInfo {
 
     Write-Log "Starting traces"
     try {
-        if ($Component -contains 'Configuration' -or $Component -contains 'All') {
+        if ($Component -contains 'Configuration') {
             # Sub directory names
             $ConfigDir = Join-Path $tempPath 'Configuration'
             $OSDir = Join-Path $ConfigDir 'OS'
@@ -4270,14 +4270,14 @@ function Collect-OutlookInfo {
             Write-Progress -Activity "Saving configuration" -Status "Done" -Completed
         }
 
-        if ($Component -contains 'Fiddler' -or $Component -contains 'All') {
+        if ($Component -contains 'Fiddler') {
             Start-FiddlerCap -Path $Path -ErrorAction Stop | Out-Null
             $fiddlerCapStarted = $true
 
             Write-Warning "FiddlerCap has started. Please manually configure and start capture."
         }
 
-        if ($Component -contains 'Netsh' -or $Component -contains 'All') {
+        if ($Component -contains 'Netsh') {
             # When netsh trace is run for the first time, it does not capture packets (even with "capture=yes").
             # To workaround, netsh is started and stopped immediately.
             $tempNetshName = 'netsh_test'
@@ -4289,50 +4289,50 @@ function Collect-OutlookInfo {
             $netshTraceStarted = $true
         }
 
-        if ($Component -contains 'Outlook' -or $Component -contains 'All') {
+        if ($Component -contains 'Outlook') {
             # Stop a lingering session if any.
             Stop-OutlookTrace -ErrorAction SilentlyContinue
             Start-OutlookTrace -Path (Join-Path $tempPath 'Outlook')
             $outlookTraceStarted = $true
         }
 
-        if ($Component -contains 'PSR' -or $Component -contains 'All') {
+        if ($Component -contains 'PSR') {
             Start-PSR -Path $tempPath #-ShowGUI
             $psrStarted = $true
         }
 
-        if ($Component -contains 'LDAP' -or $Component -contains 'All') {
+        if ($Component -contains 'LDAP') {
             Start-LDAPTrace -Path (Join-Path $tempPath 'LDAP') -TargetProcess 'Outlook.exe'
             $ldapTraceStarted = $true
         }
 
-        if ($Component -contains 'CAPI' -or $Component -contains 'All') {
+        if ($Component -contains 'CAPI') {
             Start-CAPITrace -Path (Join-Path $tempPath 'CAPI')
             $capiTraceStarted = $true
         }
 
-        if ($Component -contains 'TCO' -or $Component -contains 'All') {
+        if ($Component -contains 'TCO') {
             Start-TCOTrace
             $tcoTraceStarted = $true
         }
 
-        if ($Component -contains 'WAM' -or $Component -contains 'All') {
+        if ($Component -contains 'WAM') {
             Stop-WamTrace -ErrorAction SilentlyContinue
             Start-WamTrace -Path (Join-Path $tempPath 'WAM')
             $wamTraceStarted = $true
         }
 
-        if ($Component -contains 'Procmon' -or $Component -contains 'All') {
+        if ($Component -contains 'Procmon') {
             $procmonResult = Start-Procmon -Path (Join-Path $tempPath 'Procmon') -ProcmonSearchPath $Path -ErrorAction Stop
             $procmonStared = $true
         }
 
-        if ($Component -contains 'WFP' -or $Component -contains 'All') {
+        if ($Component -contains 'WFP') {
             $wfpJob = Start-WfpTrace -Path (Join-Path $tempPath 'WFP') -IntervalSeconds 15
             $wfpStarted = $true
         }
 
-        if ($Component -contains 'CrashDump' -or $Component -contains 'All') {
+        if ($Component -contains 'CrashDump') {
             Add-WerDumpKey -Path (Join-Path $tempPath 'WerDump') -TargetProcess 'Outlook.exe'
             $crashDumpStarted = $true
         }
@@ -4515,7 +4515,7 @@ function Collect-OutlookInfo {
         Write-Progress -Activity 'Stopping traces' -Status "Please wait." -Completed
 
         # Save the event logs after tracing is done and wait for the tasks started earlier.
-        if ($Component -contains 'Configuration' -or $Component -contains 'All') {
+        if ($Component -contains 'Configuration') {
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
