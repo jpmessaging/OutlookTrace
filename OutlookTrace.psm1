@@ -2979,7 +2979,8 @@ function Stop-TTD {
     param(
         # The returned object of Start-TTD
         [Parameter(Mandatory=$true)]
-        $Descriptor
+        $Descriptor,
+        [switch]$KeepTargetProcess
     )
 
     $tttracerProcess = $Descriptor.TTTracerProcess
@@ -3020,7 +3021,9 @@ function Stop-TTD {
     }
 
     $tttracerProcess.Dispose()
-    # $targetProcess.Dispose()
+    if (-not $KeepTargetProcess) {
+        $targetProcess.Dispose()
+    }
 }
 
 function Attach-TTD {
@@ -4381,7 +4384,7 @@ function Collect-OutlookInfo {
 
                 Write-Log "TTD launching Outlook"
                 $ttd = Start-TTD -Path (Join-Path $tempPath 'TTD') -Executable $outlookExe.FullName -ErrorAction Stop
-                Write-Host "Outlook has started. It might take some time for Outlook to appear." -ForegroundColor Green
+                Write-Host "Outlook has started (PID: $($ttd.TargetProcess.Id)) . It might take some time for Outlook to appear." -ForegroundColor Green
             }
 
             $ttdStarted = $true
@@ -4486,7 +4489,7 @@ function Collect-OutlookInfo {
         }
 
         if ($ttdStarted) {
-            $(Stop-TTD $ttd | Out-Null) 2>&1 | Write-Log
+            $(Stop-TTD $ttd -KeepTargetProcess | Out-Null) 2>&1 | Write-Log
 
             # Outlook might be holding the TTD file.
             # Tell the user to stop Outlook and wait for the process to shutdown.
@@ -4494,18 +4497,20 @@ function Collect-OutlookInfo {
                 Write-Log "Waiting for the user to shutdown Outlook."
                 Write-Host "TTD Tracing is stopped. Please shutdown Outlook" -ForegroundColor Green
                 Write-Progress -Activity 'Stopping traces' -Status "Please shutdown Outlook." -PercentComplete -1
+
+                # Wait for Outlook to be stopped. Nudge the user once in a while.
+                while ($true) {
+                    $timeout = $(Wait-Process -InputObject $ttd.TargetProcess -Timeout 30 -ErrorAction Continue) 2>&1
+                    if ($timeout) {
+                        Write-Host "Please shutdown Outlook." -ForegroundColor Green
+                    }
+                    else {
+                        break
+                    }
+                }
             }
 
-            # Wait for Outlook to be stopped. Nugdge the user once in a while.
-            while ($true) {
-                $timeout = $(Wait-Process -InputObject $ttd.TargetProcess -Timeout 30 -ErrorAction Continue) 2>&1
-                if ($timeout) {
-                    Write-Host "Please shutdown Outlook." -ForegroundColor Green
-                }
-                else {
-                    break
-                }
-            }
+            $ttd.TargetProcess.Dispose()
         }
 
         if ($fiddlerCapStarted) {
