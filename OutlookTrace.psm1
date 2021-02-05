@@ -1611,6 +1611,7 @@ function Save-NetworkInfo {
         # 'Get-PnpDevice | Get-PnpDeviceProperty -KeyName DEVPKEY_Device_InstanceId,DEVPKEY_Device_DevNodeStatus,DEVPKEY_Device_ProblemCode'
 
         'Get-NetIPInterface'
+        'Get-NetConnectionProfile'
         'ipconfig /all'
 
         # Dump Windows Firewall config
