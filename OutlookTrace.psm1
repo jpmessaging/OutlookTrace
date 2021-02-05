@@ -321,7 +321,8 @@ function Receive-Task {
     param (
         [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
         $Task,
-        [switch]$AutoRemoveTask
+        [switch]$AutoRemoveTask,
+        [string]$TaskErrorVariable
     )
 
     process {
@@ -335,7 +336,10 @@ function Receive-Task {
             if ($ps.HadErrors) {
                 $ps.Streams.Error | ForEach-Object {
                     # Include the ErrorRecord's InvocationInfo so that it's easier to understand the origin of error.
-                    Write-Error -Message "Task's Error:`n$($_.InvocationInfo.MyCommand): $($_.Exception.Message)`n$($_.InvocationInfo.PositionMessage)"  -Exception $_.Exception
+                    Write-Error -Message "$($_.InvocationInfo.MyCommand): $($_.Exception.Message)`n$($_.InvocationInfo.PositionMessage)" -Exception $_.Exception
+                    if ($TaskErrorVariable) {
+                        New-Variable -Name $TaskErrorVariable -Value $($ps.Streams.Error.ReadAll()) -Scope 2 -Force
+                    }
                 }
             }
 
@@ -1519,7 +1523,7 @@ function Save-OfficeRegistry {
     }
 }
 
-function Save-OSConfiguration {
+function Save-OSConfiguration_Old {
     [CmdletBinding()]
     param (
         [parameter(Mandatory = $true)]
@@ -1577,6 +1581,36 @@ function Save-OSConfigurationMT {
     $tasks | Receive-Task -AutoRemoveTask
 }
 
+function Save-OSConfiguration {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory = $true)]
+        $Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+    }
+
+    # Key = command to run, Value = file name used for saving
+    $commands = [ordered]@{
+        'Get-WmiObject -Class Win32_ComputerSystem' = 'Win32_ComputerSystem.xml'
+        'Get-WmiObject -Class Win32_OperatingSystem' = 'Win32_OperatingSystem.xml'
+        'Get-ProxySetting' = $null
+        'Get-NLMConnectivity' = $null
+        'Get-WSCAntivirus' = $null
+        'Get-InstalledUpdate' = $null
+        'Get-JoinInformation' = $null
+        'Get-DeviceJoinStatus' = 'DeviceJoinStatus.txt'
+    }
+
+    $commands.GetEnumerator() | ForEach-Object {
+        $command = $_.Key
+        $fileName = $_.Value
+        Run-Command $command -Path $Path -FileName $fileName
+    }
+}
+
 function Save-NetworkInfo {
     [CmdletBinding()]
     param (
@@ -1589,20 +1623,21 @@ function Save-NetworkInfo {
     }
 
     # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
-    $commands = @(
-        'Get-NetAdapter -IncludeHidden'
-        'Get-NetAdapterAdvancedProperty'
-        'Get-NetAdapterBinding -IncludeHidden'
-        'Get-NetIpConfiguration -Detailed'
-        'Get-DnsClientNrptPolicy'
+    # Key = command to run, Value = file name used for saving. When file name is $null, Run-Command decides the file name.
+    $commands = [ordered]@{
+        'Get-NetAdapter -IncludeHidden' = $null
+        'Get-NetAdapterAdvancedProperty' = $null
+        'Get-NetAdapterBinding -IncludeHidden' = $null
+        'Get-NetIpConfiguration -Detailed' = $null
+        'Get-DnsClientNrptPolicy' = $null
         # 'Resolve-DnsName bing.com'
         # 'ping bing.com -4'
         # 'ping bing.com -6'
         # 'Test-NetConnection bing.com -InformationLevel Detailed'
         # 'Test-NetConnection bing.com -InformationLevel Detailed -CommonTCPPort HTTP'
-        'Get-NetRoute'
-        'Get-NetIPaddress'
-        'Get-NetLbfoTeam'
+        'Get-NetRoute' = $null
+        'Get-NetIPaddress' = $null
+        'Get-NetLbfoTeam' = $null
         # 'Get-Service -Name:VMMS'
         # 'Get-VMSwitch'
         # 'Get-VMNetworkAdapter -all'
@@ -1610,58 +1645,101 @@ function Save-NetworkInfo {
         # 'Get-Service'
         # 'Get-PnpDevice | Get-PnpDeviceProperty -KeyName DEVPKEY_Device_InstanceId,DEVPKEY_Device_DevNodeStatus,DEVPKEY_Device_ProblemCode'
 
-        'Get-NetIPInterface'
-        'Get-NetConnectionProfile'
-        'ipconfig /all'
+        'Get-NetIPInterface' = $null
+        'Get-NetConnectionProfile' = $null
+        'ipconfig /all' = $null
 
         # Dump Windows Firewall config
-        'netsh advfirewall monitor show currentprofile' # current profiles
-        'netsh advfirewall monitor show firewall' # firewall configuration
-        'netsh advfirewall monitor show consec' # connection security configuration
-        'netsh advfirewall firewall show rule name=all verbose' # firewall rules
-        'netsh advfirewall consec show rule name=all verbose' # connection security rules
-        'netsh advfirewall monitor show firewall rule name=all'# firewall rules from Dynamic Store
-        'netsh advfirewall monitor show consec rule name=all' # connection security rules from Dynamic Store
-    )
+        'netsh advfirewall monitor show currentprofile' = $null # current profiles
+        'netsh advfirewall monitor show firewall' = $null # firewall configuration
+        'netsh advfirewall monitor show consec' = $null # connection security configuration
+        'netsh advfirewall firewall show rule name=all verbose' = $null # firewall rules
+        'netsh advfirewall consec show rule name=all verbose' = $null # connection security rules
+        'netsh advfirewall monitor show firewall rule name=all' = $null # firewall rules from Dynamic Store
+        'netsh advfirewall monitor show consec rule name=all' = $null # connection security rules from Dynamic Store
+    }
 
-    foreach ($commandString in $commands) {
-        if ($commandString.IndexOf(' ') -ge 0) {
-            $commandName = $commandString.SubString(0, $commandString.IndexOf(' '))
-        }
-        else {
-            $commandName = $commandString
-        }
-
-        $command = Get-Command $commandName -ErrorAction SilentlyContinue
-
-        if (-not $command) {
-            Write-Log "$commandName is not available."
-            continue
-        }
-
-        $result = $null
-        $measure = Measure-Command {
-            $err = $($result = Invoke-Expression $commandString) 2>&1
-        }
-        Write-Log "$commandString took $($measure.TotalMilliseconds) ms."
-
-        if (-not $result) {
-            Write-Log "$commandString returned nothing. Error: $err"
-            continue
-        }
-
-        if ($command.CommandType -eq 'Application') {
-            # To be more strict, I could use [System.IO.Path]::GetInvalidFileNameChars(). But it's ok for now.
-            $fileName = $commandString.Replace('/', '-')
-            $result | Out-File -FilePath (Join-Path $Path "$fileName.txt")
-        }
-        else {
-            $fileName = $commandName.SubString($commandName.IndexOf('-') + 1)
-            $result | Export-Clixml -Path (Join-Path $Path "$fileName.xml")
-        }
+    $commands.GetEnumerator() | ForEach-Object {
+        $command = $_.Key
+        $fileName = $_.Value
+        Run-Command $command -Path $Path -FileName $fileName
     }
 }
 
+<#
+.DESCRIPTION
+Run a given command (more exactly an expression). If Path is given, save the result there.
+If FileName is given, it's used for the file name. If its extension is not ".xml", Out-File will be used. Otherwise Export-CliXml will be used.
+If FileName is not give, the file name will be auto-decided. If the command is an application, then Out-File will be used. Otherwise Export-CliXml will be used.
+#>
+function Run-Command {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$Command,
+        # Folder to save to
+        $Path,
+        # File name used for saving
+        [string]$FileName
+    )
+
+    $result = $null
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    try {
+        $($result = Invoke-Expression $Command -ErrorAction Continue) 2>&1 | Write-Log
+    }
+    catch {
+        Write-Log "$Command threw a terminating error. $_"
+    }
+
+    Write-Log "$Command took $($sw.ElapsedMilliseconds) ms."
+
+    if ($null -eq $result) {
+        Write-Log "It returned nothing."
+        return
+    }
+
+    # If Path is given, save the result.
+    if ($Path) {
+        $exportAsXml = $true
+
+        if ($FileName) {
+            if ([IO.Path]::GetExtension($FileName) -ne '.xml') {
+                $exportAsXml = $false
+            }
+        }
+        else {
+            # Decide the filename & export method based on the command type
+            if ($Command.IndexOf(' ') -ge 0) {
+                $commandName = $Command.SubString(0, $Command.IndexOf(' '))
+            }
+            else {
+                $commandName = $Command
+            }
+
+            $cmd = Get-Command $commandName -ErrorAction SilentlyContinue
+            if ($cmd.CommandType -eq 'Application') {
+                # To be more strict, I could use [System.IO.Path]::GetInvalidFileNameChars(). But it's ok for now.
+                $FileName = $Command.Replace('/', '-') + ".txt"
+                $exportAsXml = $false
+            }
+            else {
+                $FileName = $commandName.SubString($commandName.IndexOf('-') + 1) + ".xml"
+            }
+        }
+
+        if ($exportAsXml) {
+            $result | Export-Clixml -Path (Join-Path $Path $FileName)
+        }
+        else {
+            $result | Out-File -FilePath (Join-Path $Path $FileName)
+        }
+    }
+    else {
+        return $result
+    }
+}
 
 function Save-NetworkInfoMT {
     [CmdletBinding()]
@@ -3897,7 +3975,8 @@ function ConvertTo-CLSID {
     [CmdletBinding()]
     param(
         [parameter(Mandatory=$true)]
-        [string]$ProgID
+        [string]$ProgID,
+        [string]$User
     )
 
     $def = @'
@@ -3920,14 +3999,32 @@ function ConvertTo-CLSID {
     if ($hr -ne $S_OK) {
         Write-Verbose -Message $("CLSIDFromProgID for `"$ProgID`" failed with 0x{0:x}. Trying ClickToRun registry." -f $hr)
 
-        # Try ClickToRun Registry
-        $clsidProp = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\$ProgID\CLSID" -ErrorAction SilentlyContinue
-        if ($clsidProp) {
-            $CLSID = $clsidProp.'(default)'
+        $userRegRoot = Get-UserRegistryRoot -User $User
+
+        $locations = @(
+            # ClickToRun Registry & the user's Classes
+            "Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\"
+            (Join-Path $userRegRoot "SOFTWARE\Classes\")
+        )
+
+        foreach ($loc in $locations) {
+            $clsidProp = Get-ItemProperty (Join-Path $loc "$ProgID\CLSID") -ErrorAction SilentlyContinue
+            $curVerProp = Get-ItemProperty (Join-Path $loc "$ProgID\CurVer") -ErrorAction SilentlyContinue
+
+            if ($clsidProp) {
+                $CLSID = $clsidProp.'(default)'
+                break
+            }
+            elseif ($curVerProp) {
+                $curProgID = $curVerProp.'(default)'
+                $clsidProp = Get-ItemProperty (Join-Path $loc "$curProgID\CLSID") -ErrorAction SilentlyContinue
+                $CLSID = $clsidProp.'(default)'
+                break
+            }
         }
 
         if ($CLSID -eq [Guid]::Empty) {
-            Write-Error -Message $("CLSIDFromProgID for `"$ProgID`" failed with 0x{0:x}. Also, it cannot be found in the ClickToRun registry" -f $hr)
+            Write-Error -Message $("CLSIDFromProgID for `"$ProgID`" failed with 0x{0:x}. Also, it was found in the ClickToRun & user registry" -f $hr)
             return
         }
     }
@@ -4003,14 +4100,13 @@ function Get-OutlookAddin {
             $cache.Add($props['ProgID'], $null)
         }
 
-        $err = $($clsid = ConvertTo-CLSID $props['ProgID'] -ErrorAction Continue) 2>&1
+        $($clsid = ConvertTo-CLSID $props['ProgID'] -User $User -ErrorAction Continue) 2>&1 | Write-Log
 
-        if ($err) {
-            Write-Log $err
-            continue
+        if ($clsid) {
+            $props['CLSID'] = $clsid.String
         }
         else {
-            $props['CLSID'] = $clsid.String
+            continue
         }
 
         # ToDo: text might get garbled in DBCS environment.
@@ -4209,7 +4305,7 @@ function Collect-OutlookInfo {
     Write-Log "Starting traces"
     try {
         if ($Component -contains 'Configuration') {
-            # Sub directory names
+            # Sub directories
             $ConfigDir = Join-Path $tempPath 'Configuration'
             $OSDir = Join-Path $ConfigDir 'OS'
             $OfficeDir =  Join-Path $ConfigDir 'Office'
@@ -4248,20 +4344,27 @@ function Collect-OutlookInfo {
             # Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
+            Run-Command 'Get-OfficeInfo' -Path $OfficeDir
+            Run-Command "Get-OutlookProfile -User $($LogonUser.SID)" -Path $OfficeDir
+            Run-Command "Get-OutlookAddin -User $($LogonUser.SID)" -Path $OfficeDir
+            Run-Command "Get-ClickToRunConfiguration" -Path $OfficeDir
 
-            $(Get-OfficeInfo  | Export-Clixml -Path (Join-Path $OfficeDir 'OfficeInfo.xml')) 2>&1 | Write-Log
-            $(Get-OutlookProfile -User $LogonUser.Name | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookProfile.xml')) 2>&1 | Write-Log
-            $(Get-OutlookAddin -User $LogonUser.SID | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookAddin.xml')) 2>&1 | Write-Log
-            $(if ($o = Get-ClickToRunConfiguration) {$o | Export-Clixml -Path (Join-Path $OfficeDir 'ClickToRunConfiguration.xml')}) 2>&1 | Write-Log
+            # $(Get-OfficeInfo | Export-Clixml -Path (Join-Path $OfficeDir 'OfficeInfo.xml')) 2>&1 | Write-Log
+            # $(Get-OutlookProfile -User $LogonUser.SID | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookProfile.xml')) 2>&1 | Write-Log
+            # $(Get-OutlookAddin -User $LogonUser.SID | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookAddin.xml')) 2>&1 | Write-Log
+            # $(if ($o = Get-ClickToRunConfiguration) {$o | Export-Clixml -Path (Join-Path $OfficeDir 'ClickToRunConfiguration.xml')}) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
-            $(Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $OfficeDir 'Cached AutoDiscover')) 2>&1 | Write-Log
+            Run-Command "Save-CachedAutodiscover -User '$($LogonUser.Name)' -Path '$(Join-Path $OfficeDir 'Cached AutoDiscover')'"
+            #$(Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $OfficeDir 'Cached AutoDiscover')) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
-            $(Save-MSIPC -Path $MSIPCDir -User $LogonUser.SID) 2>&1 | Write-Log
+            Run-Command "Save-MSIPC -Path '$MSIPCDir' -User $($LogonUser.SID)"
+            # $(Save-MSIPC -Path $MSIPCDir -User $LogonUser.SID) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
-            $(Save-Process -Path $OSDir) 2>&1 | Write-Log
+            Run-Command "Save-Process -Path '$OSDir'"
+            #$(Save-Process -Path $OSDir) 2>&1 | Write-Log
 
             if ($LogonUser) {
                 $LogonUser | Export-Clixml -Path (Join-Path $OSDir 'LogonUser.xml')
@@ -4528,7 +4631,8 @@ function Collect-OutlookInfo {
 
             # Save process list again after traces
             if ($Component.Count -gt 1) {
-                Save-Process -Path $OSDir
+                Run-Command "Save-Process -Path '$OSDir'"
+                #Save-Process -Path $OSDir
             }
         }
 
