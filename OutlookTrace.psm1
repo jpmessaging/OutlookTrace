@@ -199,43 +199,62 @@ function Close-Log {
     }
 }
 
+<#
+.SYNOPSIS
+Create a runspace pool so that Start-Task commands can use it.
+Make sure to call Close-TaskRunspace to dispose the runspace pool.
+#>
 function Open-TaskRunspace {
     [CmdletBinding()]
     param(
+        # Maximum number of runspaces that pool creates
         $MaxRunspaces = $env:NUMBER_OF_PROCESSORS,
+        # List of PowerShell modules to import to InitialSessionState.
+        [string[]]$Modules,
+        # Variable to import to InitialSessionState.
         [System.Management.Automation.PSVariable[]]$Variables,
+        # Import all non-const script-scoped variables to InitialSessionState.
         [switch]$IncludeScriptVariables
     )
 
     if (-not $Script:runspacePool) {
-        Write-Log "Setting up a Runspace with a initialSessionState. MaxRunspaces: $MaxRunspaces."
+        Write-Log "Setting up a Runspace with an initialSessionState. MaxRunspaces: $MaxRunspaces."
         $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
 
         # Add functions from this script module. This will find all the functions including non-exported ones.
+        # Note: I just want to call "ImportPSModule". It works, but emits "WARNING: The names of some imported commands ...".
+        # Just to avoid this, I'm manually adding each command.
+        #   $initialSessionState.ImportPSModule($MyInvocation.MyCommand.Module.Path)
         Get-Command -Module $MyInvocation.MyCommand.Module | ForEach-Object {
             $initialSessionState.Commands.Add($(
                 New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($_.Name, $_.ScriptBlock)
             ))
         }
 
+        # Import extra modules.
+        if ($Modules) {
+            $initialSessionState.ImportPSModule($Modules)
+        }
+
+        # Import Script-scoped variable.
         if ($IncludeScriptVariables) {
-            foreach ($_ in @(Get-Variable -Scope Script)) {
-                if ($_.Name -ne 'true' -and $_.Value) {
-                    $initialSessionState.Variables.Add($(
-                        New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
-                    ))
-                }
+            foreach ($_ in @(Get-Variable -Scope Script | Where-Object {$_.Options -notmatch 'Constant' -and $_.Value})) {
+                $initialSessionState.Variables.Add($(
+                    New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
+                ))
             }
         }
 
+        # Import given variables
         foreach ($_ in $Variables) {
             $initialSessionState.Variables.Add($(
                 New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
             ))
         }
 
-        [System.Management.Automation.Runspaces.RunspacePool]$Script:runspacePool = [runspacefactory]::CreateRunspacePool(1, $MaxRunspaces, $initialSessionState, $Host)
+        $Script:runspacePool = [runspacefactory]::CreateRunspacePool(1, $MaxRunspaces, $initialSessionState, $Host)
         $Script:runspacePool.Open()
+
         Write-Log "RunspacePool ($($Script:runspacePool.InstanceId.ToString())) is Opened."
     }
 }
@@ -250,15 +269,42 @@ function Close-TaskRunspace {
     Write-Log "RunspacePool ($id) is Closed."
 }
 
+<#
+.SYNOPSIS
+Start a task to run a command or scriptblock to run asynchronously.
+
+.EXAMPLE
+$t = Start-Task { Invoke-LongRunning }
+if (Wait-Task $t -Timeout 00:01:00) {
+    $t | Receive-Task
+}
+else {
+    Write-Error "Timeout."
+}
+
+.EXAMPLE
+$t = Start-Task {param ($data) Invoke-LongRunning -Data $data} -ArgumentList $data
+Note: Start-Task takes ScriptBlock and ArgumentList, just like Invoke-Command.
+
+.EXAMPLE
+Start-Task { Get-ChildItem C:\ } | Receive-Task -AutoRemoveTask
+Note: Receive-Task waits for the task to complete and returns the result (and errors too).
+#>
 function Start-Task {
     [CmdletBinding()]
     param (
-        [Parameter(ParameterSetName='Command', Mandatory=$true)]
-        $Command,
+        # Command to execute.
+        [Parameter(ParameterSetName='Command', Mandatory=$true, Position=0)]
+        [string]$Command,
+        # Parameters (name and value) to the command.
         [Parameter(ParameterSetName='Command')]
         $Parameters,
-        [Parameter(ParameterSetName='Script', Mandatory=$true)]
-        [string]$Script
+        # ScriptBlock to execute.
+        [Parameter(ParameterSetName='Script', Mandatory=$true, Position=0)]
+        [ScriptBlock]$ScriptBlock,
+        # ArgumentList to ScriptBlock
+        [Parameter(ParameterSetName='Script')]
+        [object[]]$ArgumentList
     )
 
     if (-not $Script:runspacePool) {
@@ -273,16 +319,17 @@ function Start-Task {
     switch -Wildcard ($PSCmdlet.ParameterSetName) {
         'Command' {
             $ps.AddCommand($Command) | Out-Null
-
             foreach ($key in $Parameters.Keys) {
                 $ps.AddParameter($key, $Parameters[$key]) | Out-Null
             }
-
             break
         }
 
         'Script' {
-            $ps.AddScript($Script) | Out-Null
+            $ps.AddScript($ScriptBlock) | Out-Null
+            foreach ($p in $ArgumentList) {
+                $ps.AddArgument($p) | Out-Null
+            }
             break
         }
     }
@@ -293,15 +340,24 @@ function Start-Task {
     [PSCustomObject]@{
         AsyncResult = $ar
         PowerShell = $ps
+        # These are diagnostic purpose
+        ScriptBlock = $ScriptBlock
+        ArgumentList = $ArgumentList
     }
 }
 
+<#
+.SYNOPSIS
+Wait for a task with optional timeout. By default, it waits indefinitely.
+It returns the task object if the task completes before the timeout.
+When timeout occurs, there is no output.
+#>
 function Wait-Task {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
         $Task,
-        # By default, it wait indefinitely
+        # By default, it waits indefinitely
         # TimeSpan that represents -1 milliseconds is to wait indefinitely.
         [TimeSpan]$Timeout = [TimeSpan]::FromMilliseconds(-1)
     )
@@ -309,8 +365,13 @@ function Wait-Task {
     process {
         foreach ($t in $Task) {
             [IAsyncResult]$ar = $t.AsyncResult
-            if ($ar.AsyncWaitHandle.WaitOne($Timeout)) {
-                $t
+            try {
+                if ($ar.AsyncWaitHandle.WaitOne($Timeout)) {
+                    $t
+                }
+            }
+            catch {
+                Write-Error -ErrorRecord $_
             }
         }
     }
@@ -330,13 +391,19 @@ function Receive-Task {
             [powershell]$ps = $t.PowerShell
             [IAsyncResult]$ar = $t.AsyncResult
 
-            $ar.AsyncWaitHandle.WaitOne() | Out-Null
-            $ps.EndInvoke($ar)
+            try {
+                $ar.AsyncWaitHandle.WaitOne() | Out-Null
+                $ps.EndInvoke($ar)
+            }
+            catch {
+                Write-Error -Message "Task threw a terminating error`nScriptBlock: $($t.ScriptBlock)`nArgumentList: $($t.ArgumentList)`n$_" -Exception $_.Exception
+            }
 
             if ($ps.HadErrors) {
                 $ps.Streams.Error | ForEach-Object {
                     # Include the ErrorRecord's InvocationInfo so that it's easier to understand the origin of error.
-                    Write-Error -Message "$($_.InvocationInfo.MyCommand): $($_.Exception.Message)`n$($_.InvocationInfo.PositionMessage)" -Exception $_.Exception
+                    Write-Error -Message "Task has a non-terminating error.`nScriptBlock: $($t.ScriptBlock); ArgumentList: $($t.ArgumentList);`n$($_.InvocationInfo.MyCommand): $($_.Exception.Message);`n$($_.InvocationInfo.PositionMessage)" -Exception $_.Exception
+
                     if ($TaskErrorVariable) {
                         New-Variable -Name $TaskErrorVariable -Value $($ps.Streams.Error.ReadAll()) -Scope 2 -Force
                     }
@@ -363,7 +430,7 @@ function Remove-Task {
             [IAsyncResult]$ar = $t.AsyncResult
 
             # Note: Disposing PowerShell instance will stop the currently running command & its thread.
-            # So there's no need to call EndInvoke() if the you don't need the result.
+            # So there's no need to call EndInvoke() if you don't need the result.
             $ps.Dispose()
             $ar.AsyncWaitHandle.Close()
         }
@@ -1082,7 +1149,11 @@ function Save-EventLog {
             $fileName = $log.Replace('/', '_') + '.evtx'
             $filePath = Join-Path $Path -ChildPath $fileName
             Write-Log "Saving $log to $filePath"
-            Start-Task -Script "wevtutil epl `"$log`" `"$filePath`" /ow; wevtutil al `"$filePath`""
+            Start-Task -ScriptBlock {
+                param ($log, $filePath)
+                wevtutil epl $log $filePath /ow
+                wevtutil al $filePath
+            } -ArgumentList $log, $filePath
         }
     )
 
@@ -1566,14 +1637,14 @@ function Save-OSConfigurationMT {
     }
 
     $tasks = @(
-    Start-Task -Script "Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_ComputerSystem.xml")"
-    Start-Task -Script "Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_OperatingSystem.xml")"
-    Start-Task -Script "Get-ProxySetting | Export-Clixml -Path $(Join-Path $Path -ChildPath "ProxySetting.xml")"
-    Start-Task -Script "Get-NLMConnectivity | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")"
-    Start-Task -Script "Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")"
-    Start-Task -Script "Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")"
-    Start-Task -Script "Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $(Join-Path $Path -ChildPath "JoinInformation.xml")"
-    Start-Task -Script "Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")"
+    Start-Task {param($path) Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "Win32_ComputerSystem.xml")
+    Start-Task {param($path) Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "Win32_OperatingSystem.xml")
+    Start-Task {param($path) Get-ProxySetting | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "ProxySetting.xml")
+    Start-Task {param($path) Get-NLMConnectivity | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "NLMConnectivity.xml")
+    Start-Task {param($path) Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "WSCAntivirus.xml")
+    Start-Task {param($path) Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "InstalledUpdate.xml")
+    Start-Task {param($path) Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "JoinInformation.xml")
+    Start-Task {param($path) Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $path} -ArgumentList (Join-Path $Path -ChildPath "DeviceJoinStatus.txt")
     )
 
     Write-Verbose "waiting for tasks..."
@@ -1594,14 +1665,14 @@ function Save-OSConfiguration {
 
     # Key = command to run, Value = file name used for saving
     $commands = [ordered]@{
-        'Get-WmiObject -Class Win32_ComputerSystem' = 'Win32_ComputerSystem.xml'
-        'Get-WmiObject -Class Win32_OperatingSystem' = 'Win32_OperatingSystem.xml'
-        'Get-ProxySetting' = $null
-        'Get-NLMConnectivity' = $null
-        'Get-WSCAntivirus' = $null
-        'Get-InstalledUpdate' = $null
-        'Get-JoinInformation' = $null
-        'Get-DeviceJoinStatus' = 'DeviceJoinStatus.txt'
+        {Get-WmiObject -Class Win32_ComputerSystem} = 'Win32_ComputerSystem.xml'
+        {Get-WmiObject -Class Win32_OperatingSystem} = 'Win32_OperatingSystem.xml'
+        {Get-ProxySetting} = $null
+        {Get-NLMConnectivity} = $null
+        {Get-WSCAntivirus} = $null
+        {Get-InstalledUpdate} = $null
+        {Get-JoinInformation} = $null
+        {Get-DeviceJoinStatus} = 'DeviceJoinStatus.txt'
     }
 
     $commands.GetEnumerator() | ForEach-Object {
@@ -1625,58 +1696,62 @@ function Save-NetworkInfo {
     # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
     # Key = command to run, Value = file name used for saving. When file name is $null, Run-Command decides the file name.
     $commands = [ordered]@{
-        'Get-NetAdapter -IncludeHidden' = $null
-        'Get-NetAdapterAdvancedProperty' = $null
-        'Get-NetAdapterBinding -IncludeHidden' = $null
-        'Get-NetIpConfiguration -Detailed' = $null
-        'Get-DnsClientNrptPolicy' = $null
+        {Get-NetAdapter -IncludeHidden} = $null
+        {Get-NetAdapterAdvancedProperty} = $null
+        {Get-NetAdapterBinding -IncludeHidden} = $null
+        {Get-NetIpConfiguration -Detailed} = $null
+        {Get-DnsClientNrptPolicy} = $null
         # 'Resolve-DnsName bing.com'
         # 'ping bing.com -4'
         # 'ping bing.com -6'
         # 'Test-NetConnection bing.com -InformationLevel Detailed'
         # 'Test-NetConnection bing.com -InformationLevel Detailed -CommonTCPPort HTTP'
-        'Get-NetRoute' = $null
-        'Get-NetIPaddress' = $null
-        'Get-NetLbfoTeam' = $null
-        # 'Get-Service -Name:VMMS'
-        # 'Get-VMSwitch'
-        # 'Get-VMNetworkAdapter -all'
-        # 'Get-WindowsOptionalFeature -Online'
-        # 'Get-Service'
-        # 'Get-PnpDevice | Get-PnpDeviceProperty -KeyName DEVPKEY_Device_InstanceId,DEVPKEY_Device_DevNodeStatus,DEVPKEY_Device_ProblemCode'
+        {Get-NetRoute} = $null
+        {Get-NetIPaddress} = $null
+        {Get-NetLbfoTeam} = $null
 
-        'Get-NetIPInterface' = $null
-        'Get-NetConnectionProfile' = $null
-        'ipconfig /all' = $null
+        # {Get-Service -Name:VMMS} = $null
+        # {Get-VMSwitch} = $null
+        # {Get-VMNetworkAdapter -all} = $null
+        # {Get-WindowsOptionalFeature -Online} = $null
+        # {Get-Service} = $null
+        # {Get-PnpDevice | Get-PnpDeviceProperty -KeyName DEVPKEY_Device_InstanceId,DEVPKEY_Device_DevNodeStatus,DEVPKEY_Device_ProblemCode} = $null
+
+        {Get-NetIPInterface} = $null
+        {Get-NetConnectionProfile} = $null
+        {ipconfig /all} = $null
 
         # Dump Windows Firewall config
-        'netsh advfirewall monitor show currentprofile' = $null # current profiles
-        'netsh advfirewall monitor show firewall' = $null # firewall configuration
-        'netsh advfirewall monitor show consec' = $null # connection security configuration
-        'netsh advfirewall firewall show rule name=all verbose' = $null # firewall rules
-        'netsh advfirewall consec show rule name=all verbose' = $null # connection security rules
-        'netsh advfirewall monitor show firewall rule name=all' = $null # firewall rules from Dynamic Store
-        'netsh advfirewall monitor show consec rule name=all' = $null # connection security rules from Dynamic Store
+        {netsh advfirewall monitor show currentprofile} = $null # current profiles
+        {netsh advfirewall monitor show firewall} = $null # firewall configuration
+        {netsh advfirewall monitor show consec} = $null # connection security configuration
+        {netsh advfirewall firewall show rule name=all verbose} = $null # firewall rules
+        {netsh advfirewall consec show rule name=all verbose} = $null # connection security rules
+        {netsh advfirewall monitor show firewall rule name=all} = $null # firewall rules from Dynamic Store
+        {netsh advfirewall monitor show consec rule name=all} = $null # connection security rules from Dynamic Store
     }
+
 
     $commands.GetEnumerator() | ForEach-Object {
         $command = $_.Key
         $fileName = $_.Value
         Run-Command $command -Path $Path -FileName $fileName
+        #Start-Task {param($command, $path, $fileName) Run-Command $command -Path $Path -FileName $fileName} -ArgumentList $command, $Path, $fileName | Receive-Task -AutoRemoveTask
     }
 }
 
 <#
 .DESCRIPTION
-Run a given command (more exactly an expression). If Path is given, save the result there.
-If FileName is given, it's used for the file name. If its extension is not ".xml", Out-File will be used. Otherwise Export-CliXml will be used.
+Run a given script block. If Path is given, save the result there.
+If FileName is given, it's used for the file name for saving the result. If its extension is not ".xml", Out-File will be used. Otherwise Export-CliXml will be used.
 If FileName is not give, the file name will be auto-decided. If the command is an application, then Out-File will be used. Otherwise Export-CliXml will be used.
 #>
 function Run-Command {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true)]
-        [string]$Command,
+        [Parameter(Mandatory = $true, Position=0)]
+        [ScriptBlock]$ScriptBlock,
+        [object[]]$ArgumentList,
         # Folder to save to
         $Path,
         # File name used for saving
@@ -1687,21 +1762,25 @@ function Run-Command {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
     try {
-        $($result = Invoke-Expression $Command -ErrorAction Continue) 2>&1 | Write-Log
+        # ScriptBlock.Invoke() returns System.Collections.ObjectModel.Collection<System.Management.Automation.PSObject>
+        $($result = $ScriptBlock.Invoke($ArgumentList)) 2>&1 | Write-Log
+        # $($result = Invoke-Command -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList) 2>&1 | Write-Log
     }
     catch {
-        Write-Log "$Command threw a terminating error. $_"
+        Write-Log "'$ScriptBlock' threw a terminating error. $_"
     }
 
-    Write-Log "$Command took $($sw.ElapsedMilliseconds) ms."
+    $sw.Stop()
+    Write-Log "'$ScriptBlock' took $($sw.ElapsedMilliseconds) ms."
 
-    if ($null -eq $result) {
+    if ($null -eq $result -or $result.Count -eq 0) {
         Write-Log "It returned nothing."
         return
     }
 
     # If Path is given, save the result.
     if ($Path) {
+        $sb = $ScriptBlock.ToString()
         $exportAsXml = $true
 
         if ($FileName) {
@@ -1711,6 +1790,11 @@ function Run-Command {
         }
         else {
             # Decide the filename & export method based on the command type
+            $Command = ([RegEx]::Match($sb, '\w+-\w+')).Value
+            if (-not $Command) {
+                $Command = $sb
+            }
+
             if ($Command.IndexOf(' ') -ge 0) {
                 $commandName = $Command.SubString(0, $Command.IndexOf(' '))
             }
@@ -2173,7 +2257,13 @@ function Save-CachedAutodiscover {
     Write-Log "Searching $cachePath."
 
     # Get Autodiscover XML files and copy them to Path
-    Get-ChildItem $cachePath -Filter '*Autod*.xml' -Force -Recurse | Copy-Item -Destination $Path
+    try {
+        Get-ChildItem $cachePath -Filter '*Autod*.xml' -Force -Recurse | Copy-Item -Destination $Path
+    }
+    catch {
+        # Just in case Copy-Item throws a terminating error.
+        Write-Error -ErrorRecord $_
+    }
 
     # Remove Hidden attribute
     foreach ($file in @(Get-ChildItem $Path -Force)) {
@@ -2968,7 +3058,12 @@ function Stop-TcoTrace {
 
     # TCO Trace logs are in %TEMP%
     foreach ($item in @(Get-ChildItem -Path "$env:TEMP\*" -Include "office.log", "*.exe.log")) {
-        Copy-Item $item -Destination $Path
+        try {
+            Copy-Item $item -Destination $Path
+        }
+        catch {
+            Write-Error -ErrorRecord $_
+        }
     }
 }
 
@@ -3578,7 +3673,13 @@ function Save-MSIPC {
         }
 
         Write-Log "Copying $($folder.FullName) to $dest"
-        Copy-Item (Join-Path $folder.FullName '*') -Destination $dest -Recurse
+        try {
+            # Copy-Item could throw a terminating error
+            Copy-Item (Join-Path $folder.FullName '*') -Destination $dest -Recurse -ErrorAction SilentlyContinue
+        }
+        catch {
+            Write-Error -ErrorRecord $_
+        }
     }
 }
 
@@ -4324,30 +4425,34 @@ function Collect-OutlookInfo {
 
             Write-Log "Starting officeModuleInfoTask."
             $cts = New-Object System.Threading.CancellationTokenSource
-            $officeModuleInfoTask = Start-Task -Command 'Save-OfficeModuleInfo' -Parameters @{Path = $OfficeDir; CancellationToken = $cts.Token}
+            $officeModuleInfoTask = Start-Task {param($path, $token) Save-OfficeModuleInfo -Path $path -CancellationToken $token} -ArgumentList $OfficeDir, $cts.Token
+            # $officeModuleInfoTask = Start-Task -Command 'Save-OfficeModuleInfo' -Parameters @{Path = $OfficeDir; CancellationToken = $cts.Token}
             # $Filters = 'outlook\.exe', 'umoutlookaddin\.dll', 'mso\.dll', 'mso\d\d.+\.dll', 'olmapi32\.dll', 'emsmdb32\.dll', 'wwlib\.dll'
             # Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
 
             Write-Log "Starting networkInfoTask."
-            $networkInfoTask = Start-Task -Command 'Save-NetworkInfo' -Parameters @{Path = $NetworkDir}
+            $networkInfoTask = Start-Task {param ($path) Save-NetworkInfo -Path $path} -ArgumentList $NetworkDir
+            # $networkInfoTask = Start-Task -Command 'Save-NetworkInfo' -Parameters @{Path = $NetworkDir}
             # Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
             # Save-NetworkInfoMT -Path (Join-Path $tempPath 'Configuration\NetworkInfo_MT') -ErrorAction SilentlyContinue
 
             $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
 
             Write-Log "Starting officeRegistryTask."
-            $officeRegistryTask = Start-Task -Command 'Save-OfficeRegistry' -Parameters @{Path = $RegistryDir; User = $LogonUser.SID}
+            $officeRegistryTask = Start-Task {param($path, $sid) Save-OfficeRegistry -Path $path -User $sid} -ArgumentList $RegistryDir, $LogonUser.SID
+            # $officeRegistryTask = Start-Task -Command 'Save-OfficeRegistry' -Parameters @{Path = $RegistryDir; User = $LogonUser.SID}
             # Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -User $LogonUser.SID -ErrorAction SilentlyContinue
 
             Write-Log "Starting oSConfigurationTask."
-            $oSConfigurationTask = Start-Task -Command 'Save-OSConfiguration' -Parameters @{Path = $OSDir}
+            $oSConfigurationTask = Start-Task {param($path) Save-OSConfiguration -Path $path} -ArgumentList $OSDir
+            # $oSConfigurationTask = Start-Task -Command 'Save-OSConfiguration' -Parameters @{Path = $OSDir}
             # Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
-            Run-Command 'Get-OfficeInfo' -Path $OfficeDir
-            Run-Command "Get-OutlookProfile -User $($LogonUser.SID)" -Path $OfficeDir
-            Run-Command "Get-OutlookAddin -User $($LogonUser.SID)" -Path $OfficeDir
-            Run-Command "Get-ClickToRunConfiguration" -Path $OfficeDir
+            Run-Command {Get-OfficeInfo} -Path $OfficeDir
+            Run-Command {param($LogonUser) Get-OutlookProfile -User $LogonUser.SID} -ArgumentList $LogonUser -Path $OfficeDir
+            Run-Command {param($LogonUser) Get-OutlookAddin -User $LogonUser.SID} -ArgumentList $LogonUser -Path $OfficeDir
+            Run-Command {Get-ClickToRunConfiguration} -Path $OfficeDir
 
             # $(Get-OfficeInfo | Export-Clixml -Path (Join-Path $OfficeDir 'OfficeInfo.xml')) 2>&1 | Write-Log
             # $(Get-OutlookProfile -User $LogonUser.SID | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookProfile.xml')) 2>&1 | Write-Log
@@ -4355,15 +4460,15 @@ function Collect-OutlookInfo {
             # $(if ($o = Get-ClickToRunConfiguration) {$o | Export-Clixml -Path (Join-Path $OfficeDir 'ClickToRunConfiguration.xml')}) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
-            Run-Command "Save-CachedAutodiscover -User '$($LogonUser.Name)' -Path '$(Join-Path $OfficeDir 'Cached AutoDiscover')'"
+            Run-Command {param($LogonUser, $OfficeDir) Save-CachedAutodiscover -User $LogonUser.Name -Path $(Join-Path $OfficeDir 'Cached AutoDiscover')} -ArgumentList $LogonUser, $OfficeDir
             #$(Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $OfficeDir 'Cached AutoDiscover')) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
-            Run-Command "Save-MSIPC -Path '$MSIPCDir' -User $($LogonUser.SID)"
-            # $(Save-MSIPC -Path $MSIPCDir -User $LogonUser.SID) 2>&1 | Write-Log
+            Run-Command {param($LogonUser, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $($LogonUser.SID)} -ArgumentList $LogonUser, $MSIPCDir
+            #$(Save-MSIPC -Path $MSIPCDir -User $LogonUser.SID) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
-            Run-Command "Save-Process -Path '$OSDir'"
+            Run-Command {param($OSDir) Save-Process -Path $OSDir} -ArgumentList $OSDir
             #$(Save-Process -Path $OSDir) 2>&1 | Write-Log
 
             if ($LogonUser) {
@@ -4631,8 +4736,8 @@ function Collect-OutlookInfo {
 
             # Save process list again after traces
             if ($Component.Count -gt 1) {
-                Run-Command "Save-Process -Path '$OSDir'"
-                #Save-Process -Path $OSDir
+                Run-Command {param($OSDir) Save-Process -Path $OSDir} -ArgumentList $OSDir
+                # $(Save-Process -Path $OSDir) 2>&1 | Write-Log
             }
         }
 
