@@ -396,7 +396,7 @@ function Receive-Task {
                 $ps.EndInvoke($ar)
             }
             catch {
-                Write-Error -Message "Task threw a terminating error`nScriptBlock: $($t.ScriptBlock)`nArgumentList: $($t.ArgumentList)`n$_" -Exception $_.Exception
+                Write-Error -Message "Task threw a terminating error.`nScriptBlock: $($t.ScriptBlock); ArgumentList: $($t.ArgumentList)`n$_" -Exception $_.Exception
             }
 
             if ($ps.HadErrors) {
@@ -405,7 +405,19 @@ function Receive-Task {
                     Write-Error -Message "Task has a non-terminating error.`nScriptBlock: $($t.ScriptBlock); ArgumentList: $($t.ArgumentList);`n$($_.InvocationInfo.MyCommand): $($_.Exception.Message);`n$($_.InvocationInfo.PositionMessage)" -Exception $_.Exception
 
                     if ($TaskErrorVariable) {
-                        New-Variable -Name $TaskErrorVariable -Value $($ps.Streams.Error.ReadAll()) -Scope 2 -Force
+                        # Scope 1 is the parent scope, but it's not necessarily the caller scope.
+                        # If the caller is a function in this module, then scope 1 is the caller function.
+                        # However, if it's called from outside of module, scope 1 is the module's script scope. Thus the caller does not get the error.
+                        # Because this function is meant to be moudule-internal and should be called only within the moudle, Scope 1 is ok for now.
+                        New-Variable -Name $TaskErrorVariable -Value $($ps.Streams.Error.ReadAll()) -Scope 1 -Force
+
+                        # To see if it's called from within this moudle, maybe I can check the SessionState.
+                        # if ($SessionState -eq $ExecutionContext.SessionState) {
+                        #     New-Variable -Name $TaskErrorVariable -Value $($ps.Streams.Error.ReadAll()) -Scope 1 -Force
+                        # }
+                        # else {
+                        #     $SessionState.PSVariable.Set($TaskErrorVariable,$ps.Streams.Error.ReadAll())
+                        # }
                     }
                 }
             }
