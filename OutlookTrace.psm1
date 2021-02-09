@@ -1774,8 +1774,11 @@ function Run-Command {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
     try {
+        #$($result = & $ScriptBlock @ArgumentList) 2>&1 | Write-Log
+        $($result = $ScriptBlock.InvokeReturnAsIs($ArgumentList)) 2>&1 | Write-Log
+        
         # ScriptBlock.Invoke() returns System.Collections.ObjectModel.Collection<System.Management.Automation.PSObject>
-        $($result = $ScriptBlock.Invoke($ArgumentList)) 2>&1 | Write-Log
+        # $($result = $ScriptBlock.Invoke($ArgumentList)) 2>&1 | Write-Log
         # $($result = Invoke-Command -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList) 2>&1 | Write-Log
     }
     catch {
@@ -1785,7 +1788,7 @@ function Run-Command {
     $sw.Stop()
     Write-Log "'$ScriptBlock' took $($sw.ElapsedMilliseconds) ms."
 
-    if ($null -eq $result -or $result.Count -eq 0) {
+    if ($null -eq $result) {
         Write-Log "It returned nothing."
         return
     }
@@ -1833,7 +1836,7 @@ function Run-Command {
         }
     }
     else {
-        return $result
+        $result
     }
 }
 
