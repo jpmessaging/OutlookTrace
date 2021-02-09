@@ -4635,9 +4635,10 @@ function Collect-OutlookInfo {
                 while ($true) {
                     $timeout = $(Wait-Process -InputObject $ttd.TargetProcess -Timeout 30 -ErrorAction Continue) 2>&1
                     if ($timeout) {
-                        Write-Host "Please shutdown Outlook." -ForegroundColor Green
+                        Write-Host "Please shutdown Outlook." -ForegroundColor Yellow
                     }
                     else {
+                        Write-Host "Outlook is closed. Moving on." -ForegroundColor Green
                         break
                     }
                 }
