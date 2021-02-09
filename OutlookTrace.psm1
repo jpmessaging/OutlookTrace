@@ -209,7 +209,7 @@ function Open-TaskRunspace {
     param(
         # Maximum number of runspaces that pool creates
         $MaxRunspaces = $env:NUMBER_OF_PROCESSORS,
-        # List of PowerShell modules to import to InitialSessionState.
+        # PowerShell modules to import to InitialSessionState.
         [string[]]$Modules,
         # Variable to import to InitialSessionState.
         [System.Management.Automation.PSVariable[]]$Variables,
@@ -1606,64 +1606,6 @@ function Save-OfficeRegistry {
     }
 }
 
-function Save-OSConfiguration_Old {
-    [CmdletBinding()]
-    param (
-        [parameter(Mandatory = $true)]
-        $Path
-    )
-
-    if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
-    }
-
-    $(Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_ComputerSystem.xml")) 2>&1 | Write-Log
-    $(Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $(Join-Path $Path -ChildPath "Win32_OperatingSystem.xml")) 2>&1 | Write-Log
-
-    # $(Get-ProxySetting | Export-Clixml -Path $(Join-Path $Path -ChildPath "ProxySetting.xml")) 2>&1 | Write-Log
-    # $(Get-NLMConnectivity | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")) 2>&1 | Write-Log
-    # $(Get-WSCAntivirus | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")) 2>&1 | Write-Log
-
-    # $(Get-InstalledUpdate | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")) 2>&1 | Write-Log
-    # $(Get-JoinInformation | Export-Clixml -Path $(Join-Path $Path -ChildPath "JoinInformation.xml")) 2>&1 | Write-Log
-    # $(Get-DeviceJoinStatus | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")) 2>&1 | Write-Log
-
-    $(if ($o = Get-ProxySetting) { $o | Export-Clixml -Path $(Join-Path $Path -ChildPath "ProxySetting.xml")}) 2>&1 | Write-Log
-    $(if ($o = Get-NLMConnectivity) { $o | Export-Clixml -Path $(Join-Path $Path -ChildPath "NLMConnectivity.xml")}) 2>&1 | Write-Log
-    $(if ($o = Get-WSCAntivirus) { $o | Export-Clixml -Path $(Join-Path $Path -ChildPath "WSCAntivirus.xml")}) 2>&1 | Write-Log
-
-    $(if ($o = Get-InstalledUpdate) { $o | Export-Clixml -Path $(Join-Path $Path -ChildPath "InstalledUpdate.xml")}) 2>&1 | Write-Log
-    $(if ($o = Get-JoinInformation) { $o | Export-Clixml -Path $(Join-Path $Path -ChildPath "JoinInformation.xml")}) 2>&1 | Write-Log
-    $(if ($o = Get-DeviceJoinStatus) { $o | Out-File -FilePath $(Join-Path $Path -ChildPath "DeviceJoinStatus.txt")}) 2>&1 | Write-Log
-}
-
-function Save-OSConfigurationMT {
-    [CmdletBinding()]
-    param (
-        [parameter(Mandatory = $true)]
-        $Path
-    )
-
-    if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
-    }
-
-    $tasks = @(
-    Start-Task {param($path) Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "Win32_ComputerSystem.xml")
-    Start-Task {param($path) Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "Win32_OperatingSystem.xml")
-    Start-Task {param($path) Get-ProxySetting | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "ProxySetting.xml")
-    Start-Task {param($path) Get-NLMConnectivity | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "NLMConnectivity.xml")
-    Start-Task {param($path) Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "WSCAntivirus.xml")
-    Start-Task {param($path) Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "InstalledUpdate.xml")
-    Start-Task {param($path) Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path -ChildPath "JoinInformation.xml")
-    Start-Task {param($path) Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $path} -ArgumentList (Join-Path $Path -ChildPath "DeviceJoinStatus.txt")
-    )
-
-    Write-Verbose "waiting for tasks..."
-
-    $tasks | Receive-Task -AutoRemoveTask
-}
-
 function Save-OSConfiguration {
     [CmdletBinding()]
     param (
@@ -1692,6 +1634,32 @@ function Save-OSConfiguration {
         $fileName = $_.Value
         Run-Command $command -Path $Path -FileName $fileName
     }
+}
+
+function Save-OSConfigurationMT {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory = $true)]
+        $Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+    }
+
+    $tasks = @(
+    Start-Task {param($path) Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "Win32_ComputerSystem.xml")
+    Start-Task {param($path) Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "Win32_OperatingSystem.xml")
+    Start-Task {param($path) Get-ProxySetting | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "ProxySetting.xml")
+    Start-Task {param($path) Get-NLMConnectivity | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "NLMConnectivity.xml")
+    Start-Task {param($path) Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "WSCAntivirus.xml")
+    Start-Task {param($path) Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "InstalledUpdate.xml")
+    Start-Task {param($path) Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "JoinInformation.xml")
+    Start-Task {param($path) Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $path} -ArgumentList (Join-Path $Path "DeviceJoinStatus.txt")
+    )
+
+    Write-Verbose "waiting for tasks..."
+    $tasks | Receive-Task -AutoRemoveTask
 }
 
 function Save-NetworkInfo {
@@ -1743,12 +1711,10 @@ function Save-NetworkInfo {
         {netsh advfirewall monitor show consec rule name=all} = $null # connection security rules from Dynamic Store
     }
 
-
     $commands.GetEnumerator() | ForEach-Object {
         $command = $_.Key
         $fileName = $_.Value
         Run-Command $command -Path $Path -FileName $fileName
-        #Start-Task {param($command, $path, $fileName) Run-Command $command -Path $Path -FileName $fileName} -ArgumentList $command, $Path, $fileName | Receive-Task -AutoRemoveTask
     }
 }
 
@@ -1774,12 +1740,7 @@ function Run-Command {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
     try {
-        #$($result = & $ScriptBlock @ArgumentList) 2>&1 | Write-Log
         $($result = $ScriptBlock.InvokeReturnAsIs($ArgumentList)) 2>&1 | Write-Log
-        
-        # ScriptBlock.Invoke() returns System.Collections.ObjectModel.Collection<System.Management.Automation.PSObject>
-        # $($result = $ScriptBlock.Invoke($ArgumentList)) 2>&1 | Write-Log
-        # $($result = Invoke-Command -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList) 2>&1 | Write-Log
     }
     catch {
         Write-Log "'$ScriptBlock' threw a terminating error. $_"
@@ -1852,75 +1813,29 @@ function Save-NetworkInfoMT {
     }
 
     # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
-    $commands = @(
-        'Get-NetAdapter -IncludeHidden'
-        'Get-NetAdapterAdvancedProperty'
-        'Get-NetAdapterBinding -IncludeHidden'
-        'Get-NetIpConfiguration -Detailed'
-        'Get-DnsClientNrptPolicy'
-        # 'Resolve-DnsName bing.com'
-        # 'ping bing.com -4'
-        # 'ping bing.com -6'
-        # 'Test-NetConnection bing.com -InformationLevel Detailed'
-        # 'Test-NetConnection bing.com -InformationLevel Detailed -CommonTCPPort HTTP'
-        'Get-NetRoute'
-        'Get-NetIPaddress'
-        'Get-NetLbfoTeam'
-        # 'Get-Service -Name:VMMS'
-        # 'Get-VMSwitch'
-        # 'Get-VMNetworkAdapter -all'
-        # 'Get-WindowsOptionalFeature -Online'
-        # 'Get-Service'
-        # 'Get-PnpDevice | Get-PnpDeviceProperty -KeyName DEVPKEY_Device_InstanceId,DEVPKEY_Device_DevNodeStatus,DEVPKEY_Device_ProblemCode'
-
-        'Get-NetIPInterface'
-        'ipconfig /all'
-
-        # Dump Windows Firewall config
-        'netsh advfirewall monitor show currentprofile' # current profiles
-        'netsh advfirewall monitor show firewall' # firewall configuration
-        'netsh advfirewall monitor show consec' # connection security configuration
-        'netsh advfirewall firewall show rule name=all verbose' # firewall rules
-        'netsh advfirewall consec show rule name=all verbose' # connection security rules
-        'netsh advfirewall monitor show firewall rule name=all'# firewall rules from Dynamic Store
-        'netsh advfirewall monitor show consec rule name=all' # connection security rules from Dynamic Store
-    )
-
-    Write-Log "Starting $($commands.Count) tasks."
+    $PSDefaultParameterValues.Add('Start-Task:ArgumentList', $Path)
 
     $tasks = @(
-    foreach ($commandString in $commands) {
-        if ($commandString.IndexOf(' ') -ge 0) {
-            $commandName = $commandString.SubString(0, $commandString.IndexOf(' '))
-        }
-        else {
-            $commandName = $commandString
-        }
-
-        $command = Get-Command $commandName -ErrorAction SilentlyContinue
-
-        if (-not $command) {
-            Write-Log "$commandName is not available."
-            continue
-        }
-
-        # $logmsg = "Running $commandString"
-
-        if ($command.CommandType -eq 'Application') {
-            # To be more strict, I could use [System.IO.Path]::GetInvalidFileNameChars(). But it's ok for now.
-            $fileName = $commandString.Replace('/', '-')
-
-            $commandString += " | Out-File -FilePath `"$(Join-Path $Path "$fileName.txt")`""
-        }
-        else {
-            $fileName = $commandName.SubString($commandName.IndexOf('-') + 1)
-            $commandString += " | Export-Clixml -Path `"$(Join-Path $Path "$fileName.xml")`""
-        }
-
-        # $commandString += "; Write-Log  `"$logmsg`""
-        Start-Task -Script $commandString
-    }
+    Start-Task {param ($Path) Get-NetAdapter -IncludeHidden | Export-Clixml (Join-Path $Path 'NetAdapter.xml')}
+    Start-Task {param ($Path) Get-NetAdapterAdvancedProperty | Export-Clixml (Join-Path $Path 'NetAdapterAdvancedProperty.xml')}
+    Start-Task {param ($Path) Get-NetAdapterBinding -IncludeHidden | Export-Clixml (Join-Path $Path 'NetAdapterBinding.xml')}
+    Start-Task {param ($Path) Get-NetIpConfiguration -Detailed | Export-Clixml (Join-Path $Path 'NetIpConfiguration.xml')}
+    Start-Task {param ($Path) Get-DnsClientNrptPolicy | Export-Clixml (Join-Path $Path 'DnsClientNrptPolicy.xml')}
+    Start-Task {param ($Path) Get-NetRoute | Export-Clixml (Join-Path $Path 'NetRoute.xml')}
+    Start-Task {param ($Path) Get-NetIPaddress | Export-Clixml (Join-Path $Path 'NetIPaddress.xml')}
+    Start-Task {param ($Path) Get-NetLbfoTeam | Export-Clixml (Join-Path $Path 'NetLbfoTeam.xml')}
+    Start-Task {param ($Path) Get-NetIPInterface | Export-Clixml (Join-Path $Path 'NetIPInterface.xml')}
+    Start-Task {param ($Path) Get-NetConnectionProfile | Export-Clixml (Join-Path $Path 'NetConnectionProfile.xml')}
+    Start-Task {param ($Path) ipconfig /all | Out-File (Join-Path $Path 'ipconfig_all.txt')}
+    Start-Task {param ($Path) netsh advfirewall monitor show currentprofile | Out-File (Join-Path $Path 'netsh advfirewall monitor show currentprofile.txt')}
+    Start-Task {param ($Path) netsh advfirewall monitor show firewall | Out-File (Join-Path $Path 'netsh advfirewall monitor show firewall.txt')}
+    Start-Task {param ($Path) netsh advfirewall firewall show rule name=all verbose | Out-File (Join-Path $Path 'netsh advfirewall firewall show rule name=all verbose.txt')}
+    Start-Task {param ($Path) netsh advfirewall consec show rule name=all verbose | Out-File (Join-Path $Path 'netsh advfirewall consec show rule name=all verbose.txt')}
+    Start-Task {param ($Path) netsh advfirewall monitor show firewall rule name=all | Out-File (Join-Path $Path 'netsh advfirewall monitor show firewall rule name=all.txt')}
+    Start-Task {param ($Path) netsh advfirewall monitor show consec rule name=all | Out-File (Join-Path $Path 'netsh advfirewall monitor show consec rule name=all.txt')}
     )
+
+    $PSDefaultParameterValues.Remove('Start-Task:ArgumentList')
 
     Write-Log "Waiting for tasks to complete."
     $tasks | Receive-Task -AutoRemoveTask
@@ -4446,7 +4361,7 @@ function Collect-OutlookInfo {
             # Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
 
             Write-Log "Starting networkInfoTask."
-            $networkInfoTask = Start-Task {param ($path) Save-NetworkInfo -Path $path} -ArgumentList $NetworkDir
+            $networkInfoTask = Start-Task {param($path) Save-NetworkInfo -Path $path} -ArgumentList $NetworkDir
             # $networkInfoTask = Start-Task -Command 'Save-NetworkInfo' -Parameters @{Path = $NetworkDir}
             # Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
             # Save-NetworkInfoMT -Path (Join-Path $tempPath 'Configuration\NetworkInfo_MT') -ErrorAction SilentlyContinue
