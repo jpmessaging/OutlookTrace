@@ -1740,7 +1740,8 @@ function Run-Command {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
     try {
-        $($result = $ScriptBlock.InvokeReturnAsIs($ArgumentList)) 2>&1 | Write-Log
+        # To redirect error, call operator (&) is used, instead of $ScriptBlock.InvokeReturnAsIs().
+        $($result = & $ScriptBlock @ArgumentList) 2>&1 | Write-Log
     }
     catch {
         Write-Log "'$ScriptBlock' threw a terminating error. $_"
