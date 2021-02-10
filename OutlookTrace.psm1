@@ -709,7 +709,9 @@ function Stop-NetshTrace {
     }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
-        Write-Error "Failed to stop netsh trace ($SessionName). exit code: $LASTEXITCODE; stdout: $stdout; error: $err"
+        Write-Log "Failed to stop netsh trace ($SessionName). exit code: $LASTEXITCODE; stdout: $stdout; error: $err"
+        Write-Log "Stopping with Stop-EtwSession"
+        Stop-EtwSession -SessionName $SessionName
     }
 
     Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
