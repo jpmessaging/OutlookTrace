@@ -4566,7 +4566,7 @@ function Collect-OutlookInfo {
                     $outlookExe = $executables | Where-Object {$_.FullName -notlike '*PackageFiles*'} | Select-Object -First 1
                 }
 
-                # When Outlook is launched by TTD, it's super slow and may not die before UI appears.
+                # When Outlook is launched by TTD, it's super slow and may die before UI appears.
                 # Instead, start Outlook with "-profiles" switch and attach TTD.
                 Write-Log "Launching Outlook"
                 $targetProcess = Start-Process $outlookExe -ArgumentList "-profiles" -PassThru
@@ -4626,8 +4626,8 @@ function Collect-OutlookInfo {
             # There's a race condition here in the timing when this code runs & ExitInfo becomes available.
             # i.e. When Outlook was just closed, its "Exited" handler gets called, but at the same time, execution reaches this line of code.
             # Give some time here.
-            $maxRetry = 4
-            for ($i = 0; $i -lt $maxRetry; $i++) {
+            $maxRetry = 3
+            for ($i = 0; $i -le $maxRetry; $i++) {
                 if ($i -gt 0) {
                     Start-Sleep -Seconds 1
                 }
