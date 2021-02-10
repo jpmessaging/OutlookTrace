@@ -149,7 +149,7 @@ function Write-Log {
 
         # If ErrorRecord is provided, use it.
         if ($ErrorRecord) {
-            $Message += " ;ScriptCallStack: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
+            $Message += "; [ErrorRecord]InvocationInfo.MyCommand: $($ErrorRecord.InvocationInfo.MyCommand), Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
         }
 
         # If Open-Log is not called beforehand, just output to verbose.
@@ -1741,17 +1741,19 @@ function Run-Command {
 
     try {
         # To redirect error, call operator (&) is used, instead of $ScriptBlock.InvokeReturnAsIs().
-        $($result = & $ScriptBlock @ArgumentList) 2>&1 | Write-Log
+        $err = $($result = & $ScriptBlock @ArgumentList) 2>&1
+        foreach ($e in $err) {
+            Write-Log "'$ScriptBlock' had a non-terminating error. $e" -ErrorRecord $e
+        }
     }
     catch {
-        Write-Log "'$ScriptBlock' threw a terminating error. $_"
+        Write-Log "'$ScriptBlock' threw a terminating error. $_" -ErrorRecord $_
     }
 
     $sw.Stop()
-    Write-Log "'$ScriptBlock' took $($sw.ElapsedMilliseconds) ms."
+    Write-Log "'$ScriptBlock' took $($sw.ElapsedMilliseconds) ms. $(if ($null -eq $result) {"It returned nothing."})"
 
     if ($null -eq $result) {
-        Write-Log "It returned nothing."
         return
     }
 
