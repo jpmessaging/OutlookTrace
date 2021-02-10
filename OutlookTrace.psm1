@@ -4415,7 +4415,7 @@ function Collect-OutlookInfo {
             # Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
             # Save-NetworkInfoMT -Path (Join-Path $tempPath 'Configuration\NetworkInfo_MT') -ErrorAction SilentlyContinue
 
-            $LogonUser = Get-LogonUser -ErrorAction SilentlyContinue
+            $LogonUser = Get-LogonUser -IgnoreCache -ErrorAction SilentlyContinue
 
             Write-Log "Starting officeRegistryTask."
             $officeRegistryTask = Start-Task {param($path, $sid) Save-OfficeRegistry -Path $path -User $sid} -ArgumentList $RegistryDir, $LogonUser.SID
