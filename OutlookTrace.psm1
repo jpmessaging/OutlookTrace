@@ -3035,7 +3035,7 @@ function Start-TTD {
 
     # Form the output file name.
     $targetName = [IO.Path]::GetFileNameWithoutExtension($Executable)
-    $outPath = Join-Path $Path "$($targetName)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
+    $outPath = Join-Path $Path "$($targetName)_$(Get-Date -Format "yyyyMMdd_HHmmss").run"
 
     $stdout = Join-Path $Path 'stdout.txt'
     $stderr = Join-Path $Path 'stderr.txt'
@@ -3044,7 +3044,7 @@ function Start-TTD {
 
     $err = $($process = Invoke-Command {
         $ErrorActionPreference = 'Continue'
-        Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "`"$Executable`"" -PassThru  -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "`"$Executable`"" -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     }) 2>&1
 
     if (-not $process -or $process.HasExited) {
