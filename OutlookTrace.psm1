@@ -3004,7 +3004,14 @@ function Stop-TcoTrace {
 
 <#
 .SYNOPSIS
-Start tttracer.exe to launch a given executable.
+There are 2 modes of execution:
+1. Without OnLaunch switch
+    Start tttracer.exe to launch and trace the given executable
+    This mode starts the executable.
+
+2. With OnLaunch switch
+    Start tttracer.exe and begin monitoring the new process instance of the given executable.
+    This mode does not start the executable.
 #>
 function Start-TTD {
     [CmdletBinding()]
@@ -3014,7 +3021,8 @@ function Start-TTD {
         $Path,
         # Executable path (e.g. C:\Windows\System32\notepad.exe)
         [Parameter(Mandatory=$true)]
-        $Executable
+        $Executable,
+        [switch]$OnLaunch
     )
 
     # Check if tttracer.exe is available (Win10 RS5 and above should include it)
@@ -3033,57 +3041,62 @@ function Start-TTD {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
 
-    # Form the output file name.
-    $targetName = [IO.Path]::GetFileNameWithoutExtension($Executable)
-    $outPath = Join-Path $Path "$($targetName)_$(Get-Date -Format "yyyyMMdd_HHmmss").run"
-
     $stdout = Join-Path $Path 'stdout.txt'
     $stderr = Join-Path $Path 'stderr.txt'
 
-    Write-Log "TTD launching $Executable."
-
-    $err = $($process = Invoke-Command {
-        $ErrorActionPreference = 'Continue'
-        Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "`"$Executable`"" -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-    }) 2>&1
+    if ($OnLaunch) {
+        Write-Log "TTD monitoring $Executable."
+        # trace file name must include a wildcard ("%") for OnLaunch recording
+        $outPath = Join-Path $Path "$([IO.Path]::GetFileNameWithoutExtension($Executable))_$(Get-Date -Format "yyyyMMdd_HHmmss")_%.run"
+        $process = Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "-onLaunch `"$Executable`"", "-parent *" -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    }
+    else {
+        Write-Log "TTD launching $Executable."
+        $outPath = Join-Path $Path "$([IO.Path]::GetFileNameWithoutExtension($Executable))_$(Get-Date -Format "yyyyMMdd_HHmmss").run"
+        $process = Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "`"$Executable`"" -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    }
 
     if (-not $process -or $process.HasExited) {
-        Write-Error "tttracer.exe failed to start. ExitCode: $($process.ExitCode); Error: $err."
+        Write-Error "tttracer.exe failed to start. ExitCode: $($process.ExitCode). $(Get-Content $stderr)"
         $process.Dispose()
         return
     }
 
-    # Find out the new process instantiated by tttracer.exe. This might take a bit.
-    # The new process starts as a child process of tttracer.exe.
     $targetProcess = $null
-    $maxRetry = 3
-    foreach ($i in 1..$maxRetry) {
-        if ($newProcess = Get-WmiObject Win32_Process -Filter "Name='$targetName.exe' AND ParentProcessId='$($process.Id)'")  {
-            $targetProcess = Get-Process -Id $newProcess.ProcessId
-            break
+
+    if (-not $OnLaunch) {
+        # Find out the new process instantiated by tttracer.exe. This might take a bit.
+        # The new process starts as a child process of tttracer.exe.
+        $maxRetry = 3
+        foreach ($i in 1..$maxRetry) {
+            if ($newProcess = Get-WmiObject Win32_Process -Filter "Name='$targetName.exe' AND ParentProcessId='$($process.Id)'")  {
+                $targetProcess = Get-Process -Id $newProcess.ProcessId
+                break
+            }
+
+            Start-Sleep -Seconds $i
         }
 
-        Start-Sleep -Seconds $i
+        if (-not $targetProcess) {
+            Write-Error "Cannot find the new instance of $targetName."
+            return
+        }
+
+        Write-Log "Target process $($targetProcess.Name) (PID: $($targetProcess.Id)) has started."
+
+        # To get ExitTime etc.
+        $targetProcess.EnableRaisingEvents = $true
     }
-
-    if (-not $targetProcess) {
-        Write-Error "Cannot find the new instance of $targetName."
-        return
-    }
-
-    Write-Log "Target process $($targetProcess.Name) (PID: $($targetProcess.Id)) has started."
-
-    # To get ExitTime etc.
-    $targetProcess.EnableRaisingEvents = $true
 
     # Return a descriptor object with Dispose method.
     [PSCustomObject]@{
         TTTracerProcess = $process
         TargetProcess = $targetProcess
         OutputFile = $outPath
+        OnLaunch = $OnLaunch.IsPresent
     } | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
-        $this.TTTracerProcess.Dispose()
-        $this.TargetProcess.Dispose()
+        if ($this.TTTracerProcess) { $this.TTTracerProcess.Dispose() }
+        if ($this.TargetProcess) { $this.TargetProcess.Dispose()}
     } -PassThru
 }
 
@@ -3097,43 +3110,59 @@ function Stop-TTD {
     )
 
     $tttracerProcess = $Descriptor.TTTracerProcess
-    $targetProcess = $Descriptor.TargetProcess
-    $exitInfo = $Descriptor.ExitInfo
-
-    if (-not (Get-Process -Id $targetProcess.Id -ErrorAction SilentlyContinue)) {
-        Write-Log "Target process $($targetProcess.Name) (PID: $($targetProcess.Id)) does not exist; ExitCode: $($ttd.TargetProcess.ExitCode), ExitTime: $($ttd.TargetProcess.ExitTime.ToString('o')), ElapsedTime: $($ttd.TargetProcess.ExitTime - $ttd.TargetProcess.StartTime)"
-        return
-    }
+    $targetProcess = $Descriptor.TargetProcess # could be null
+    $onLaunch = $Descriptor.OnLaunch
 
     if (-not ($tttracer = Get-Command 'tttracer.exe' -ErrorAction SilentlyContinue)) {
         Write-Error "tttracer.exe is not available."
         return
     }
 
-    if (-not ($tttracerProcess.ID -and $targetProcess.ID)) {
+    if (-not ($tttracerProcess.ID)) {
         Write-Error "Invalid input. tttracer PID: $($tttracerProcess.ID), target process PID: $($targetProcess.ID)"
         return
     }
 
-    Write-Log "Stopping tttracer.exe. tttracer PID: $($tttracerProcess.ID), $($targetProcess.Name) PID: $($targetProcess.ID)."
+    $stopTarget = 'all'
+    if (Get-Process -Id $targetProcess.Id -ErrorAction SilentlyContinue) {
+        $stopTarget = $targetProcess.ID
+    }
+    else {
+        Write-Log "Target process $($targetProcess.Name) (PID: $($targetProcess.Id)) does not exist; ExitCode: $($targetProcess.ExitCode), ExitTime: $(if ($targetProcess.ExitTime) {$targetProcess.ExitTime.ToString('o')}), ElapsedTime: $($targetProcess.ExitTime - $targetProcess.StartTime)"
+    }
 
-    $message = & $tttracer -stop $targetProcess.ID
-    $exitCode = $LASTEXITCODE
+    $exitCode = 0
+    [string[]]$message = $null
+    $maxRetry = 3
+    for ($i = 0; $i -le $maxRetry; $i++) {
+        Write-Log "tttracer -stop $stopTarget $(if ($i) {"($i+1/$maxRetry retry)"})"
+        $message = & $tttracer -stop $stopTarget
+        $exitCode = $LASTEXITCODE
 
+        # When timeout (0x800705b4) occurs, retry
+        if ($exitCode -ne 0x800705b4) {
+            break
+        }
+    }
+
+    #  Non zero exitcode indicates an error.
+    if ($exitCode -ne 0) {
+        Write-Error $("'tttracer -stop' failed. ExitCode: 0x{0:x}" -f $exitCode)
+    }
+
+    if ($onLaunch) {
+        Write-Log "Killing tttracer (PID: $($tttracerProcess.Id)) running in OnLaunch mode."
+        $tttracerProcess.Kill()
+        $message += ";" + (& $tttracer -cleanup)
+    }
+
+    # Wait for the tttracer to exit.
     # Wait-Process writes a non-terminating error when the process has exited. Ignore this error.
     $(Wait-Process -InputObject $tttracerProcess -ErrorAction SilentlyContinue) 2>&1 | Out-Null
 
-    # Non zero exitcode indicates an error.
-    if ($exitCode -ne 0 -or -not $tttracerProcess.HasExited) {
-        Write-Error $("`"tttracer -stop`" failed. ExitCode: 0x{0:x}" -f $exitCode)
-    }
-
     [PSCustomObject]@{
         ExitCode = $exitCode  # This is the exit code of "tttracer -stop"
-        TTTracerExitCode = $tttracerProcess.ExitCode # This is the exit code of tttracer that has been attached to the target process. This may not be available.
-        TTTracerMessage = $message # message of "tttracer -stop"
-        TargetProcess = $targetProcess
-        TargetProcessExitInfo = $exitInfo
+        Message = $message # message of "tttracer -stop"
     }
 
     if ($AutoRemove) {
@@ -3199,12 +3228,17 @@ function Attach-TTD {
             TTTracerProcess = $process
             TargetProcess = $targetProcess
             OutputFile = $outPath
+            OnLaunch = $false
         } | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
-            $this.TTTracerProcess.Dispose()
-            $this.TargetProcess.Dispose()
+            if ($this.TTTracerProcess) { $this.TTTracerProcess.Dispose() }
+            if ($this.TargetProcess) { $this.TargetProcess.Dispose()}
         } -PassThru
     }
     else {
+        if ($targetProcess) {
+            $targetProcess.Dispose()
+        }
+
         $stderrContent = Get-Content $stderr
         $exitCodeHex = "0x{0:x}" -f $process.ExitCode
         Write-Error "tttracer.exe failed to attach. ExitCode: $exitCodeHex; Error: $err.`n$stderrContent"
@@ -4515,7 +4549,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'TTD') {
-            # If Outlook is already running, attach to it. Otherwise, let tttracer launch it.
+            # If Outlook is already running, attach to it. Otherwise, start TTD with OnLaunch option and ask the user to start Outlook.
             if ($outlookProcess = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue) {
                 Write-Log "TTD attaching to Outlook (PID $($outlookProcess.Id))."
                 $ttd = Attach-TTD -Path (Join-Path $tempPath 'TTD')  -ProcessID  $outlookProcess.Id -ErrorAction Stop
@@ -4535,17 +4569,19 @@ function Collect-OutlookInfo {
                     $outlookExe = $executables | Where-Object {$_.FullName -notlike '*PackageFiles*'} | Select-Object -First 1
                 }
 
-                # When Outlook is launched by TTD, it's super slow and may die before UI appears.
-                # Instead, start Outlook with "-profiles" switch and attach TTD.
-                Write-Log "Launching Outlook with -profiles switch."
-                $targetProcess = Start-Process $outlookExe -ArgumentList "-profiles" -PassThru
-                $ttd = Attach-TTD -Path (Join-Path $tempPath 'TTD') -ProcessID $targetProcess.Id -ErrorAction Stop
-                $targetProcess.Dispose()
-                Write-Host "Outlook has started (PID: $($ttd.TargetProcess.Id))." -ForegroundColor Green
+                # Start monitoring launch of Outlook
+                $ttd = Start-TTD -Path (Join-Path $tempPath 'TTD') -Executable $outlookExe.FullName -OnLaunch -ErrorAction Stop
+                Write-Host "Please start Outlook now." -ForegroundColor Green
 
-                # Write-Log "TTD launching Outlook"
-                # $ttd = Start-TTD -Path (Join-Path $tempPath 'TTD') -Executable $outlookExe.FullName -ErrorAction Stop
-                # Write-Host "Outlook has started (PID: $($ttd.TargetProcess.Id)) . It might take some time for Outlook to appear." -ForegroundColor Green
+                while (-not ($outlookProcess = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue)) {
+                    Start-Sleep -Seconds 3
+                }
+
+                Write-Log "Outlook.exe (PID: $($outlookProcess.Id)) detected"
+                $outlookProcess.EnableRaisingEvents = $true
+                $ttd.TargetProcess = $outlookProcess
+
+                Write-Host "Outlook has started (PID: $($ttd.TargetProcess.Id)). It might take some time for Outlook to appear." -ForegroundColor Green
             }
 
             $ttdStarted = $true
@@ -4566,7 +4602,9 @@ function Collect-OutlookInfo {
         Write-Progress -Activity 'Stopping traces' -Status "Please wait." -PercentComplete -1
 
         if ($ttdStarted) {
-            $(Stop-TTD $ttd | Out-Null) 2>&1 | Write-Log
+            Write-Progress -Activity 'Stopping TTD trace' -Status "Please wait." -PercentComplete -1
+            $($stopResult = Stop-TTD $ttd) 2>&1 | Write-Log
+            Write-Log "Stop-TTD Message: $($stopResult.Message)"
 
             # Outlook might be holding the TTD file.
             # Tell the user to stop Outlook and wait for the process to shutdown.
@@ -4588,8 +4626,9 @@ function Collect-OutlookInfo {
                 }
             }
 
-            Write-Log "Outlook ExitCode: $($ttd.TargetProcess.ExitCode), ExitTime: $($ttd.TargetProcess.ExitTime.ToString('o')), ElapsedTime: $($ttd.TargetProcess.ExitTime - $ttd.TargetProcess.StartTime)"
+            Write-Log "Outlook ExitCode: $($ttd.TargetProcess.ExitCode), ExitTime: $(if ($ttd.TargetProcess.ExitTime) {$ttd.TargetProcess.ExitTime.ToString('o')}), ElapsedTime: $($ttd.TargetProcess.ExitTime - $ttd.TargetProcess.StartTime)"
             $ttd.Dispose()
+            Write-Progress -Activity 'Stopping TTD trace' -Status "Done" -Completed
         }
 
         if ($netshTraceStarted) {
