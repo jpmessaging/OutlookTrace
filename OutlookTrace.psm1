@@ -1549,7 +1549,7 @@ function Save-OfficeRegistry {
         "HKCU\Software\Wow6432Node\Microsoft\Office"
         "HKCU\Software\Wow6432Node\Policies\Microsoft\Office"
         "HKLM\Software\Microsoft\Office"
-        "HKLM\Software\PoliciesMicrosoft\Office"
+        "HKLM\Software\Policies\Microsoft\Office"
         "HKLM\Software\WOW6432Node\Microsoft\Office"
         "HKLM\Software\WOW6432Node\Policies\Microsoft\Office")
 
@@ -4107,7 +4107,7 @@ function ConvertTo-CLSID {
         }
 
         if ($CLSID -eq [Guid]::Empty) {
-            Write-Error -Message $("CLSIDFromProgID for `"$ProgID`" failed with 0x{0:x}. Also, it was found in the ClickToRun & user registry" -f $hr)
+            Write-Error -Message $("CLSIDFromProgID for `"$ProgID`" failed with 0x{0:x}. Also, it was not found in the ClickToRun & user registry" -f $hr)
             return
         }
     }
