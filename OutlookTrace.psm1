@@ -4188,9 +4188,6 @@ function Get-OutlookAddin {
         if ($clsid) {
             $props['CLSID'] = $clsid.String
         }
-        else {
-            continue
-        }
 
         # ToDo: text might get garbled in DBCS environment.
         $props['Description'] = $addin.GetValue('Description')
