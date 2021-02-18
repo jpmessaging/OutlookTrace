@@ -4172,8 +4172,18 @@ function Get-OutlookAddin {
      foreach ($addin in $addinKeys) {
         $props = @{}
         $props['Path'] = $addin.Name
-
         $props['ProgID'] = $addin.PSChildName
+
+        # First check LoadBehavior and if it's missing, ignore this entry
+        $loadBehaviorValue = $addin.GetValue('LoadBehavior')
+
+        if ($loadBehaviorValue) {
+            $props['LoadBehavior'] = $LoadBehavior[$loadBehaviorValue]
+        }
+        else {
+            Write-Log "Skipping $($props['ProgID']) because its LoadBehavior is null."
+            continue
+        }
 
         if ($cache.ContainsKey($props['ProgID'])) {
             Write-Log "Skipping $($props['ProgID']) because it's already found."
@@ -4183,34 +4193,40 @@ function Get-OutlookAddin {
             $cache.Add($props['ProgID'], $null)
         }
 
+        # Try to get CLSID.
         $($clsid = ConvertTo-CLSID $props['ProgID'] -User $User -ErrorAction Continue) 2>&1 | Write-Log
 
         if ($clsid) {
             $props['CLSID'] = $clsid.String
+
+            # Check InprocServer32, LocalServer32, RemoteServer32
+            foreach ($comType in @('InprocServer32', 'LocalServer32', 'RemoteServer32')) {
+                $comSpec = Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
+
+                if (-not $comSpec) {
+                    $comSpec = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
+                }
+
+                if ($comSpec) {
+                    $props['Location'] = $comSpec.'(default)'
+                    $props['ThreadingModel'] = $comSpec.ThreadingModel
+                    break
+                }
+            }
+        }
+        elseif ($manifest = $addin.GetValue('Manifest')) {
+            # A managed addin does not have CLSID. Check "Manifest" instead.
+            $props['Location'] = $manifest
+            Write-Log "Manifest is found. This is a managed addin."
+        }
+        else {
+            # If both CLSID & Manifest are missing, ignore this entry.
+            continue
         }
 
         # ToDo: text might get garbled in DBCS environment.
         $props['Description'] = $addin.GetValue('Description')
         $props['FriendlyName'] = $addin.GetValue('FriendlyName')
-        $loadBehaviorValue = $addin.GetValue('LoadBehavior')
-
-        if (-not $loadBehaviorValue) {
-            Write-Log "Skipping $($props['ProgID']) because its LoadBehavior is null."
-            continue
-        }
-        else {
-            $props['LoadBehavior'] = $LoadBehavior[$loadBehaviorValue]
-        }
-
-        $inproc32 = Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\$($props['CLSID'])\InprocServer32" -ErrorAction SilentlyContinue
-        if (-not $inproc32) {
-            $inproc32 = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\$($props['CLSID'])\InprocServer32" -ErrorAction SilentlyContinue
-        }
-
-        if ($inproc32) {
-            $props['DLL'] = $inproc32.'(default)'
-            $props['ThreadingModel'] = $inproc32.ThreadingModel
-        }
 
         [PSCustomObject]$props
      }
