@@ -340,7 +340,7 @@ function Start-Task {
     [PSCustomObject]@{
         AsyncResult = $ar
         PowerShell = $ps
-        # These are diagnostic purpose
+        # These are for diagnostic purpose
         ScriptBlock = $ScriptBlock
         ArgumentList = $ArgumentList
     }
