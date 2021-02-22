@@ -2162,6 +2162,43 @@ function Get-OutlookProfile {
     }
 }
 
+
+<#
+.SYNOPSIS
+Helper function to get the locations of cached Autodiscover XML files.
+#>
+function Get-CachedAutodiscoverLocation {
+    [CmdletBinding()]
+    param(
+        $User
+    )
+
+    # Check %LOCALAPPDATA%\Microsoft\Outlook and path specified by "ForcePSTPath" registry value.
+
+    # LOCALAPPDATA
+    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
+        Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
+    }
+
+    # ForcePSTPath if any
+    $userRegRoot = Get-UserRegistryRoot -User $User
+    $officeInfo = Get-OfficeInfo -ErrorAction Stop
+    $ver = ($officeInfo.Version.Split('.')[0] -as [int]).ToString('00.0')
+
+    foreach ($keyPath in @("SOFTWARE\Policies\Microsoft\Office\$ver\Outlook", "SOFTWARE\Microsoft\Office\$ver\Outlook")) {
+        $forcePstPath = Get-ItemProperty $(Join-Path $userRegRoot $keyPath) -Name 'ForcePSTPath' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'ForcePSTPath'
+        if ($forcePstPath) {
+            [System.Environment]::ExpandEnvironmentVariables($forcePstPath)
+            # If ForcePSTPath is found in the policicy key, no need to check the rest.
+            break
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Save cached Autodiscover XML files
+#>
 function Save-CachedAutodiscover {
     [CmdletBinding()]
     param(
@@ -2176,31 +2213,8 @@ function Save-CachedAutodiscover {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
 
-    # Check %LOCALAPPDATA%\Microsoft\Outlook and path specified by "ForcePSTPath" registry value.
-    $locations = @(
-        # LOCALAPPDATA
-        if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
-            Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
-        }
-
-        # ForcePSTPath if any
-        $userRegRoot = Get-UserRegistryRoot -User $User
-        $officeInfo = Get-OfficeInfo -ErrorAction Stop
-        $ver = ($officeInfo.Version.Split('.')[0] -as [int]).ToString('00.0')
-
-        foreach ($keyPath in @("SOFTWARE\Policies\Microsoft\Office\$ver\Outlook", "SOFTWARE\Microsoft\Office\$ver\Outlook")) {
-            $forcePstPath = Get-ItemProperty $(Join-Path $userRegRoot $keyPath) -Name 'ForcePSTPath' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'ForcePSTPath'
-            if ($forcePstPath) {
-                [System.Environment]::ExpandEnvironmentVariables($forcePstPath)
-                # If ForcePSTPath is found in the policicy key, no need to check the rest.
-                break
-            }
-        }
-    )
-
-    Write-Log "Searching $locations"
-
-    foreach ($cachePath in $locations) {
+    foreach ($cachePath in @(Get-CachedAutodiscoverLocation)) {
+        Write-Log "Searching $cachePath"
         # Get Autodiscover XML files and copy them to Path
         try {
             Get-ChildItem $cachePath -Filter '*Autod*.xml' -Force -Recurse | Copy-Item -Destination $Path
@@ -2229,6 +2243,10 @@ function Save-CachedAutodiscover {
     }
 }
 
+<#
+.SYNOPSIS
+Remove cached Autodiscover XML files
+#>
 function Remove-CachedAutodiscover {
     [CmdletBinding()]
     param(
@@ -2236,25 +2254,7 @@ function Remove-CachedAutodiscover {
         [string]$User
     )
 
-     # Check %LOCALAPPDATA%\Microsoft\Outlook
-    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
-        $cachePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
-    }
-    else {
-        return
-    }
-
-    if (-not (Test-Path $cachePath)) {
-        Write-Log "$cachePath is not found."
-        return
-    }
-
-    Write-Log "Searching $cachePath."
-
-    # Remove Autodiscover XML files
-    Get-ChildItem $cachePath -Filter '*Autod*.xml' -Force -Recurse | ForEach-Object {
-        Remove-Item $_.FullName -Force
-    }
+    Get-CachedAutodiscoverLocation | Get-ChildItem -Filter '*Autod*.xml' -Force -Recurse | ForEach-Object { Remove-Item $_.FullName -Force }
 }
 
 function Start-LdapTrace {
