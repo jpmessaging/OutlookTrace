@@ -2172,32 +2172,43 @@ function Save-CachedAutodiscover {
         [string]$User
     )
 
-    # Check %LOCALAPPDATA%\Microsoft\Outlook
-    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
-        $cachePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
-    }
-    else {
-        return
-    }
-
-    if (-not (Test-Path $cachePath)) {
-        Write-Log "$cachePath is not found."
-        return
-    }
-
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
 
-    Write-Log "Searching $cachePath."
+    # Check %LOCALAPPDATA%\Microsoft\Outlook and path specified by "ForcePSTPath" registry value.
+    $locations = @(
+        # LOCALAPPDATA
+        if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
+            Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
+        }
 
-    # Get Autodiscover XML files and copy them to Path
-    try {
-        Get-ChildItem $cachePath -Filter '*Autod*.xml' -Force -Recurse | Copy-Item -Destination $Path
-    }
-    catch {
-        # Just in case Copy-Item throws a terminating error.
-        Write-Error -ErrorRecord $_
+        # ForcePSTPath if any
+        $userRegRoot = Get-UserRegistryRoot -User $User
+        $officeInfo = Get-OfficeInfo -ErrorAction Stop
+        $ver = ($officeInfo.Version.Split('.')[0] -as [int]).ToString('00.0')
+
+        foreach ($keyPath in @("SOFTWARE\Policies\Microsoft\Office\$ver\Outlook", "SOFTWARE\Microsoft\Office\$ver\Outlook")) {
+            $forcePstPath = Get-ItemProperty $(Join-Path $userRegRoot $keyPath) -Name 'ForcePSTPath' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'ForcePSTPath'
+            if ($forcePstPath) {
+                [System.Environment]::ExpandEnvironmentVariables($forcePstPath)
+                # If ForcePSTPath is found in the policicy key, no need to check the rest.
+                break
+            }
+        }
+    )
+
+    Write-Log "Searching $locations"
+
+    foreach ($cachePath in $locations) {
+        # Get Autodiscover XML files and copy them to Path
+        try {
+            Get-ChildItem $cachePath -Filter '*Autod*.xml' -Force -Recurse | Copy-Item -Destination $Path
+        }
+        catch {
+            # Just in case Copy-Item throws a terminating error.
+            Write-Error -ErrorRecord $_
+        }
     }
 
     # Remove Hidden attribute
