@@ -2177,7 +2177,10 @@ function Get-CachedAutodiscoverLocation {
 
     # LOCALAPPDATA
     if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
-        Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
+        [PSCustomObject]@{
+            Name = 'UnderLocalAppData'
+            Path = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
+        }
     }
 
     # ForcePSTPath if any
@@ -2188,7 +2191,11 @@ function Get-CachedAutodiscoverLocation {
     foreach ($keyPath in @("SOFTWARE\Policies\Microsoft\Office\$ver\Outlook", "SOFTWARE\Microsoft\Office\$ver\Outlook")) {
         $forcePstPath = Get-ItemProperty $(Join-Path $userRegRoot $keyPath) -Name 'ForcePSTPath' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'ForcePSTPath'
         if ($forcePstPath) {
-            [System.Environment]::ExpandEnvironmentVariables($forcePstPath)
+            [PSCustomObject]@{
+                Name = 'ForcePSTPath'
+                Path = [System.Environment]::ExpandEnvironmentVariables($forcePstPath)
+            }
+
             # If ForcePSTPath is found in the policicy key, no need to check the rest.
             break
         }
@@ -2214,10 +2221,11 @@ function Save-CachedAutodiscover {
     }
 
     foreach ($cachePath in @(Get-CachedAutodiscoverLocation)) {
-        Write-Log "Searching $cachePath"
+        Write-Log "Searching $($cachePath.Name) $($cachePath.Path)"
         # Get Autodiscover XML files and copy them to Path
         try {
-            Get-ChildItem $cachePath -Filter '*Autod*.xml' -Force -Recurse | Copy-Item -Destination $Path
+            # Use recurse only for the path under LOCALAPPDATA.
+            Get-ChildItem $cachePath.Path -Filter '*Autod*.xml' -Force -Recurse:$($cachePath.Name -eq 'UnderLocalAppData') | Copy-Item -Destination $Path
         }
         catch {
             # Just in case Copy-Item throws a terminating error.
@@ -2254,7 +2262,7 @@ function Remove-CachedAutodiscover {
         [string]$User
     )
 
-    Get-CachedAutodiscoverLocation | Get-ChildItem -Filter '*Autod*.xml' -Force -Recurse | ForEach-Object { Remove-Item $_.FullName -Force }
+    Get-CachedAutodiscoverLocation | Get-ChildItem -Filter '*Autod*.xml' -Force -Recurse:$($_.Name -eq 'UnderLocalAppData') | ForEach-Object { Remove-Item $_.FullName -Force }
 }
 
 function Start-LdapTrace {
