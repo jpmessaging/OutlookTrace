@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-02-17'
+$Version = 'v2021-02-27'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -255,7 +255,7 @@ function Open-TaskRunspace {
         $Script:runspacePool = [runspacefactory]::CreateRunspacePool(1, $MaxRunspaces, $initialSessionState, $Host)
         $Script:runspacePool.Open()
 
-        Write-Log "RunspacePool ($($Script:runspacePool.InstanceId.ToString())) is Opened."
+        Write-Log "RunspacePool ($($Script:runspacePool.InstanceId.ToString())) is opened."
     }
 }
 
@@ -266,7 +266,7 @@ function Close-TaskRunspace {
     $id = $Script:runspacePool.InstanceId.ToString()
     $Script:runspacePool.Close()
     $Script:runspacePool = $null
-    Write-Log "RunspacePool ($id) is Closed."
+    Write-Log "RunspacePool ($id) is closed."
 }
 
 <#
@@ -4440,27 +4440,17 @@ function Collect-OutlookInfo {
             Write-Log "Starting officeModuleInfoTask."
             $cts = New-Object System.Threading.CancellationTokenSource
             $officeModuleInfoTask = Start-Task {param($path, $token) Save-OfficeModuleInfo -Path $path -CancellationToken $token} -ArgumentList $OfficeDir, $cts.Token
-            # $officeModuleInfoTask = Start-Task -Command 'Save-OfficeModuleInfo' -Parameters @{Path = $OfficeDir; CancellationToken = $cts.Token}
-            # $Filters = 'outlook\.exe', 'umoutlookaddin\.dll', 'mso\.dll', 'mso\d\d.+\.dll', 'olmapi32\.dll', 'emsmdb32\.dll', 'wwlib\.dll'
-            # Save-OfficeModuleInfo -Path (Join-Path $tempPath 'Configuration') -ErrorAction SilentlyContinue -Timeout 00:00:30
 
             Write-Log "Starting networkInfoTask."
             $networkInfoTask = Start-Task {param($path) Save-NetworkInfo -Path $path} -ArgumentList $NetworkDir
-            # $networkInfoTask = Start-Task -Command 'Save-NetworkInfo' -Parameters @{Path = $NetworkDir}
-            # Save-NetworkInfo -Path (Join-Path $tempPath 'Configuration\NetworkInfo') -ErrorAction SilentlyContinue
-            # Save-NetworkInfoMT -Path (Join-Path $tempPath 'Configuration\NetworkInfo_MT') -ErrorAction SilentlyContinue
 
             $LogonUser = Get-LogonUser -IgnoreCache -ErrorAction SilentlyContinue
 
             Write-Log "Starting officeRegistryTask."
             $officeRegistryTask = Start-Task {param($path, $sid) Save-OfficeRegistry -Path $path -User $sid} -ArgumentList $RegistryDir, $LogonUser.SID
-            # $officeRegistryTask = Start-Task -Command 'Save-OfficeRegistry' -Parameters @{Path = $RegistryDir; User = $LogonUser.SID}
-            # Save-OfficeRegistry -Path (Join-Path $tempPath 'Configuration') -User $LogonUser.SID -ErrorAction SilentlyContinue
 
             Write-Log "Starting oSConfigurationTask."
             $oSConfigurationTask = Start-Task {param($path) Save-OSConfiguration -Path $path} -ArgumentList $OSDir
-            # $oSConfigurationTask = Start-Task -Command 'Save-OSConfiguration' -Parameters @{Path = $OSDir}
-            # Save-OSConfiguration -Path (Join-Path $tempPath 'Configuration')
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
             Run-Command {Get-OfficeInfo} -Path $OfficeDir
@@ -4468,22 +4458,14 @@ function Collect-OutlookInfo {
             Run-Command {param($LogonUser) Get-OutlookAddin -User $LogonUser.SID} -ArgumentList $LogonUser -Path $OfficeDir
             Run-Command {Get-ClickToRunConfiguration} -Path $OfficeDir
 
-            # $(Get-OfficeInfo | Export-Clixml -Path (Join-Path $OfficeDir 'OfficeInfo.xml')) 2>&1 | Write-Log
-            # $(Get-OutlookProfile -User $LogonUser.SID | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookProfile.xml')) 2>&1 | Write-Log
-            # $(Get-OutlookAddin -User $LogonUser.SID | Export-Clixml -Path (Join-Path $OfficeDir 'OutlookAddin.xml')) 2>&1 | Write-Log
-            # $(if ($o = Get-ClickToRunConfiguration) {$o | Export-Clixml -Path (Join-Path $OfficeDir 'ClickToRunConfiguration.xml')}) 2>&1 | Write-Log
-
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
             Run-Command {param($LogonUser, $OfficeDir) Save-CachedAutodiscover -User $LogonUser.Name -Path $(Join-Path $OfficeDir 'Cached AutoDiscover')} -ArgumentList $LogonUser, $OfficeDir
-            #$(Save-CachedAutodiscover -User $LogonUser.Name -Path (Join-Path $OfficeDir 'Cached AutoDiscover')) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
             Run-Command {param($LogonUser, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $($LogonUser.SID)} -ArgumentList $LogonUser, $MSIPCDir
-            #$(Save-MSIPC -Path $MSIPCDir -User $LogonUser.SID) 2>&1 | Write-Log
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
             Run-Command {param($OSDir) Save-Process -Path $OSDir} -ArgumentList $OSDir
-            #$(Save-Process -Path $OSDir) 2>&1 | Write-Log
 
             if ($LogonUser) {
                 $LogonUser | Export-Clixml -Path (Join-Path $OSDir 'LogonUser.xml')
@@ -4495,6 +4477,7 @@ function Collect-OutlookInfo {
                 param($OSDir)
                 while ($true) {
                     if (Get-Process -Name 'Outlook') {
+                        Write-Log "outlookMonitorTask found Outlook's process."
                         Save-Process -Path $OSDir
                         return
                     }
@@ -4786,7 +4769,6 @@ function Collect-OutlookInfo {
             # Save process list again after traces
             if ($Component.Count -gt 1) {
                 Run-Command {param($OSDir) Save-Process -Path $OSDir} -ArgumentList $OSDir
-                # $(Save-Process -Path $OSDir) 2>&1 | Write-Log
             }
         }
 
