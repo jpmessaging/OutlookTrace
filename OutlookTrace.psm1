@@ -432,7 +432,7 @@ function Receive-Task {
 function Remove-Task {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
         $Task
     )
 
@@ -451,7 +451,7 @@ function Remove-Task {
 
 function Stop-Task {
     param (
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
         $Task
     )
 
@@ -466,7 +466,7 @@ function Stop-Task {
 function Start-WamTrace {
     [CmdletBinding()]
     param(
-        [parameter(Mandatory = $true)]
+        [parameter(Mandatory=$true)]
         $Path,
         $FileName = 'wam.etl',
         $SessionName = 'WamTrace'
@@ -4489,6 +4489,21 @@ function Collect-OutlookInfo {
                 $LogonUser | Export-Clixml -Path (Join-Path $OSDir 'LogonUser.xml')
             }
 
+            # The user might start & stop Outlook during tracing and in this case. In order to capture Outlook's instance, run a task to check Outlook.exe periodically until it finds an instance.
+            Write-Log "Starting outlookMonitorTask."
+            $outlookMonitorTask = Start-Task {
+                param($OSDir)
+                while ($true) {
+                    if (Get-Process -Name 'Outlook') {
+                        Save-Process -Path $OSDir
+                        return
+                    }
+                    else {
+                        Start-Sleep -Seconds 3
+                    }
+                }
+            } -ArgumentList $OSDir
+
             Write-Progress -Activity "Saving configuration" -Status "Done" -Completed
         }
 
@@ -4761,6 +4776,11 @@ function Collect-OutlookInfo {
                 Write-Progress -Activity 'Saving MSInfo32' -Status 'Please wait.' -PercentComplete -1
                 $($msinfo32Task | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
                 Write-Progress -Activity 'Saving MSInfo32' -Status 'Please wait.' -Completed
+            }
+
+            if ($outlookMonitorTask) {
+                # This task just tries to save Outlook process's info. No need to wait or receive.
+                $(Remove-Task $outlookMonitorTask) 2>&1 | Write-Log
             }
 
             # Save process list again after traces
