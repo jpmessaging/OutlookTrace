@@ -4476,9 +4476,10 @@ function Collect-OutlookInfo {
             $outlookMonitorTask = Start-Task {
                 param($OSDir)
                 while ($true) {
-                    if (Get-Process -Name 'Outlook') {
-                        Write-Log "outlookMonitorTask found Outlook's process."
+                    if ($p = Get-Process -Name 'Outlook') {
+                        Write-Log "outlookMonitorTask found Outlook's process (PID: $($p.Id))"
                         Save-Process -Path $OSDir
+                        $p.Dispose()
                         return
                     }
                     else {
