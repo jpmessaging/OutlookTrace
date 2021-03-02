@@ -1,7 +1,7 @@
 ﻿## 概要
 OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
-[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2021-02-27/OutlookTrace.psm1)
+[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2021-03-02/OutlookTrace.psm1)
 
 ## 利用方法
 
