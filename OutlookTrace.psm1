@@ -225,12 +225,14 @@ function Open-TaskRunspace {
         # Note: I just want to call "ImportPSModule". It works, but emits "WARNING: The names of some imported commands ...".
         # Just to avoid this, I'm manually adding each command.
         #   $initialSessionState.ImportPSModule($MyInvocation.MyCommand.Module.Path)
-        Get-Command -Module $MyInvocation.MyCommand.Module | ForEach-Object {
-            $initialSessionState.Commands.Add($(
-                New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($_.Name, $_.ScriptBlock)
-            ))
+        if ($MyInvocation.MyCommand.Module) {
+            Get-Command -Module $MyInvocation.MyCommand.Module | ForEach-Object {
+                $initialSessionState.Commands.Add($(
+                    New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($_.Name, $_.ScriptBlock)
+                ))
+            }
         }
-
+        
         # Import extra modules.
         if ($Modules) {
             $initialSessionState.ImportPSModule($Modules)
@@ -2220,7 +2222,7 @@ function Save-CachedAutodiscover {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
 
-    foreach ($cachePath in @(Get-CachedAutodiscoverLocation)) {
+    foreach ($cachePath in @(Get-CachedAutodiscoverLocation -User $User)) {
         Write-Log "Searching $($cachePath.Name) $($cachePath.Path)"
         # Get Autodiscover XML files and copy them to Path
         try {
@@ -4807,4 +4809,4 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
     $PSDefaultParameterValues.Add("Out-File:Encoding", 'utf8')
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Collect-OutlookInfo
+#Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Collect-OutlookInfo
