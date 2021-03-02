@@ -232,7 +232,7 @@ function Open-TaskRunspace {
                 ))
             }
         }
-        
+
         # Import extra modules.
         if ($Modules) {
             $initialSessionState.ImportPSModule($Modules)
@@ -4393,8 +4393,6 @@ function Collect-OutlookInfo {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
-    Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
-
     # Create a temporary folder to store data.
     $Path = Resolve-Path $Path
     $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
@@ -4405,12 +4403,13 @@ function Collect-OutlookInfo {
     Write-Log "Script Version: $Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString()))"
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
+    Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 
     $sb = New-Object System.Text.StringBuilder
     foreach ($paramName in $PSBoundParameters.Keys) {
         $var = Get-Variable $paramName -ErrorAction SilentlyContinue
         if ($var) {
-            $sb.Append("$($var.Name):$($var.Value); ") | Out-Null
+            $sb.Append("$($var.Name):$($var.Value -join ', '); ") | Out-Null
         }
     }
     Write-Log "Parameters $($sb.ToString())"
