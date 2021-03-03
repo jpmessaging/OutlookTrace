@@ -1519,9 +1519,10 @@ function Get-UserShellFolder {
         return
     }
 
-    $shellFolders = Get-ItemProperty $(Join-Path $userRegRoot "SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
-    $folderPath = $shellFolders.$ShellFolderName
-
+    # Do not use Get-ItemProperty here because it'd expand environment variable.
+    $shellFolders = Get-Item $(Join-Path $userRegRoot "SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
+    $folderPath = $shellFolders.GetValue($ShellFolderName, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    $shellFolders.Dispose()
     if (-not $folderPath) {
         return
     }
@@ -2226,8 +2227,10 @@ function Save-CachedAutodiscover {
         Write-Log "Searching $($cachePath.Name) $($cachePath.Path)"
         # Get Autodiscover XML files and copy them to Path
         try {
-            # Use recurse only for the path under LOCALAPPDATA.
-            Get-ChildItem $cachePath.Path -Filter '*Autod*.xml' -Force -Recurse:$($cachePath.Name -eq 'UnderLocalAppData') | Copy-Item -Destination $Path
+            if (Test-Path $cachePath.Path) {
+                # Use recurse only for the path under LOCALAPPDATA.
+                Get-ChildItem $cachePath.Path -Filter '*Autod*.xml' -Force -Recurse:$($cachePath.Name -eq 'UnderLocalAppData') | Copy-Item -Destination $Path
+            }
         }
         catch {
             # Just in case Copy-Item throws a terminating error.
@@ -4460,7 +4463,7 @@ function Collect-OutlookInfo {
             Run-Command {Get-ClickToRunConfiguration} -Path $OfficeDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
-            Run-Command {param($LogonUser, $OfficeDir) Save-CachedAutodiscover -User $LogonUser.Name -Path $(Join-Path $OfficeDir 'Cached AutoDiscover')} -ArgumentList $LogonUser, $OfficeDir
+            Run-Command {param($LogonUser, $OfficeDir) Save-CachedAutodiscover -User $LogonUser.SID -Path $(Join-Path $OfficeDir 'Cached AutoDiscover')} -ArgumentList $LogonUser, $OfficeDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
             Run-Command {param($LogonUser, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $($LogonUser.SID)} -ArgumentList $LogonUser, $MSIPCDir
