@@ -2267,7 +2267,9 @@ function Remove-CachedAutodiscover {
         [string]$User
     )
 
-    Get-CachedAutodiscoverLocation | Get-ChildItem -Filter '*Autod*.xml' -Force -Recurse:$($_.Name -eq 'UnderLocalAppData') | ForEach-Object { Remove-Item $_.FullName -Force }
+    Get-CachedAutodiscoverLocation | ForEach-Object {
+        Get-ChildItem -LiteralPath $_.Path -Filter '*Autod*.xml' -Force -Recurse:$($_.Name -eq 'UnderLocalAppData') | ForEach-Object { Remove-Item $_.FullName -Force }
+    }
 }
 
 function Start-LdapTrace {
