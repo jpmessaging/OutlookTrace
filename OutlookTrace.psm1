@@ -218,6 +218,9 @@ function Open-TaskRunspace {
     )
 
     if (-not $Script:runspacePool) {
+        # MaxRunspaces must be greater than or equal to 2. Otherwise, deadlock can occur when waiting a task.
+        $MaxRunspaces = [Math]::Max(2, $MaxRunspaces)
+
         Write-Log "Setting up a Runspace with an initialSessionState. MaxRunspaces: $MaxRunspaces."
         $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
 
@@ -361,7 +364,7 @@ function Wait-Task {
         $Task,
         # By default, it waits indefinitely
         # TimeSpan that represents -1 milliseconds is to wait indefinitely.
-        [TimeSpan]$Timeout = [TimeSpan]::FromMilliseconds(-1)
+        [TimeSpan]$Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
     )
 
     process {
@@ -395,6 +398,12 @@ function Receive-Task {
 
             try {
                 $ar.AsyncWaitHandle.WaitOne() | Out-Null
+                # To support Ctrl+C, wake up once in while.
+                while ($true) {
+                    if ($ar.AsyncWaitHandle.WaitOne(2000)) {
+                        break
+                    }
+                }
                 $ps.EndInvoke($ar)
             }
             catch {
