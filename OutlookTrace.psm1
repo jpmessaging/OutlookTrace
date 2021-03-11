@@ -208,6 +208,7 @@ function Open-TaskRunspace {
     [CmdletBinding()]
     param(
         # Maximum number of runspaces that pool creates
+        [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxRunspaces = $env:NUMBER_OF_PROCESSORS,
         # PowerShell modules to import to InitialSessionState.
         [string[]]$Modules,
@@ -218,9 +219,6 @@ function Open-TaskRunspace {
     )
 
     if (-not $Script:runspacePool) {
-        # MaxRunspaces must be greater than or equal to 2. Otherwise, deadlock can occur when waiting a task.
-        $MaxRunspaces = [Math]::Max(2, $MaxRunspaces)
-
         Write-Log "Setting up a Runspace with an initialSessionState. MaxRunspaces: $MaxRunspaces."
         $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
 
@@ -4428,8 +4426,12 @@ function Collect-OutlookInfo {
     Write-Log "Parameters $($sb.ToString())"
 
     # To use Start-Task, make sure to open runspaces first and close it when finished.
+    # MaxRunspaces should be greater than or equal to 2. If it's 1, some tasks may never finish.
+    # Here's why: there's a task "outlookMonitorTask", which keeps (mostly) sleeping. But it occupies a runspace from the pool.
+    # If there is only one runspace is available in the pool, other tasks that started after outlookMonitorTask never get a chance to run.
+
     # Open-TaskRunspace -Variables (Get-Variable 'logWriter')
-    Open-TaskRunspace -IncludeScriptVariables
+    Open-TaskRunspace -IncludeScriptVariables -MaxRunspaces ([int]$env:NUMBER_OF_PROCESSORS + 1)
 
     Write-Log "Starting traces"
     try {
@@ -4726,8 +4728,13 @@ function Collect-OutlookInfo {
 
         Write-Progress -Activity 'Stopping traces' -Status "Please wait." -Completed
 
-        # Save the event logs after tracing is done and wait for the tasks started earlier.
+        # Wait for the tasks started earlier and save the event logs
         if ($Component -contains 'Configuration') {
+            if ($outlookMonitorTask) {
+                # This task just tries to save Outlook process's info. No need to wait or receive.
+                $(Remove-Task $outlookMonitorTask) 2>&1 | Write-Log
+            }
+
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
@@ -4774,11 +4781,6 @@ function Collect-OutlookInfo {
                 Write-Progress -Activity 'Saving MSInfo32' -Status 'Please wait.' -PercentComplete -1
                 $($msinfo32Task | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
                 Write-Progress -Activity 'Saving MSInfo32' -Status 'Please wait.' -Completed
-            }
-
-            if ($outlookMonitorTask) {
-                # This task just tries to save Outlook process's info. No need to wait or receive.
-                $(Remove-Task $outlookMonitorTask) 2>&1 | Write-Log
             }
 
             # Save process list again after traces
