@@ -208,7 +208,7 @@ function Open-TaskRunspace {
     [CmdletBinding()]
     param(
         # Maximum number of runspaces that pool creates
-        $MaxRunspaces = $env:NUMBER_OF_PROCESSORS,
+        [int]$MaxRunspaces = $env:NUMBER_OF_PROCESSORS,
         # PowerShell modules to import to InitialSessionState.
         [string[]]$Modules,
         # Variable to import to InitialSessionState.
@@ -397,7 +397,6 @@ function Receive-Task {
             [IAsyncResult]$ar = $t.AsyncResult
 
             try {
-                $ar.AsyncWaitHandle.WaitOne() | Out-Null
                 # To support Ctrl+C, wake up once in while.
                 while ($true) {
                     if ($ar.AsyncWaitHandle.WaitOne(2000)) {
