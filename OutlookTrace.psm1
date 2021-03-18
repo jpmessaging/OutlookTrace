@@ -115,7 +115,8 @@ function Open-Log {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true)]
-        [string]$Path
+        [string]$Path,
+        [switch]$AutoFlush
     )
 
     if ($Script:logWriter) {
@@ -125,6 +126,9 @@ function Open-Log {
     # Open a file & add header
     try {
         [IO.StreamWriter]$Script:logWriter = [IO.File]::AppendText($Path)
+        if ($AutoFlush) {
+            $Script:logWriter.AutoFlush = $true
+        }
         $Script:logWriter.WriteLine("date-time,thread_relative_delta(ms),thread,function,info")
     }
     catch {
@@ -4358,19 +4362,39 @@ function Save-Process {
     } | Export-Clixml -Path (Join-Path $Path "Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
 }
 
+<#
+.SYNOPSIS
+    Collect Microsoft Office Outlook related configuration & traces
+.DESCRIPTION
+    This will collect different kinds of traces & log files depending on the value specified in the "Component" parameter.
+.EXAMPLE
+    PS C:\> Collect-OutlookInfo -Path C:\temp -Component Configuration, Netsh, Outlook
+    This will collect configuration data, Netsh trace, and Outlook ETW trace.
+.LINK
+    https://github.com/jpmessaging/OutlookTrace
+
+#>
 function Collect-OutlookInfo {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param (
         [Parameter(Mandatory=$true)]
+        # Folder to place collected data
         $Path,
         [Parameter(Mandatory=$true)]
         [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'WFP', 'TTD')]
+        # What to collect
         [array]$Component,
         [ValidateSet('None', 'Mini', 'Full')]
+        # This controls the level of netsh trace report
         $NetshReportMode = 'Mini',
+        # Number of process dumps to collect when "Dump" is specified in Component parameter
         [int]$DumpCount = 3,
+        # Interval seconds to wait between each dump files
         [int]$DumpIntervalSeconds = 60,
-        [switch]$SkipZip
+        # Skip generating the final ZIP file
+        [switch]$SkipZip,
+        # AutoFlush log file
+        [switch]$AutoFlush
     )
 
     # Explicitly check admin rights
@@ -4410,7 +4434,7 @@ function Collect-OutlookInfo {
     New-Item $tempPath -ItemType directory -ErrorAction Stop | Out-Null
 
     # Start logging.
-    Open-Log -Path (Join-Path $tempPath 'Log.txt') -ErrorAction Stop
+    Open-Log -Path (Join-Path $tempPath 'Log.txt') -AutoFlush:$AutoFlush -ErrorAction Stop
     Write-Log "Script Version: $Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString()))"
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
