@@ -4386,7 +4386,7 @@ function Collect-OutlookInfo {
         [array]$Component,
         [ValidateSet('None', 'Mini', 'Full')]
         # This controls the level of netsh trace report
-        $NetshReportMode = 'Mini',
+        $NetshReportMode = 'None',
         # Number of process dumps to collect when "Dump" is specified in Component parameter
         [int]$DumpCount = 3,
         # Interval seconds to wait between each dump files
