@@ -211,6 +211,8 @@ Make sure to call Close-TaskRunspace to dispose the runspace pool.
 function Open-TaskRunspace {
     [CmdletBinding()]
     param(
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$MinRunspaces = 1,
         # Maximum number of runspaces that pool creates
         [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxRunspaces = $env:NUMBER_OF_PROCESSORS,
@@ -259,7 +261,7 @@ function Open-TaskRunspace {
             ))
         }
 
-        $Script:runspacePool = [runspacefactory]::CreateRunspacePool(1, $MaxRunspaces, $initialSessionState, $Host)
+        $Script:runspacePool = [runspacefactory]::CreateRunspacePool($MinRunspaces, $MaxRunspaces, $initialSessionState, $Host)
         $Script:runspacePool.Open()
 
         Write-Log "RunspacePool ($($Script:runspacePool.InstanceId.ToString())) is opened."
@@ -269,6 +271,10 @@ function Open-TaskRunspace {
 function Close-TaskRunspace {
     [CmdletBinding()]
     param()
+
+    if (-not $Script:runspacePool) {
+        return
+    }
 
     $id = $Script:runspacePool.InstanceId.ToString()
     $Script:runspacePool.Close()
@@ -1055,7 +1061,7 @@ function Compress-Folder {
 
             $files = @(Get-ChildItem $Path -Recurse | Where-Object {-not $_.PSIsContainer})
             $count = 0
-            $prevProgress = 0 
+            $prevProgress = 0
 
             foreach ($file in $files) {
                 $progress = 100 * $count / $files.Count
