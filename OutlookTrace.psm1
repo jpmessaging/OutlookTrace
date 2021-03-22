@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-03-10'
+$Version = 'v2021-03-20'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -1055,9 +1055,14 @@ function Compress-Folder {
 
             $files = @(Get-ChildItem $Path -Recurse | Where-Object {-not $_.PSIsContainer})
             $count = 0
+            $prevProgress = 0 
 
             foreach ($file in $files) {
-                Write-Progress -Activity "Creating a zip file $zipFilePath" -Status "Adding $($file.FullName)" -PercentComplete (100 * $count / $files.Count)
+                $progress = 100 * $count / $files.Count
+                if ($progress -gt $prevProgress + 10) {
+                    Write-Progress -Activity "Creating a zip file $zipFilePath" -Status "Please wait" -PercentComplete $progress
+                    $prevProgress = $progress
+                }
 
                 try {
                     $fileStream = New-Object System.IO.FileStream -ArgumentList $file.FullName, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::ReadWrite)
@@ -4394,7 +4399,8 @@ function Collect-OutlookInfo {
         # Skip generating the final ZIP file
         [switch]$SkipZip,
         # AutoFlush log file
-        [switch]$AutoFlush
+        [switch]$AutoFlush,
+        [switch]$SkipAutoUpdate
     )
 
     # Explicitly check admin rights
@@ -4428,6 +4434,69 @@ function Collect-OutlookInfo {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
+    # If there's a newer version available, update with the latest one if:
+    # - "SkipAutoUpdate" is not explicitly requested
+    # - AND OutlookTrace is not installed as module
+    $autoUpdateResult = "Skipped because of SkipAutoUpdate"
+    if (-not $SkipAutoUpdate) {
+        $module = Get-Module $PSCmdlet.MyInvocation.MyCommand.Module
+        if ($module.Version.ToString() -ne '0.0') {
+            $autoUpdateResult = "Skipped autoupdate because OutlookTrace seems be installed as a module."
+        }
+        elseif (-not (Get-NLMConnectivity).IsConnectedToInternet) {
+            $autoUpdateResult = "Skipped autoupdate because there's no connectivity to internet."
+        }
+        else {
+            try {
+                Write-Progress -Activity "AutoUpdate" -Status 'Checking if the newer version is available. Please wait' -PercentComplete -1
+                $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/jpmessaging/OutlookTrace/releases/latest' -ErrorAction Stop
+
+                $latestVersion = $release.name
+                if ($release.name -match '\d{4}-\d{2}-\d{2}') {
+                    $latestVersion = $Matches[0]
+                }
+
+                if ($Version -ge $latestVersion) {
+                    $autoUpdateResult = "Skipped because the script ($Version) is alreaydy the latest version"
+                }
+                else {
+                    Write-Verbose "Downloading the latest script."
+                    $response = Invoke-Command {
+                        # Suppress progress on Invoke-WebRequest.
+                        $ProgressPreference = "SilentlyContinue"
+                        Invoke-WebRequest -Uri $release.assets.browser_download_url -UseBasicParsing
+                    }
+
+                    # Rename the current script and replace with the latest one.
+                    $scriptFilePath = $module.Path
+                    Rename-Item -LiteralPath $scriptFilePath -NewName "$([IO.Path]::GetFileNameWithoutExtension($scriptFilePath))_$(Get-Date -Format 'yyyyMMdd_HHmmss')$([IO.Path]::GetExtension($scriptFilePath))" -ErrorAction Stop
+                    [IO.File]::WriteAllBytes($scriptFilePath, $response.Content)
+
+                    Write-Verbose "Lastest script ($($release.name)) was successfully downloaded."
+                    Import-Module $scriptFilePath -DisableNameChecking -Force -ErrorAction Stop
+                    Write-Progress -Activity "AutoUpdate" -Status "done" -Completed
+
+                    $collectOutlookInfo = Get-Command 'Collect-OutlookInfo' -ErrorAction Stop
+
+                    if ($collectOutlookInfo.Parameters.keys.Contains('SkipAutoUpdate')) {
+                        Collect-OutlookInfo @PSBoundParameters -SkipAutoUpdate
+                    }
+                    else {
+                        Collect-OutlookInfo @PSBoundParameters
+                    }
+
+                    return
+                }
+            }
+            catch {
+                $autoUpdateResult = "Autoupdate failed. $_"
+            }
+            finally {
+                Write-Progress -Activity "AutoUpdate" -Status "done" -Completed
+            }
+        }
+    }
+
     # Create a temporary folder to store data.
     $Path = Resolve-Path $Path
     $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
@@ -4439,6 +4508,7 @@ function Collect-OutlookInfo {
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
     Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+    Write-Log "AutoUpdate: $autoUpdateResult"
 
     $sb = New-Object System.Text.StringBuilder
     foreach ($paramName in $PSBoundParameters.Keys) {
@@ -4820,7 +4890,7 @@ function Collect-OutlookInfo {
     $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
 
     if ($SkipZip) {
-        Rename-Item -Path $tempPath  -NewName $zipFileName
+        Rename-Item -LiteralPath $tempPath -NewName $zipFileName
         return
     }
 
