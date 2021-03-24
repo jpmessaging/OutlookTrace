@@ -225,7 +225,7 @@ function Open-TaskRunspace {
     )
 
     if (-not $Script:runspacePool) {
-        Write-Log "Setting up a Runspace with an initialSessionState. MaxRunspaces: $MaxRunspaces."
+        Write-Log "Setting up a Runspace with an initialSessionState. MinRunspaces: $MinRunspaces, MaxRunspaces: $MaxRunspaces."
         $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
 
         # Add functions from this script module. This will find all the functions including non-exported ones.
@@ -4440,7 +4440,7 @@ function Collect-OutlookInfo {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
-    # If there's a newer version available, update with the latest one if:
+    # If there's a newer version available, use it if:
     # - "SkipAutoUpdate" is not explicitly requested
     # - AND OutlookTrace is not installed as module
     $autoUpdateResult = "Skipped because of SkipAutoUpdate"
@@ -4531,7 +4531,7 @@ function Collect-OutlookInfo {
     # If there is only one runspace is available in the pool, other tasks that started after outlookMonitorTask never get a chance to run.
 
     # Open-TaskRunspace -Variables (Get-Variable 'logWriter')
-    Open-TaskRunspace -IncludeScriptVariables -MaxRunspaces ([int]$env:NUMBER_OF_PROCESSORS + 1)
+    Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS + 1) -MaxRunspaces ([int]$env:NUMBER_OF_PROCESSORS + 1)
 
     Write-Log "Starting traces"
     try {
