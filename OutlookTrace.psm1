@@ -4457,12 +4457,7 @@ function Collect-OutlookInfo {
                 Write-Progress -Activity "AutoUpdate" -Status 'Checking if the newer version is available. Please wait' -PercentComplete -1
                 $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/jpmessaging/OutlookTrace/releases/latest' -ErrorAction Stop
 
-                $latestVersion = $release.name
-                if ($release.name -match '\d{4}-\d{2}-\d{2}') {
-                    $latestVersion = $Matches[0]
-                }
-
-                if ($Version -ge $latestVersion) {
+                if ($Version -ge $release.name) {
                     $autoUpdateResult = "Skipped because the script ($Version) is alreaydy the latest version"
                 }
                 else {
