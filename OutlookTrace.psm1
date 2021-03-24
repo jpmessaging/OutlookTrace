@@ -225,7 +225,7 @@ function Open-TaskRunspace {
     )
 
     if (-not $Script:runspacePool) {
-        Write-Log "Setting up a Runspace with an initialSessionState. MinRunspaces: $MinRunspaces, MaxRunspaces: $MaxRunspaces."
+        Write-Log "Setting up a Runspace Pool with an initialSessionState. MinRunspaces: $MinRunspaces, MaxRunspaces: $MaxRunspaces."
         $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
 
         # Add functions from this script module. This will find all the functions including non-exported ones.
@@ -4374,6 +4374,69 @@ function Save-Process {
 }
 
 <#
+Check GitHub's latest release and if it's newer, download and import it except if OutlookTrace is installed as module.
+#>
+function Invoke-AutoUpdate {
+    [CmdletBinding()]
+    param(
+        [uri]$GitHubUri = 'https://api.github.com/repos/jpmessaging/OutlookTrace/releases/latest'
+    )
+
+    $autoUpdateSuccess = $false
+    $message = $null
+    $module = $PSCmdlet.MyInvocation.MyCommand.Module
+
+    if ($module.Version.ToString() -ne '0.0') {
+        $message = "Skipped autoupdate because OutlookTrace seems be installed as a module."
+    }
+    elseif (-not (Get-NLMConnectivity).IsConnectedToInternet) {
+        $message = "Skipped autoupdate because there's no connectivity to internet."
+    }
+    else {
+        try {
+            Write-Progress -Activity "AutoUpdate" -Status 'Checking if a newer version is available. Please wait' -PercentComplete -1
+            $release = Invoke-RestMethod -Uri $GitHubUri -ErrorAction Stop
+
+            if ($Version -ge $release.name) {
+                $message = "Skipped because the current script ($Version) is newer than GitHub's latest release ($($release.name))."
+            }
+            else {
+                Write-Verbose "Downloading the latest script."
+                $response = Invoke-Command {
+                    # Suppress progress on Invoke-WebRequest.
+                    $ProgressPreference = "SilentlyContinue"
+                    Invoke-WebRequest -Uri $release.assets.browser_download_url -UseBasicParsing
+                }
+
+                # Rename the current script and replace with the latest one.
+                $newName = [IO.Path]::GetFileNameWithoutExtension($PSCommandPath) + "_" + $Version + [IO.Path]::GetExtension($PSCommandPath)
+                if (Test-Path (Join-Path ([IO.Path]::GetDirectoryName($PSCommandPath)) $newName)) {
+                    $newName = [IO.Path]::GetFileNameWithoutExtension($PSCommandPath) + "_" + $Version + [IO.Path]::GetRandomFileName() + [IO.Path]::GetExtension($PSCommandPath)
+                }
+
+                Rename-Item -LiteralPath $PSCommandPath -NewName $newName -ErrorAction Stop
+                [IO.File]::WriteAllBytes($PSCommandPath, $response.Content)
+
+                Write-Verbose "Lastest script ($($release.name)) was successfully downloaded."
+                Import-Module $PSCommandPath -DisableNameChecking -Force -ErrorAction Stop
+                $autoUpdateSuccess = $true
+            }
+        }
+        catch {
+            $message = "Autoupdate failed. $_"
+        }
+        finally {
+            Write-Progress -Activity "AutoUpdate" -Status "done" -Completed
+        }
+    }
+
+    [PSCustomObject]@{
+        Success = $autoUpdateSuccess
+        Message = $message
+    }
+}
+
+<#
 .SYNOPSIS
     Collect Microsoft Office Outlook related configuration & traces
 .DESCRIPTION
@@ -4440,61 +4503,25 @@ function Collect-OutlookInfo {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
-    # If there's a newer version available, use it if:
-    # - "SkipAutoUpdate" is not explicitly requested
-    # - AND OutlookTrace is not installed as module
-    $autoUpdateResult = "Skipped because of SkipAutoUpdate"
     if (-not $SkipAutoUpdate) {
-        $module = Get-Module $PSCmdlet.MyInvocation.MyCommand.Module
-        if ($module.Version.ToString() -ne '0.0') {
-            $autoUpdateResult = "Skipped autoupdate because OutlookTrace seems be installed as a module."
-        }
-        elseif (-not (Get-NLMConnectivity).IsConnectedToInternet) {
-            $autoUpdateResult = "Skipped autoupdate because there's no connectivity to internet."
-        }
-        else {
-            try {
-                Write-Progress -Activity "AutoUpdate" -Status 'Checking if the newer version is available. Please wait' -PercentComplete -1
-                $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/jpmessaging/OutlookTrace/releases/latest' -ErrorAction Stop
+        $autoUpdate = Invoke-AutoUpdate
+        if ($autoUpdate.Success) {
+            $updatedSelf = Get-Command $MyInvocation.MyCommand.Name
 
-                if ($Version -ge $release.name) {
-                    $autoUpdateResult = "Skipped because the script ($Version) is alreaydy the latest version"
-                }
-                else {
-                    Write-Verbose "Downloading the latest script."
-                    $response = Invoke-Command {
-                        # Suppress progress on Invoke-WebRequest.
-                        $ProgressPreference = "SilentlyContinue"
-                        Invoke-WebRequest -Uri $release.assets.browser_download_url -UseBasicParsing
-                    }
-
-                    # Rename the current script and replace with the latest one.
-                    $scriptFilePath = $module.Path
-                    Rename-Item -LiteralPath $scriptFilePath -NewName "$([IO.Path]::GetFileNameWithoutExtension($scriptFilePath))_$(Get-Date -Format 'yyyyMMdd_HHmmss')$([IO.Path]::GetExtension($scriptFilePath))" -ErrorAction Stop
-                    [IO.File]::WriteAllBytes($scriptFilePath, $response.Content)
-
-                    Write-Verbose "Lastest script ($($release.name)) was successfully downloaded."
-                    Import-Module $scriptFilePath -DisableNameChecking -Force -ErrorAction Stop
-                    Write-Progress -Activity "AutoUpdate" -Status "done" -Completed
-
-                    $collectOutlookInfo = Get-Command 'Collect-OutlookInfo' -ErrorAction Stop
-
-                    if ($collectOutlookInfo.Parameters.keys.Contains('SkipAutoUpdate')) {
-                        Collect-OutlookInfo @PSBoundParameters -SkipAutoUpdate
-                    }
-                    else {
-                        Collect-OutlookInfo @PSBoundParameters
-                    }
-
-                    return
+            # Get the list of current parameters that's also available in the updated cmdlet
+            $params = @{}
+            foreach ($currentParam in $PSBoundParameters.GetEnumerator()) {
+                if ($updatedSelf.Parameters.ContainsKey($currentParam.Key)) {
+                    $params.Add($currentParam.Key, $currentParam.Value)
                 }
             }
-            catch {
-                $autoUpdateResult = "Autoupdate failed. $_"
+
+            if ($updatedSelf.Parameters.ContainsKey('SkipAutoUpdate')) {
+                $params.Add('SkipAutoUpdate', $true)
             }
-            finally {
-                Write-Progress -Activity "AutoUpdate" -Status "done" -Completed
-            }
+
+            & $updatedSelf @params
+            return
         }
     }
 
@@ -4509,7 +4536,7 @@ function Collect-OutlookInfo {
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
     Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
-    Write-Log "AutoUpdate: $autoUpdateResult"
+    Write-Log "AutoUpdate: $($autoUpdate.Message)"
 
     $sb = New-Object System.Text.StringBuilder
     foreach ($paramName in $PSBoundParameters.Keys) {
