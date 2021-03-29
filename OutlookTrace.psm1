@@ -4557,7 +4557,7 @@ function Collect-OutlookInfo {
     # If there is only one runspace is available in the pool, other tasks that started after outlookMonitorTask never get a chance to run.
 
     # Open-TaskRunspace -Variables (Get-Variable 'logWriter')
-    Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS + 1) -MaxRunspaces ([int]$env:NUMBER_OF_PROCESSORS + 1)
+    Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces (2 * [int]$env:NUMBER_OF_PROCESSORS)
 
     Write-Log "Starting traces"
     try {
