@@ -1065,7 +1065,7 @@ function Compress-Folder {
 
             foreach ($file in $files) {
                 $progress = 100 * $count / $files.Count
-                if ($progress -gt $prevProgress + 10) {
+                if ($progress -ge $prevProgress + 10) {
                     Write-Progress -Activity "Creating a zip file $zipFilePath" -Status "Please wait" -PercentComplete $progress
                     $prevProgress = $progress
                 }
@@ -1841,9 +1841,11 @@ function Save-NetworkInfoMT {
         New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
     }
 
-    # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
+    # Path must be resolved before it's used as an argument to Start-Task.
+    $Path = Resolve-Path -LiteralPath $Path
     $PSDefaultParameterValues.Add('Start-Task:ArgumentList', $Path)
 
+    # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
     $tasks = @(
     Start-Task {param ($Path) Get-NetAdapter -IncludeHidden | Export-Clixml (Join-Path $Path 'NetAdapter.xml')}
     Start-Task {param ($Path) Get-NetAdapterAdvancedProperty | Export-Clixml (Join-Path $Path 'NetAdapterAdvancedProperty.xml')}
@@ -4530,7 +4532,7 @@ function Collect-OutlookInfo {
     }
 
     # Create a temporary folder to store data.
-    $Path = Resolve-Path $Path
+    $Path = Resolve-Path -LiteralPath $Path
     $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
     New-Item $tempPath -ItemType directory -ErrorAction Stop | Out-Null
 
@@ -4613,7 +4615,7 @@ function Collect-OutlookInfo {
                 $LogonUser | Export-Clixml -Path (Join-Path $OSDir 'LogonUser.xml')
             }
 
-            # The user might start & stop Outlook during tracing and in this case. In order to capture Outlook's instance, run a task to check Outlook.exe periodically until it finds an instance.
+            # The user might start & stop Outlook while tracing. In order to capture Outlook's instance, run a task to check Outlook.exe periodically until it finds an instance.
             Write-Log "Starting outlookMonitorTask."
             $outlookMonitorTask = Start-Task {
                 param($OSDir)
