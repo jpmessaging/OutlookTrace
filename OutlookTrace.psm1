@@ -4251,6 +4251,10 @@ function Get-OutlookAddin {
                 $comSpec = Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
 
                 if (-not $comSpec) {
+                    $comSpec = Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\WOW6432Node\CLSID\\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
+                }
+
+                if (-not $comSpec) {
                     $comSpec = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
                 }
 
@@ -4536,7 +4540,7 @@ function Collect-OutlookInfo {
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
     Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
-    Write-Log "AutoUpdate: $($autoUpdate.Message)"
+    Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) {'Skipped due to SkipAutoUpdate switch'} else {$autoUpdate.Message})"
 
     $sb = New-Object System.Text.StringBuilder
     foreach ($paramName in $PSBoundParameters.Keys) {
