@@ -146,14 +146,14 @@ function Write-Log {
     )
 
     process {
+        # If ErrorRecord is provided, use it.
+        if ($ErrorRecord) {
+            $Message += "$(if ($Message) {'; '})[ErrorRecord]InvocationInfo.MyCommand: $($ErrorRecord.InvocationInfo.MyCommand), Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
+        }
+
         # Ignore null or an empty string.
         if (-not $Message) {
             return
-        }
-
-        # If ErrorRecord is provided, use it.
-        if ($ErrorRecord) {
-            $Message += "; [ErrorRecord]InvocationInfo.MyCommand: $($ErrorRecord.InvocationInfo.MyCommand), Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
         }
 
         # If Open-Log is not called beforehand, just output to verbose.
@@ -4852,6 +4852,14 @@ function Collect-OutlookInfo {
 
         if ($psrStarted) {
             Stop-PSR
+            try {
+                $psrZipFile = Join-Path $tempPath 'PSR.zip'
+                [IO.Compression.ZipFile]::ExtractToDirectory($psrZipFile, (Join-Path $tempPath 'PSR'))
+                Remove-Item $psrZipFile
+            }
+            catch {
+                Write-Log -Message "Failed to unzip $psrZipFile. $_"
+            }
         }
 
         Write-Progress -Activity 'Stopping traces' -Status "Please wait." -Completed
