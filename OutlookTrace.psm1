@@ -481,6 +481,475 @@ function Stop-Task {
     }
 }
 
+function Compress-Folder {
+    [CmdletBinding()]
+    param(
+        # Folder path to compress
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        # Destination folder path
+        [Parameter(Mandatory=$true)]
+        [string]$Destination,
+        # Filter for items in $Path
+        [string[]]$Filter,
+        # DateTime filters
+        [DateTime]$FromDateTime,
+        [DateTime]$ToDateTime,
+        [ValidateSet('Zip', 'Cab')]
+        [string]$ArchiveType = 'Zip'
+    )
+
+    <#
+    .SYNOPSIS
+        Create a Zip file using .NET's System.IO.Compression.
+    #>
+    function New-Zip {
+        [CmdletBinding()]
+        param(
+            # Folder path to compress
+            [Parameter(Mandatory=$true)]
+            [string]$Path,
+            # Destination folder path
+            [Parameter(Mandatory=$true)]
+            [string]$Destination,
+            # Filter for items in $Path
+            [string[]]$Filter,
+            # DateTime filters
+            [DateTime]$FromDateTime,
+            [DateTime]$ToDateTime
+        )
+
+        if (Test-Path $Path) {
+            $Path = Resolve-Path -LiteralPath $Path
+        }
+        else {
+            Write-Error "$Path is not found"
+            return
+        }
+
+        if (-not (Get-Item $Path).PSIsContainer) {
+            Write-Error "$Path is not a container"
+            return
+        }
+
+        if (Test-Path $Destination) {
+            $Destination = Resolve-Path -LiteralPath $Destination
+        }
+        else {
+            $Destination = New-Item $Destination -ItemType Directory -ErrorAction Stop | Select-Object -ExpandProperty FullName
+        }
+
+        # Apply filters if any.
+        if ($Filter.Count) {
+            $files = @(foreach ($f in $Filter) { Get-ChildItem -LiteralPath $Path -Filter $f -Recurse -Force | Where-Object {-not $_.PSIsContainer}})
+        }
+        else {
+            $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force | Where-Object {-not $_.PSIsContainer})
+        }
+
+        if ($PSBoundParameters.ContainsKey('FromDateTime') -and $FromDateTime -ne [DateTime]::MinValue) {
+            $files = @($files | Where-Object {$_.LastWriteTime -ge $FromDateTime})
+        }
+
+        if ($PSBoundParameters.ContainsKey('ToDateTime') -and $ToDateTime -ne ([DateTime]::MaxValue)) {
+            $files = @($files | Where-Object {$_.LastWriteTime -le $ToDateTime})
+        }
+
+        # Remove duplicate by Fullname
+        $files = @($files | Group-Object -Property 'FullName' | ForEach-Object {$_.Group | Select-Object -First 1})
+
+        # If there are no files after filters are applied, bail.
+        if ($files.Count -eq 0) {
+            Write-Error "There are no files after filters are applied. Server: $env:COMPUTERNAME, Path: $Path, Filter: $Filter, FromDateTime: $FromDateTime, ToDateTime: $ToDateTime"
+            return
+        }
+
+        # Check if .NET Framework's compression is avaiable.
+        try {
+            Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
+        }
+        catch {
+            Write-Error -Message "System.IO.Compression is not available. $_" -Exception $_.Exception
+            return
+        }
+
+        # Create a ZIP file
+        $zipFileName = Split-Path $Path -Leaf
+        $zipFilePath = Join-Path $Destination -ChildPath "$zipFileName.zip"
+
+        if (Test-Path $zipFilePath) {
+            # Append a random string to the zip file name.
+            $zipFileName =  $zipFileName + "_" + [IO.Path]::GetRandomFileName().Substring(0,8) + '.zip'
+            $zipFilePath = Join-Path $Destination $zipFileName
+        }
+
+        $zipStream = $zipArchive = $null
+        try {
+            New-Item $zipFilePath -ItemType file | Out-Null
+
+            $zipStream = New-Object System.IO.FileStream -ArgumentList $zipFilePath, ([IO.FileMode]::Open)
+            $zipArchive = New-Object System.IO.Compression.ZipArchive -ArgumentList $zipStream, ([IO.Compression.ZipArchiveMode]::Create)
+            $count = 0
+            $prevProgress = 0
+
+            foreach ($file in $files) {
+                $progress = 100 * $count / $files.Count
+                if ($progress -ge $prevProgress + 10) {
+                    Write-Progress -Activity "Creating a zip file $zipFilePath" -Status "Please wait" -PercentComplete $progress
+                    $prevProgress = $progress
+                }
+
+                $fileStream = $zipEntryStream = $null
+                try {
+                    $fileStream = New-Object System.IO.FileStream -ArgumentList $file.FullName, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::ReadWrite)
+                    $zipEntry = $zipArchive.CreateEntry($file.FullName.Substring($Path.TrimEnd('\').Length + 1))
+                    $zipEntryStream = $zipEntry.Open()
+                    $fileStream.CopyTo($zipEntryStream)
+
+                    ++$count
+                }
+                catch {
+                    Write-Error -Message "Failed to add $($file.FullName). $_" -Exception $_.Exception
+                }
+                finally {
+                    if ($fileStream) {
+                        $fileStream.Dispose()
+                    }
+
+                    if ($zipEntryStream) {
+                        $zipEntryStream.Dispose()
+                    }
+                }
+            }
+        }
+        finally {
+            if ($zipArchive) {
+                $zipArchive.Dispose()
+            }
+
+            if ($zipStream) {
+                $zipStream.Dispose()
+            }
+
+            Write-Progress -Activity "Creating a zip file $zipFilePath" -Status "Done" -Completed
+            $archivePath = $zipFilePath
+        }
+
+        New-Object PSCustomObject -Property @{
+            ArchivePath = $archivePath
+        }
+    }
+
+    <#
+    .SYNOPSIS
+        Create a Zip file using Shell.Application COM
+    #>
+    function New-ZipShell {
+        [CmdletBinding()]
+        param(
+            # Folder path to compress
+            [Parameter(Mandatory=$true)]
+            [string]$Path,
+            # Destination folder path
+            [Parameter(Mandatory=$true)]
+            [string]$Destination,
+            # Filter for items in $Path
+            [string[]]$Filter,
+            # DateTime filters
+            [DateTime]$FromDateTime,
+            [DateTime]$ToDateTime
+        )
+
+        if (Test-Path $Path) {
+            $Path = Resolve-Path -LiteralPath $Path
+        }
+        else {
+            Write-Error "$Path is not found"
+            return
+        }
+
+        if (-not (Get-Item $Path).PSIsContainer) {
+            Write-Error "$Path is not a container"
+            return
+        }
+
+        if (Test-Path $Destination) {
+            $Destination = Resolve-Path -LiteralPath $Destination
+        }
+        else {
+            $Destination = New-Item $Destination -ItemType Directory -ErrorAction Stop | Select-Object -ExpandProperty FullName
+        }
+
+        # If there are no filters to apply, archive the given Path.
+        # Otherwise, apply filters and copy the filtered files to a temporary path and archive it.
+        if (-not $PSBoundParameters.ContainsKey('Filter') -and -not $PSBoundParameters.ContainsKey('FromDateTime') -and -not $PSBoundParameters.ContainsKey('ToDateTime')) {
+            $targetPath = $Path
+        }
+        else {
+            # Apply filters.
+            if ($Filter.Count) {
+                $files = @(foreach ($f in $Filter) { Get-ChildItem -LiteralPath $Path -Filter $f -Recurse -Force | Where-Object {-not $_.PSIsContainer}})
+            }
+            else {
+                $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force | Where-Object {-not $_.PSIsContainer})
+            }
+
+            if ($PSBoundParameters.ContainsKey('FromDateTime') -and $FromDateTime -ne [DateTime]::MinValue) {
+                $files = @($files | Where-Object {$_.LastWriteTime -ge $FromDateTime})
+            }
+
+            if ($PSBoundParameters.ContainsKey('ToDateTime') -and $ToDateTime -ne [DateTime]::MaxValue) {
+                $files = @($files | Where-Object {$_.LastWriteTime -le $ToDateTime})
+            }
+
+            # Remove duplicate by Fullname
+            $files = @($files | Group-Object -Property 'FullName' | ForEach-Object {$_.Group | Select-Object -First 1})
+
+            # If there are no files after filters are applied, bail.
+            if ($files.Count -eq 0) {
+                Write-Error "There are no files after filters are applied. Server: $env:COMPUTERNAME, Path: $Path, Filter: $Filter, FromDateTime: $FromDateTime, ToDateTime: $ToDateTime"
+                return
+            }
+
+            # Copy filtered files to a temporary folder
+            $tempPath = Join-Path $env:TEMP ([IO.Path]::GetRandomFileName().Substring(0,8))
+            New-Item $tempPath -ItemType Directory | Out-Null
+
+            foreach ($file in $files) {
+                $dest = $tempPath
+                $subPath = $file.DirectoryName.SubString($Path.Length)
+                if ($subPath) {
+                    $dest = Join-Path $tempPath $subPath
+                    if (-not (Test-Path -LiteralPath $dest)) {
+                        New-Item -ItemType Directory -Path $dest | Out-Null
+                    }
+                }
+
+                try {
+                    Copy-Item -LiteralPath $file.FullName -Destination $dest
+                }
+                catch {
+                    Write-Error -Message "Failed to copy $($file.FullName) to a temporary path $dest. $_" -Exception $_.Exception
+                }
+            }
+
+            $dest = $null
+            $targetPath = $tempPath
+        }
+
+        Write-Verbose "targetPath: $targetPath"
+
+        # Form the zip file name
+        $archiveName = Split-Path $Path -Leaf
+        $archivePath = Join-Path $Destination -ChildPath "$archiveName.zip"
+
+        if (Test-Path $archivePath) {
+            # Append a random string to the zip file name.
+            $archiveName =  $archiveName + "_" + [IO.Path]::GetRandomFileName().Substring(0,8) + '.zip'
+            $archivePath = Join-Path $Destination $archiveName
+        }
+
+        # Use Shell.Application COM.
+        # Create a Zip file manually
+        $shellApp = New-Object -ComObject Shell.Application
+        Set-Content $archivePath ("PK" + [char]5 + [char]6 + ("$([char]0)" * 18))
+        (Get-Item $archivePath).IsReadOnly = $false
+        $zipFile = $shellApp.NameSpace($archivePath)
+
+        $zipFile.CopyHere($targetPath)
+
+        # Now wait and poll
+        $delayMs = 200
+        $inProgress = $true
+        [System.IO.FileStream]$fileStream = $null
+        #Start-Sleep -Milliseconds 3000
+
+        while ($inProgress) {
+            Start-Sleep -Milliseconds $delayMs
+
+            $fileStream = $null
+
+            try {
+                $fileStream = [IO.File]::Open($archivePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+                $inProgress = $false
+            }
+            catch {
+                # ignore
+            }
+            finally {
+                if ($fileStream) {
+                    $fileStream.Dispose()
+                }
+            }
+        }
+
+        if ($tempPath) {
+            Remove-Item -LiteralPath $tempPath -Force -Recurse
+        }
+
+        [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($shellApp) | Out-Null
+
+        New-Object PSCustomObject -Property @{
+            ArchivePath = $archivePath
+        }
+    }
+
+    # https://docs.microsoft.com/en-us/windows-server/administration/windows-commands/makecab
+    # https://docs.microsoft.com/en-us/previous-versions/bb417343(v=msdn.10)
+    function New-Cab {
+        [CmdletBinding()]
+        param(
+            # Folder path to compress
+            [Parameter(Mandatory=$true)]
+            [string]$Path,
+            # Destination folder path
+            [Parameter(Mandatory=$true)]
+            [string]$Destination,
+            # Filter for items in $Path
+            [string[]]$Filter,
+            # DateTime filters
+            [DateTime]$FromDateTime,
+            [DateTime]$ToDateTime,
+            [ValidateSet('MSZIP','LZX')]
+            [string]$CompressionType = 'LZX'
+        )
+
+        if (Test-Path -LiteralPath $Path) {
+            $Path = Resolve-Path $Path
+        }
+        else {
+            Write-Error "Failed to find $Path"
+            return
+        }
+
+        if (-not (Get-Item $Path).PSIsContainer) {
+            Write-Error "$Path is not a container"
+            return
+        }
+
+        if (Test-Path $Destination) {
+            $Destination = Resolve-Path -LiteralPath $Destination
+        }
+        else {
+            $Destination = New-Item $Destination -ItemType Directory -ErrorAction Stop | Select-Object -ExpandProperty FullName
+        }
+
+        if ($Filter.Count) {
+            $files = @(foreach ($f in $Filter) { Get-ChildItem -LiteralPath $Path -Filter $f -Recurse -Force | Where-Object {-not $_.PSIsContainer}})
+        }
+        else {
+            $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force | Where-Object {-not $_.PSIsContainer})
+        }
+
+        if ($PSBoundParameters.ContainsKey('FromDateTime') -and $FromDateTime -ne [DateTime]::MinValue) {
+            $files = @($files | Where-Object {$_.LastWriteTime -ge $FromDateTime})
+        }
+
+        if ($PSBoundParameters.ContainsKey('ToDateTime') -and $ToDateTime -ne [DateTime]::MaxValue) {
+            $files = @($files | Where-Object {$_.LastWriteTime -le $ToDateTime})
+        }
+
+        # Remove duplicate by Fullname
+        $files = @($files | Group-Object -Property 'FullName' | ForEach-Object {$_.Group | Select-Object -First 1})
+
+        if ($files.Count -eq 0) {
+            Write-Error "There are no files after filters are applied. Server: $env:COMPUTERNAME, Path: $Path, Filter: $Filter, FromDateTime: $FromDateTime, ToDateTime: $ToDateTime"
+            return
+        }
+
+        # Create a directive file (ddf)
+        $ddfFile = Join-Path $env:TEMP $([IO.Path]::GetRandomFileName().Substring(0, 8) + ".ddf")
+        $ddfStream = [IO.File]::OpenWrite($ddfFile)
+        $ddfStream.Position = 0
+        $ddfWriter = New-Object System.IO.StreamWriter($ddfStream)
+        $ddfWrittenCount = 0
+        $currentDir = $Path
+
+        foreach ($file in $files) {
+            # Make sure the file not locked by another process. Otherwise makecab would fail.
+            $skip = $false
+            try {
+                $fileStream = [IO.File]::OpenRead($file.FullName)
+            }
+            catch {
+                $skip = $true
+            }
+            finally {
+                if ($fileStream) {
+                    $fileStream.Dispose()
+                }
+            }
+
+            if ($skip) {
+                continue
+            }
+
+            if ($file.DirectoryName -ne $currentDir) {
+
+                $subPath = $file.DirectoryName.SubString($Path.TrimEnd('\').Length + 1)
+                $ddfWriter.WriteLine(".Set DestinationDir=`"$subPath`"")
+                $currentDir = $file.DirectoryName
+            }
+
+            $ddfWriter.WriteLine("`"$($file.FullName)`"")
+            $ddfWrittenCount++
+        }
+
+        if ($ddfWriter) {
+            $ddfWriter.Dispose()
+        }
+
+        # There are no files to archive. This is not necessarily an error, but write as an error for the caller.
+        if ($ddfWrittenCount -eq 0) {
+            Write-Error -Message "There are $($files.Count) files in $Path, but none can be opened."
+            return
+        }
+
+        $cabName = Split-Path $Path -Leaf
+        $cabFilePath = Join-Path $Destination -ChildPath "$cabName.cab"
+
+        if (Test-Path $cabFilePath) {
+            # Append a random string to the cab file name.
+            $cabName =  $cabName + "_" + [IO.Path]::GetRandomFileName().Substring(0,8)
+            $cabFilePath = Join-Path $Destination "$cabName.cab"
+        }
+
+        $err = $($stdout = & makecab.exe /D CompressionType=$CompressionType /D CabinetNameTemplate="$cabName.cab" /D DiskDirectoryTemplate=CDROM /D DiskDirectory1=$Destination /D MaxDiskSize=0 /D RptFileName=nul /D InfFileName=nul /F $ddfFile) 2>&1
+        Remove-Item $ddfFile -Force
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "MakeCab.exe failed; exitCode: $LASTEXITCODE; stdout:`"$stdout`"; Error: $err"
+            return
+        }
+
+        New-Object PSCustomObject -Property @{
+            ArchivePath = $cabFilePath
+            # Message = $stdout
+        }
+    }
+
+    # Here's main body of Compress-Folder
+    switch ($ArchiveType) {
+        'Zip' {
+            if ($PSVersionTable.PSVersion.Major -gt 2) {
+                $compressCmd = Get-Command 'New-Zip'
+            }
+            else {
+                $compressCmd = Get-Command 'New-ZipShell'
+            }
+            break
+        }
+        'Cab' {
+            $compressCmd = Get-Command 'New-Cab'
+            break
+        }
+    }
+
+    $params = @{}
+    $PSBoundParameters.Keys | ForEach-Object { if ($compressCmd.Parameters.ContainsKey($_)) { $params.Add($_, $PSBoundParameters[$_])}}
+    & $compressCmd @params
+}
+
 function Start-WamTrace {
     [CmdletBinding()]
     param(
@@ -586,7 +1055,6 @@ function Stop-OutlookTrace {
     Write-Log "Stopping $SessionName"
     Stop-EtwSession $SessionName | Out-Null
 }
-
 
 function Start-NetshTrace {
     [CmdletBinding()]
@@ -1002,165 +1470,6 @@ function Stop-PSR {
     & psr /stop
 
     Wait-Process -InputObject $process
-}
-
-function Compress-Folder {
-    [CmdletBinding()]
-    param(
-        # Specifies a path to one or more locations.
-        [Parameter(Mandatory=$true)]
-        [string]$Path,
-        [string]$Destination,
-        [string]$ZipFileName,
-        [switch]$IncludeDateTime,
-        [switch]$RemoveFiles,
-        [switch]$UseShellApplication
-    )
-
-    $Path = Resolve-Path $Path
-    $zipFileNameWithouExt = [System.IO.Path]::GetFileNameWithoutExtension($ZipFileName)
-    if ($IncludeDateTime) {
-        $zipFileName = $zipFileNameWithouExt + "_" + "$(Get-Date -Format "yyyyMMdd_HHmmss").zip"
-    }
-    else {
-        $zipFileName = "$zipFileNameWithouExt.zip"
-    }
-
-    # If Destination is not given, use %TEMP% folder.
-    if (-not $Destination) {
-        $Destination = $env:TEMP
-    }
-
-    if (-not (Test-Path $Destination)) {
-        New-Item $Destination -ItemType Directory -ErrorAction Stop | Out-Null
-    }
-
-    $Destination = Resolve-Path $Destination
-    $zipFilePath = Join-Path $Destination -ChildPath $zipFileName
-
-    $NETFileSystemAvailable = $false
-
-    try {
-        Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
-        # Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
-        $NETFileSystemAvailable = $true
-    }
-    catch {
-        Write-Warning "System.IO.Compression.FileSystem wasn't found. Using alternate method"
-    }
-
-    if ($NETFileSystemAvailable -and $UseShellApplication -eq $false) {
-        # Note: [System.IO.Compression.ZipFile]::CreateFromDirectory() fails when one or more files in the directory is locked.
-        #[System.IO.Compression.ZipFile]::CreateFromDirectory($Path, $zipFilePath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
-
-        try {
-            New-Item $zipFilePath -ItemType file | Out-Null
-
-            $zipStream = New-Object System.IO.FileStream -ArgumentList $zipFilePath, ([IO.FileMode]::Open)
-            $zipArchive = New-Object System.IO.Compression.ZipArchive -ArgumentList $zipStream, ([IO.Compression.ZipArchiveMode]::Create)
-
-            $files = @(Get-ChildItem $Path -Recurse | Where-Object {-not $_.PSIsContainer})
-            $count = 0
-            $prevProgress = 0
-
-            foreach ($file in $files) {
-                $progress = 100 * $count / $files.Count
-                if ($progress -ge $prevProgress + 10) {
-                    Write-Progress -Activity "Creating a zip file $zipFilePath" -Status "Please wait" -PercentComplete $progress
-                    $prevProgress = $progress
-                }
-
-                try {
-                    $fileStream = New-Object System.IO.FileStream -ArgumentList $file.FullName, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::ReadWrite)
-                    $zipEntry = $zipArchive.CreateEntry($file.FullName.Substring($Path.Length + 1))
-                    $zipEntryStream = $zipEntry.Open()
-                    $fileStream.CopyTo($zipEntryStream)
-
-                    ++$count
-                }
-                catch {
-                    Write-Error -Message "Failed to add $($file.FullName). $_" -Exception $_.Exception
-                }
-                finally {
-                    if ($local:fileStream) {
-                        $fileStream.Dispose()
-                    }
-
-                    if ($local:zipEntryStream) {
-                        $zipEntryStream.Dispose()
-                    }
-                }
-            }
-        }
-        finally {
-            if ($local:zipArchive) {
-                $zipArchive.Dispose()
-            }
-
-            if ($local:zipStream) {
-                $zipStream.Dispose()
-            }
-
-            Write-Progress -Activity "Creating a zip file $zipFilePath" -Completed
-        }
-    }
-    else {
-        # Use Shell.Application COM
-
-        # Create a zip file manually
-        $shellApp = New-Object -ComObject Shell.Application
-        Set-Content $zipFilePath ("PK" + [char]5 + [char]6 + ("$([char]0)" * 18))
-        (Get-Item $zipFilePath).IsReadOnly = $false
-
-        $zipFile = $shellApp.NameSpace($zipFilePath)
-
-        # If target folder is empty, CopyHere() fails. So make sure it's not empty
-        if (@(Get-ChildItem $Path).Count -gt 0) {
-            # Start copying the whole and wait until it's done. CopyHere works asynchronously.
-            $zipFile.CopyHere($Path)
-
-            # Now wait and poll
-            $inProgress = $true
-            $delayMilliseconds = 200
-            Start-Sleep -Milliseconds 3000
-            [System.IO.FileStream]$file = $null
-            while ($inProgress) {
-                Start-Sleep -Milliseconds $delayMilliseconds
-
-                try {
-                    $file = [System.IO.File]::Open($zipFilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
-                    $inProgress = $false
-                }
-                catch [System.IO.IOException] {
-                    Write-Debug $_.Exception.Message
-                }
-                finally {
-                    if ($file) {
-                        $file.Close()
-                    }
-                }
-            }
-        }
-    }
-
-    if (Test-Path $zipFilePath) {
-        # If requested, remove zipped files
-        if ($RemoveFiles) {
-            Write-Verbose "Removing zipped files"
-            Write-Progress -Activity "Cleaning up" -Status "Please wait" -PercentComplete -1
-            Get-ChildItem $Path -Exclude $ZipFileName | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-            Write-Progress -Activity "Cleaning up" -Status "Please wait" -Completed
-            $filesRemoved = $true
-        }
-
-        [PSCustomObject]@{
-            ZipFilePath = $zipFilePath.ToString()
-            FilesRemoved = $filesRemoved -eq $true
-        }
-    }
-    else {
-        throw "Zip file wasn't successfully created at $zipFilePath"
-    }
 }
 
 function Save-EventLog {
@@ -4257,7 +4566,11 @@ function Get-OutlookAddin {
                 }
 
                 if (-not $comSpec) {
-                    $comSpec = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
+                    $comSpec = Get-ItemProperty "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
+                }
+
+                if (-not $comSpec) {
+                    $comSpec = Get-ItemProperty "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
                 }
 
                 if ($comSpec) {
@@ -4516,11 +4829,7 @@ function Collect-OutlookInfo {
 
             # Get the list of current parameters that's also available in the updated cmdlet
             $params = @{}
-            foreach ($currentParam in $PSBoundParameters.GetEnumerator()) {
-                if ($updatedSelf.Parameters.ContainsKey($currentParam.Key)) {
-                    $params.Add($currentParam.Key, $currentParam.Value)
-                }
-            }
+            $PSBoundParameters.Keys | ForEach-Object {if ($updatedSelf.Parameters.ContainsKey($_)) {$params.Add($_, $PSBoundParameters[$_])}}
 
             if ($updatedSelf.Parameters.ContainsKey('SkipAutoUpdate')) {
                 $params.Add('SkipAutoUpdate', $true)
@@ -4774,6 +5083,7 @@ function Collect-OutlookInfo {
         throw
     }
     finally {
+        Write-Log "Stopping traces"
         Write-Progress -Activity 'Stopping traces' -Status "Please wait." -PercentComplete -1
 
         if ($ttdStarted) {
@@ -4853,6 +5163,7 @@ function Collect-OutlookInfo {
         if ($psrStarted) {
             Stop-PSR
             try {
+                Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
                 $psrZipFile = Join-Path $tempPath 'PSR.zip'
                 [IO.Compression.ZipFile]::ExtractToDirectory($psrZipFile, (Join-Path $tempPath 'PSR'))
                 Remove-Item $psrZipFile
@@ -4929,14 +5240,15 @@ function Collect-OutlookInfo {
         Close-Log
     }
 
-    $zipFileName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
+    $archiveName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
 
     if ($SkipZip) {
-        Rename-Item -LiteralPath $tempPath -NewName $zipFileName
+        Rename-Item -LiteralPath $tempPath -NewName $archiveName
         return
     }
 
-    Compress-Folder -Path $tempPath -ZipFileName $zipFileName -Destination $Path | Out-Null
+    $archive = Compress-Folder -Path $tempPath -Destination $Path -ArchiveType 'Zip'
+    Rename-Item $archive.ArchivePath -NewName "$archiveName.zip"
 
     if (Test-Path $tempPath) {
         # Removing temp files might take a while. Do it in a background.
@@ -4946,7 +5258,7 @@ function Collect-OutlookInfo {
         Write-Host "Temporary folder `"$tempPath`" will be removed by a background job (Job ID: $($job.Id))"
     }
 
-    Write-Host "The collected data is `"$(Join-Path $Path $zipFileName).zip`"" -ForegroundColor Green
+    Write-Host "The collected data is `"$(Join-Path $Path $archiveName).zip`"" -ForegroundColor Green
     Invoke-Item $Path
 }
 
