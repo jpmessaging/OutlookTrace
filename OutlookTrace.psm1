@@ -4780,12 +4780,7 @@ function Collect-OutlookInfo {
         [ValidateSet('None', 'Mini', 'Full')]
         # This controls the level of netsh trace report
         $NetshReportMode = 'None',
-        # Number of process dumps to collect when "Dump" is specified in Component parameter
-        [int]$DumpCount = 3,
-        # Interval seconds to wait between each dump files
-        [int]$DumpIntervalSeconds = 60,
-        # Skip generating the final ZIP file
-        [switch]$SkipZip,
+        [switch]$SkipArchive,
         # AutoFlush log file
         [switch]$AutoFlush,
         [switch]$SkipAutoUpdate
@@ -4865,7 +4860,7 @@ function Collect-OutlookInfo {
     # To use Start-Task, make sure to open runspaces first and close it when finished.
     # MaxRunspaces should be greater than or equal to 2. If it's 1, some tasks may never finish.
     # Here's why: there's a task "outlookMonitorTask", which keeps (mostly) sleeping. But it occupies a runspace from the pool.
-    # If there is only one runspace is available in the pool, other tasks that started after outlookMonitorTask never get a chance to run.
+    # If there is only one runspace available in the pool, other tasks that started after outlookMonitorTask never get a chance to run.
 
     # Open-TaskRunspace -Variables (Get-Variable 'logWriter')
     Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces (2 * [int]$env:NUMBER_OF_PROCESSORS)
@@ -5012,23 +5007,23 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Dump') {
-            $process = Get-Process -Name 'Outlook' -ErrorAction Stop
+            # Ask a user when she/he wants to save a dump file
+            while ($true) {
+                $userInput = Read-Host "Hit enter to save a process dump of Outlook. To quit, enter q"
 
-            for ($i = 0; $i -lt $DumpCount; $i++) {
-                Write-Progress -Activity "Saving a memory dump of Outlook ($i/$DumpCount)." -Status "Please wait." -PercentComplete -1
-                $dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $process.Id
-                Write-Progress -Activity "Saving a memory dump of Outlook ($i/$DumpCount)." -Status "Done" -Completed
-                Write-Log "Saved dump file: $($dumpResult.DumpFile)"
-
-                # If there are more dumps to save, wait.
-                if ($i -lt ($DumpCount - 1)) {
-                    $secondsRemaining = $DumpIntervalSeconds
-                    while ($secondsRemaining -gt 0) {
-                        Write-Progress -Activity "Waiting $DumpIntervalSeconds seconds till next dump ($($i + 1)/$DumpCount done)." -Status "Please wait." -SecondsRemaining $secondsRemaining
-                        Start-Sleep -Seconds 1
-                        $secondsRemaining-=1
-                    }
+                if ($userInput.ToLower() -eq 'q') {
+                    break
                 }
+
+                if (-not ($process = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue)) {
+                    Write-Host "Cannot find Outlook.exe. Please start Outlook." -ForegroundColor Yellow
+                    continue
+                }
+
+                Write-Progress -Activity "Saving a process dump of Outlook." -Status "Please wait." -PercentComplete -1
+                $dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $process.Id
+                Write-Progress -Activity "Saving a process dump of Outlook." -Status "Done" -Completed
+                Write-Log "Saved dump file: $($dumpResult.DumpFile)"
             }
         }
 
@@ -5242,7 +5237,7 @@ function Collect-OutlookInfo {
 
     $archiveName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
 
-    if ($SkipZip) {
+    if ($SkipArchive) {
         Rename-Item -LiteralPath $tempPath -NewName $archiveName
         return
     }

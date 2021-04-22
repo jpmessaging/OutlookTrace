@@ -27,7 +27,7 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 
 6. Collect-OutlookInfo を実行します
 
-    ※ 採取するコンポーネントについてはエンジニアからの案内をご確認ください。
+    ※ 採取するコンポーネントについてはエンジニアからの案内をご確認くださvい。
 
     ```
     Collect-OutlookInfo -Path <出力先フォルダ> -Component <採取するコンポーネント>
@@ -39,6 +39,8 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
     ```
 
 7. 正常にトレースが開始されると、"Hit enter to stop" と表示されます。
+
+    ※ 採取するコンポーネントに Dump を含めた場合、`Hit enter to save a process dump of Outlook. To quit, enter q:` とプロンプトされます。ダンプ ファイルを取得したいタイミングで Enter を入力してください。ハング事象の場合、およそ 30 秒間隔で 3 回程度採取ください。ダンプ ファイルの採取が終了したら `q` を入力します。
 
     ※ 採取するコンポーネントに Fiddler を含めた場合、[FiddlerCap Web Recorder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
 

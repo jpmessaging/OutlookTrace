@@ -39,6 +39,8 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
 7. When traces have started successfully, it shows "Hit enter to stop".
 
+    Note: When "Dump" is included in Component parameter, you will be prompted with `Hit enter to save a process dump of Outlook. To quit, enter q:`. Hit enter key to save a dump file. For a hang issue, repeat the process to collect 3 dump files, with interval of about 30 seconds between saves. When finished, hit `q`.
+
     Note: When "Fiddler" is included in Component parameter, a dialog box [FiddlerCap Web Recorder] appears. Use the following instructions to start capture, and then reproduce the issue.
 
     <details>
