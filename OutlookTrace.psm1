@@ -4003,23 +4003,11 @@ function Save-MSIPC {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
-    # Copy only folders (i.e. skip drm files)
-    # gci -Directory is only available for PowerShell V3 and above. To support PowerShell V2 clients, Where-Object is used here.
-    foreach ($folder in @(Get-ChildItem $msipcPath | Where-Object {$_.PSIsContainer})) {
-        $dest = Join-Path $Path $folder.Name
-
-        if (-not (Test-Path $dest -ErrorAction Stop)){
-            New-Item -ItemType Directory $dest -ErrorAction Stop | Out-Null
-        }
-
-        Write-Log "Copying $($folder.FullName) to $dest"
-        try {
-            # Copy-Item could throw a terminating error
-            Copy-Item (Join-Path $folder.FullName '*') -Destination $dest -Recurse -ErrorAction SilentlyContinue
-        }
-        catch {
-            Write-Error -ErrorRecord $_
-        }
+    try {
+        Copy-Item (Join-Path $msipcPath '*') -Destination $Path -Exclude '*.lock', '*.drm' -Recurse
+    }
+    catch {
+        Write-Error -ErrorRecord $_
     }
 }
 
@@ -4892,6 +4880,7 @@ function Collect-OutlookInfo {
             Write-Log "Starting networkInfoTask."
             $networkInfoTask = Start-Task {param($path) Save-NetworkInfo -Path $path} -ArgumentList $NetworkDir
 
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
             $LogonUser = Get-LogonUser -IgnoreCache -ErrorAction SilentlyContinue
 
             Write-Log "Starting officeRegistryTask."
@@ -4900,17 +4889,14 @@ function Collect-OutlookInfo {
             Write-Log "Starting oSConfigurationTask."
             $oSConfigurationTask = Start-Task {param($path) Save-OSConfiguration -Path $path} -ArgumentList $OSDir
 
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
+            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
             Run-Command {Get-OfficeInfo} -Path $OfficeDir
             Run-Command {param($LogonUser) Get-OutlookProfile -User $LogonUser.SID} -ArgumentList $LogonUser -Path $OfficeDir
             Run-Command {param($LogonUser) Get-OutlookAddin -User $LogonUser.SID} -ArgumentList $LogonUser -Path $OfficeDir
             Run-Command {Get-ClickToRunConfiguration} -Path $OfficeDir
 
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
-            Run-Command {param($LogonUser, $OfficeDir) Save-CachedAutodiscover -User $LogonUser.SID -Path $(Join-Path $OfficeDir 'Cached AutoDiscover')} -ArgumentList $LogonUser, $OfficeDir
-
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
-            Run-Command {param($LogonUser, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $($LogonUser.SID)} -ArgumentList $LogonUser, $MSIPCDir
+            Run-Command {param($LogonUser, $OfficeDir) Save-CachedAutodiscover -User $LogonUser.SID -Path $(Join-Path $OfficeDir 'Cached AutoDiscover')} -ArgumentList $LogonUser, $OfficeDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
             Run-Command {param($OSDir) Save-Process -Path $OSDir} -ArgumentList $OSDir
@@ -5180,6 +5166,8 @@ function Collect-OutlookInfo {
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
+
+            Run-Command {param($LogonUser, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $($LogonUser.SID)} -ArgumentList $LogonUser, $MSIPCDir
 
             if ($oSConfigurationTask) {
                 Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -PercentComplete -1
