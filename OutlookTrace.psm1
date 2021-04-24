@@ -1881,6 +1881,7 @@ function Save-OfficeRegistry {
         "HKCU\Software\Policies\Microsoft\Office"
         "HKCU\Software\Wow6432Node\Microsoft\Office"
         "HKCU\Software\Wow6432Node\Policies\Microsoft\Office"
+        "HKCU\SOFTWARE\Classes\Local Settings\Software\Microsoft\MSIPC"
         "HKLM\Software\Microsoft\Office"
         "HKLM\Software\Policies\Microsoft\Office"
         "HKLM\Software\WOW6432Node\Microsoft\Office"
