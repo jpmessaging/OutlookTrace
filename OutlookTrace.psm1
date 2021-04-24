@@ -914,8 +914,10 @@ function Compress-Folder {
             $cabFilePath = Join-Path $Destination "$cabName.cab"
         }
 
+        Write-Progress -Activity "Creating a cab file" -Status "Please wait" -PercentComplete -1
         $err = $($stdout = & makecab.exe /D CompressionType=$CompressionType /D CabinetNameTemplate="$cabName.cab" /D DiskDirectoryTemplate=CDROM /D DiskDirectory1=$Destination /D MaxDiskSize=0 /D RptFileName=nul /D InfFileName=nul /F $ddfFile) 2>&1
         Remove-Item $ddfFile -Force
+        Write-Progress -Activity "Creating a cab file" -Status "Done" -Completed
 
         if ($LASTEXITCODE -ne 0) {
             Write-Error "MakeCab.exe failed; exitCode: $LASTEXITCODE; stdout:`"$stdout`"; Error: $err"
@@ -4005,7 +4007,8 @@ function Save-MSIPC {
     }
 
     try {
-        Copy-Item (Join-Path $msipcPath '*') -Destination $Path -Exclude '*.lock', '*.drm' -Recurse
+        # Just copy *.ipclog files
+        Copy-Item (Join-Path $msipcPath 'Logs\*') -Destination $Path -Exclude '*.lock'
     }
     catch {
         Write-Error -ErrorRecord $_
@@ -4769,6 +4772,8 @@ function Collect-OutlookInfo {
         [ValidateSet('None', 'Mini', 'Full')]
         # This controls the level of netsh trace report
         $NetshReportMode = 'None',
+        [ValidateSet('Zip', 'Cab')]
+        [string]$ArchiveType = 'Zip',
         [switch]$SkipArchive,
         # AutoFlush log file
         [switch]$AutoFlush,
@@ -5231,8 +5236,8 @@ function Collect-OutlookInfo {
         return
     }
 
-    $archive = Compress-Folder -Path $tempPath -Destination $Path -ArchiveType 'Zip'
-    Rename-Item $archive.ArchivePath -NewName "$archiveName.zip"
+    $archive = Compress-Folder -Path $tempPath -Destination $Path -ArchiveType $ArchiveType -ErrorAction Stop
+    Rename-Item $archive.ArchivePath -NewName "$archiveName$([IO.Path]::GetExtension($archive.ArchivePath))"
 
     if (Test-Path $tempPath) {
         # Removing temp files might take a while. Do it in a background.
@@ -5242,7 +5247,7 @@ function Collect-OutlookInfo {
         Write-Host "Temporary folder `"$tempPath`" will be removed by a background job (Job ID: $($job.Id))"
     }
 
-    Write-Host "The collected data is `"$(Join-Path $Path $archiveName).zip`"" -ForegroundColor Green
+    Write-Host "The collected data is `"$(Join-Path $Path "$archiveName$([IO.Path]::GetExtension($archive.ArchivePath))")`"" -ForegroundColor Green
     Invoke-Item $Path
 }
 
