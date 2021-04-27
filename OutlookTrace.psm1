@@ -4774,6 +4774,7 @@ function Collect-OutlookInfo {
         $NetshReportMode = 'None',
         [ValidateSet('Zip', 'Cab')]
         [string]$ArchiveType = 'Zip',
+        [Alias('SkipZip')]
         [switch]$SkipArchive,
         # AutoFlush log file
         [switch]$AutoFlush,
@@ -5171,9 +5172,8 @@ function Collect-OutlookInfo {
 
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
-            Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
-
             Run-Command {param($LogonUser, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $($LogonUser.SID)} -ArgumentList $LogonUser, $MSIPCDir
+            Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
 
             if ($oSConfigurationTask) {
                 Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -PercentComplete -1
