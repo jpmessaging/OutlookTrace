@@ -998,14 +998,17 @@ function Stop-WamTrace {
     Stop-EtwSession $SessionName | Out-Null
 }
 
-
 function Start-OutlookTrace {
-    [CmdletBinding(SupportsShouldProcess = $true)]
+    [CmdletBinding(SupportsShouldProcess=$true, PositionalBinding=$false)]
     param(
-        [parameter(Mandatory = $true)]
-        $Path,
-        $FileName = 'outlook.etl',
-        $SessionName = 'OutlookTrace'
+        [Parameter(Mandatory=$true, Position=0)]
+        [string]$Path,
+        [string]$FileName = 'outlook.etl',
+        [string]$SessionName = 'OutlookTrace',
+        [ValidateSet('NewFile','Circular')]
+        [string]$LogFileMode = 'NewFile',
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$MaxFileSizeMB
     )
 
     if (-not (Test-Path $Path)) {
@@ -1025,20 +1028,37 @@ function Start-OutlookTrace {
         default {throw "Couldn't find the version from $_"}
     }
 
-    # In order to use EVENT_TRACE_FILE_MODE_NEWFILE, file name must contain "%d"
-    if ($FileName -notlike "*%d*") {
-        $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
+    $_maxFileSize = $MaxFileSizeMB
+
+    # Configure log file mode, filename, and max file size if ncessary.
+    if ($LogFileMode -eq 'Circular') {
+        $_logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_CIRCULAR"
+
+        if (-not $_maxFileSize) {
+            $_maxFileSize = 2048
+        }
+    }
+    else {
+        $_logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
+
+        # In order to use EVENT_TRACE_FILE_MODE_NEWFILE, file name must contain "%d"
+        if ($FileName -notlike "*%d*") {
+            $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
+        }
+
+        if (-not $_maxFileSize) {
+            $_maxFileSize = 256
+        }
     }
 
     $traceFile = Join-Path $Path -ChildPath $FileName
-    $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
 
     if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME,$logmanCommand)) {
-        Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`"; traceFile:`"$traceFile`"; logFileMode:`"$logFileMode`""
+        Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`"; traceFile:`"$traceFile`"; logFileMode:`"$_logFileMode`"; maxFileSize: `"$_maxFileSize`""
 
         $err = $($stdout = Invoke-Command {
             $ErrorActionPreference = 'Continue'
-            & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max 256 -mode $logFileMode -ets
+            & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $_maxFileSize -mode $_logFileMode -ets
         }) 2>&1
 
         if ($err -or $LASTEXITCODE -ne 0) {
@@ -4597,7 +4617,6 @@ function Get-ClickToRunConfiguration {
     [CmdletBinding()]
     param()
 
-    # Registry path is the for 32bit Office on 64bit OS.
     Get-ItemProperty Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\Configuration
 }
 
@@ -4760,9 +4779,9 @@ function Invoke-AutoUpdate {
 
 #>
 function Collect-OutlookInfo {
-    [CmdletBinding(SupportsShouldProcess = $true)]
+    [CmdletBinding(SupportsShouldProcess=$true, PositionalBinding=$false)]
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, Position=0)]
         # Folder to place collected data
         $Path,
         [Parameter(Mandatory=$true)]
