@@ -3007,31 +3007,47 @@ function Save-MSInfo32 {
 }
 
 function Start-CAPITrace {
-    [CmdletBinding()]
+    [CmdletBinding(PositionalBinding=$false)]
     param(
-        [parameter(Mandatory = $true)]
-        $Path,
-        $SessionName = 'CapiTrace'
+        [Parameter(Mandatory=$true, Position=0)]
+        [string]$Path,
+        [string]$SessionName = 'CapiTrace',
+        [ValidateSet('NewFile','Circular')]
+        [string]$LogFileMode = 'NewFile',
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$MaxFileSizeMB = 256
     )
 
     if (-not (Test-Path $Path)) {
         New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
     }
+    $Path = Resolve-Path $Path
 
-    $traceFile = Join-Path $Path -ChildPath 'capi_%d.etl'
-    $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
+    if ($LogFileMode -eq 'Circular') {
+        $_logFileMode = 'globalsequence | EVENT_TRACE_FILE_MODE_CIRCULAR'
+        $traceFile = Join-Path $Path -ChildPath 'capi.etl'
+        if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
+            $MaxFileSizeMB = 2048
+        }
+    }
+    else {
+        $_logFileMode = 'globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE'
+        $traceFile = Join-Path $Path -ChildPath 'capi_%d.etl'
+    }
+
     Write-Log "Starting a CAPI trace"
-    $logmanResult = Invoke-Expression "logman create trace $SessionName -ow -o `"$traceFile`" -p `"Security: SChannel`" 0xffffffffffffffff 0xff -bs 1024 -mode `"$logFileMode`" -max 256 -ets"
+    
+    $logmanResult = & logman.exe create trace $SessionName -ow -o $traceFile -p "Security: SChannel" 0xffffffffffffffff 0xff -bs 1024 -mode $_logFileMode -max $MaxFileSizeMB -ets
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "logman failed to create a session. exit code = $LASTEXITCODE. $logmanResult"
+        Write-Error "logman failed. exit code: $LASTEXITCODE; stdout: $logmanResult"
         return
     }
 
     # Note: Depending on the OS version, not all providers are available.
-    $logmanResult = Invoke-Expression "logman update trace $SessionName -p `"Schannel`" 0xffffffffffffffff 0xff -ets"
-    $logmanResult = Invoke-Expression "logman update trace $SessionName -p `"{44492B72-A8E2-4F20-B0AE-F1D437657C92}`" 0xffffffffffffffff 0xff -ets"
-    $logmanResult = Invoke-Expression "logman update trace $SessionName -p `"Microsoft-Windows-Schannel-Events`" 0xffffffffffffffff 0xff -ets"
+    $logmanResult = & logman.exe update trace $SessionName -p "Schannel" 0xffffffffffffffff 0xff -ets
+    $logmanResult = & logman.exe update trace $SessionName -p "{44492B72-A8E2-4F20-B0AE-F1D437657C92}" 0xffffffffffffffff 0xff -ets
+    $logmanResult = & logman.exe update trace $SessionName -p "Microsoft-Windows-Schannel-Events" 0xffffffffffffffff 0xff -ets
 }
 
 function Stop-CapiTrace {
