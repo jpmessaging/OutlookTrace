@@ -2636,13 +2636,17 @@ function Remove-CachedAutodiscover {
 }
 
 function Start-LdapTrace {
-    [CmdletBinding()]
+    [CmdletBinding(PositionalBinding=$false)]
     param(
-        [Parameter(Mandatory=$true, HelpMessage = "Directory for output file")]
-        $Path,
-        [parameter(Mandatory=$true, HelpMessage = "Process name to trace. e.g. Outlook.exe")]
-        $TargetProcess,
-        $SessionName = 'LdapTrace'
+        [Parameter(Mandatory=$true, Position=0, HelpMessage = "Directory for output file")]
+        [string]$Path,
+        [Parameter(Mandatory=$true, HelpMessage = "Process name to trace. e.g. Outlook.exe")]
+        [string]$TargetProcess,
+        [string]$SessionName = 'LdapTrace',
+        [ValidateSet('NewFile','Circular')]
+        [string]$LogFileMode = 'NewFile',
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$MaxFileSizeMB = 256
     )
 
     if (-not (Test-Path $Path)) {
@@ -2670,14 +2674,25 @@ function Start-LdapTrace {
         return
     }
 
-    # Start ETW session
-    $traceFile = Join-Path $Path -ChildPath "ldap_%d.etl"
-    $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
-    Write-Log "Starting a LDAP trace"
+    # Configure ETW session parameters
+    if ($LogFileMode -eq 'Circular') {
+        $_logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_CIRCULAR"
+        $traceFile = Join-Path $Path -ChildPath "ldap.etl"
 
+        if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
+            $MaxFileSizeMB = 2048
+        }
+    }
+    else {
+        $_logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
+        $traceFile = Join-Path $Path -ChildPath "ldap_%d.etl"
+    }
+
+    # Start ETW session
+    Write-Log "Starting a LDAP trace"
     $err = $($stdout = Invoke-Command {
         $ErrorActionPreference = 'Continue'
-        & logman.exe create trace $SessionName -ow -o $traceFile -p Microsoft-Windows-LDAP-Client 0x1a59afa3 0xff -bs 1024 -mode $logFileMode -max 256 -ets
+        & logman.exe create trace $SessionName -ow -o $traceFile -p Microsoft-Windows-LDAP-Client 0x1a59afa3 0xff -bs 1024 -mode $_logFileMode -max $MaxFileSizeMB -ets
     }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
