@@ -953,12 +953,16 @@ function Compress-Folder {
 }
 
 function Start-WamTrace {
-    [CmdletBinding()]
+    [CmdletBinding(PositionalBinding=$false)]
     param(
-        [parameter(Mandatory=$true)]
-        $Path,
-        $FileName = 'wam.etl',
-        $SessionName = 'WamTrace'
+        [Parameter(Mandatory=$true, Position=0)]
+        [string]$Path,
+        [string]$FileName = 'wam.etl',
+        [string]$SessionName = 'WamTrace',
+        [ValidateSet('NewFile','Circular')]
+        [string]$LogFileMode = 'NewFile',
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$MaxFileSizeMB = 256
     )
 
     if (-not (Test-Path $Path)) {
@@ -970,16 +974,26 @@ function Start-WamTrace {
     $providerFile = Join-Path $Path -ChildPath 'wam.prov'
     Set-Content $wamProviders -Path $providerFile -ErrorAction Stop
 
-    if ($FileName -notlike "*%d*") {
-        $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
+    if ($LogFileMode -eq 'Circular') {
+        $_logFileMode = 'globalsequence | EVENT_TRACE_FILE_MODE_CIRCULAR'
+        if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
+            $MaxFileSizeMB = 2048
+        }
     }
+    else {
+        $_logFileMode = 'globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE'
+
+        if ($FileName -notlike "*%d*") {
+            $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
+        }
+    }
+
     $traceFile = Join-Path $Path -ChildPath $FileName
 
     Write-Log "Starting a WAM trace."
-    $logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
     $err = $($stdout = Invoke-Command {
         $ErrorActionPreference = 'Continue'
-        & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max 256 -mode $logFileMode -ets
+        & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $MaxFileSizeMB -mode $_logFileMode -ets
     }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
@@ -1008,7 +1022,7 @@ function Start-OutlookTrace {
         [ValidateSet('NewFile','Circular')]
         [string]$LogFileMode = 'NewFile',
         [ValidateRange(1, [int]::MaxValue)]
-        [int]$MaxFileSizeMB
+        [int]$MaxFileSizeMB = 256
     )
 
     if (-not (Test-Path $Path)) {
@@ -1028,14 +1042,12 @@ function Start-OutlookTrace {
         default {throw "Couldn't find the version from $_"}
     }
 
-    $_maxFileSize = $MaxFileSizeMB
-
     # Configure log file mode, filename, and max file size if ncessary.
     if ($LogFileMode -eq 'Circular') {
         $_logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_CIRCULAR"
 
-        if (-not $_maxFileSize) {
-            $_maxFileSize = 2048
+        if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
+            $MaxFileSizeMB = 2048
         }
     }
     else {
@@ -1045,20 +1057,16 @@ function Start-OutlookTrace {
         if ($FileName -notlike "*%d*") {
             $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
         }
-
-        if (-not $_maxFileSize) {
-            $_maxFileSize = 256
-        }
     }
 
     $traceFile = Join-Path $Path -ChildPath $FileName
 
     if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME,$logmanCommand)) {
-        Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`"; traceFile:`"$traceFile`"; logFileMode:`"$_logFileMode`"; maxFileSize: `"$_maxFileSize`""
+        Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`"; traceFile:`"$traceFile`"; logFileMode:`"$_logFileMode`"; maxFileSize: `"$MaxFileSizeMB`""
 
         $err = $($stdout = Invoke-Command {
             $ErrorActionPreference = 'Continue'
-            & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $_maxFileSize -mode $_logFileMode -ets
+            & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $MaxFileSizeMB -mode $_logFileMode -ets
         }) 2>&1
 
         if ($err -or $LASTEXITCODE -ne 0) {
