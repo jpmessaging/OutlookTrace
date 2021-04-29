@@ -3036,7 +3036,6 @@ function Start-CAPITrace {
     }
 
     Write-Log "Starting a CAPI trace"
-    
     $logmanResult = & logman.exe create trace $SessionName -ow -o $traceFile -p "Security: SChannel" 0xffffffffffffffff 0xff -bs 1024 -mode $_logFileMode -max $MaxFileSizeMB -ets
 
     if ($LASTEXITCODE -ne 0) {
@@ -4830,6 +4829,10 @@ function Collect-OutlookInfo {
         [ValidateSet('None', 'Mini', 'Full')]
         # This controls the level of netsh trace report
         $NetshReportMode = 'None',
+        [ValidateSet('NewFile','Circular')]
+        [string]$LogFileMode = 'NewFile',
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$MaxFileSizeMB,
         [ValidateSet('Zip', 'Cab')]
         [string]$ArchiveType = 'Zip',
         [Alias('SkipZip')]
@@ -4917,6 +4920,21 @@ function Collect-OutlookInfo {
 
     # Open-TaskRunspace -Variables (Get-Variable 'logWriter')
     Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces (2 * [int]$env:NUMBER_OF_PROCESSORS)
+
+    # Configure log file mode and max file size for ETW traces (OutlookTrace, WAM, LDAP, and CAPI)
+    $PSDefaultParameterValues['Start-*Trace:LogFileMode'] = $LogFileMode
+    if ($PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
+        $PSDefaultParameterValues['Start-*Trace:MaxFileSizeMB'] = $MaxFileSizeMB
+    }
+    else {
+        # MaxFileSizeMB is not specified by the user. Use default value depending on the log mode.
+        if ($LogFileMode -eq 'NewFile') {
+            $PSDefaultParameterValues['Start-*Trace:MaxFileSizeMB'] = 256
+        }
+        else {
+            $PSDefaultParameterValues['Start-*Trace:MaxFileSizeMB'] = 2048
+        }
+    }
 
     Write-Log "Starting traces"
     try {
