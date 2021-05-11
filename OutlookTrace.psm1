@@ -111,6 +111,17 @@ $wamProviders =
 '@
 
 
+# ETW Logging Mode Constants for logman
+# https://docs.microsoft.com/en-us/windows/win32/etw/logging-mode-constants
+$LogmanMode = [PSCustomObject]@{
+    EVENT_TRACE_FILE_MODE_SEQUENTIAL = "sequential"
+    EVENT_TRACE_FILE_MODE_CIRCULAR   = 'circular'
+    EVENT_TRACE_FILE_MODE_APPEND     = 'append'
+    EVENT_TRACE_FILE_MODE_NEWFILE    = 'newfile'
+    EVENT_TRACE_USE_GLOBAL_SEQUENCE  = 'globalsequence'
+    EVENT_TRACE_USE_LOCAL_SEQUENCE   = 'localsequence'
+}
+
 function Open-Log {
     [CmdletBinding()]
     param (
@@ -974,17 +985,24 @@ function Start-WamTrace {
     $providerFile = Join-Path $Path -ChildPath 'wam.prov'
     Set-Content $wamProviders -Path $providerFile -ErrorAction Stop
 
-    if ($LogFileMode -eq 'Circular') {
-        $_logFileMode = 'globalsequence | EVENT_TRACE_FILE_MODE_CIRCULAR'
-        if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
-            $MaxFileSizeMB = 2048
-        }
-    }
-    else {
-        $_logFileMode = 'globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE'
+    switch ($LogFileMode) {
+        'NewFile' {
+            $mode = @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
 
-        if ($FileName -notlike "*%d*") {
-            $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
+            # In order to use newfile, file name must contain "%d"
+            if ($FileName -notlike "*%d*") {
+                $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
+            }
+            break
+        }
+
+        'Circular' {
+            $mode =  @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+
+            if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
+                $MaxFileSizeMB = 2048
+            }
+            break
         }
     }
 
@@ -993,7 +1011,7 @@ function Start-WamTrace {
     Write-Log "Starting a WAM trace."
     $err = $($stdout = Invoke-Command {
         $ErrorActionPreference = 'Continue'
-        & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $MaxFileSizeMB -mode $_logFileMode -ets
+        & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $MaxFileSizeMB -mode $mode -ets
     }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
@@ -1043,30 +1061,35 @@ function Start-OutlookTrace {
     }
 
     # Configure log file mode, filename, and max file size if ncessary.
-    if ($LogFileMode -eq 'Circular') {
-        $_logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_CIRCULAR"
+    switch ($LogFileMode) {
+        'NewFile' {
+            $mode = @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
 
-        if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
-            $MaxFileSizeMB = 2048
+            # In order to use newfile, file name must contain "%d"
+            if ($FileName -notlike "*%d*") {
+                $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
+            }
+            break
         }
-    }
-    else {
-        $_logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
 
-        # In order to use EVENT_TRACE_FILE_MODE_NEWFILE, file name must contain "%d"
-        if ($FileName -notlike "*%d*") {
-            $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
+        'Circular' {
+            $mode =  @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+
+            if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
+                $MaxFileSizeMB = 2048
+            }
+            break
         }
     }
 
     $traceFile = Join-Path $Path -ChildPath $FileName
 
     if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME,$logmanCommand)) {
-        Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`"; traceFile:`"$traceFile`"; logFileMode:`"$_logFileMode`"; maxFileSize: `"$MaxFileSizeMB`""
+        Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`"; traceFile:`"$traceFile`"; logFileMode:`"$mode`"; maxFileSize: `"$MaxFileSizeMB`""
 
         $err = $($stdout = Invoke-Command {
             $ErrorActionPreference = 'Continue'
-            & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $MaxFileSizeMB -mode $_logFileMode -ets
+            & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $MaxFileSizeMB -mode $mode -ets
         }) 2>&1
 
         if ($err -or $LASTEXITCODE -ne 0) {
@@ -2642,6 +2665,7 @@ function Start-LdapTrace {
         [string]$Path,
         [Parameter(Mandatory=$true, HelpMessage = "Process name to trace. e.g. Outlook.exe")]
         [string]$TargetProcess,
+        [string]$FileName = 'ldap.etl',
         [string]$SessionName = 'LdapTrace',
         [ValidateSet('NewFile','Circular')]
         [string]$LogFileMode = 'NewFile',
@@ -2675,24 +2699,34 @@ function Start-LdapTrace {
     }
 
     # Configure ETW session parameters
-    if ($LogFileMode -eq 'Circular') {
-        $_logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_CIRCULAR"
-        $traceFile = Join-Path $Path -ChildPath "ldap.etl"
+    switch ($LogFileMode) {
+        'NewFile' {
+            $mode = @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
 
-        if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
-            $MaxFileSizeMB = 2048
+            # In order to use newfile, file name must contain "%d"
+            if ($FileName -notlike "*%d*") {
+                $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
+            }
+            break
+        }
+
+        'Circular' {
+            $mode =  @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+
+            if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
+                $MaxFileSizeMB = 2048
+            }
+            break
         }
     }
-    else {
-        $_logFileMode = "globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE"
-        $traceFile = Join-Path $Path -ChildPath "ldap_%d.etl"
-    }
+
+    $traceFile = Join-Path $Path -ChildPath $FileName
 
     # Start ETW session
     Write-Log "Starting a LDAP trace"
     $err = $($stdout = Invoke-Command {
         $ErrorActionPreference = 'Continue'
-        & logman.exe create trace $SessionName -ow -o $traceFile -p Microsoft-Windows-LDAP-Client 0x1a59afa3 0xff -bs 1024 -mode $_logFileMode -max $MaxFileSizeMB -ets
+        & logman.exe create trace $SessionName -ow -o $traceFile -p Microsoft-Windows-LDAP-Client 0x1a59afa3 0xff -bs 1024 -mode $mode -max $MaxFileSizeMB -ets
     }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
@@ -3006,11 +3040,12 @@ function Save-MSInfo32 {
     }
 }
 
-function Start-CAPITrace {
+function Start-CapiTrace {
     [CmdletBinding(PositionalBinding=$false)]
     param(
         [Parameter(Mandatory=$true, Position=0)]
         [string]$Path,
+        [string]$FileName = 'capi.etl',
         [string]$SessionName = 'CapiTrace',
         [ValidateSet('NewFile','Circular')]
         [string]$LogFileMode = 'NewFile',
@@ -3023,20 +3058,31 @@ function Start-CAPITrace {
     }
     $Path = Resolve-Path $Path
 
-    if ($LogFileMode -eq 'Circular') {
-        $_logFileMode = 'globalsequence | EVENT_TRACE_FILE_MODE_CIRCULAR'
-        $traceFile = Join-Path $Path -ChildPath 'capi.etl'
-        if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
-            $MaxFileSizeMB = 2048
+    switch ($LogFileMode) {
+        'NewFile' {
+            $mode = @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
+
+            # In order to use newfile, file name must contain "%d"
+            if ($FileName -notlike "*%d*") {
+                $FileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName) + "_%d.etl"
+            }
+            break
+        }
+
+        'Circular' {
+            $mode =  @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+
+            if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
+                $MaxFileSizeMB = 2048
+            }
+            break
         }
     }
-    else {
-        $_logFileMode = 'globalsequence | EVENT_TRACE_FILE_MODE_NEWFILE'
-        $traceFile = Join-Path $Path -ChildPath 'capi_%d.etl'
-    }
+
+    $traceFile = Join-Path $Path -ChildPath $FileName
 
     Write-Log "Starting a CAPI trace"
-    $logmanResult = & logman.exe create trace $SessionName -ow -o $traceFile -p "Security: SChannel" 0xffffffffffffffff 0xff -bs 1024 -mode $_logFileMode -max $MaxFileSizeMB -ets
+    $logmanResult = & logman.exe create trace $SessionName -ow -o $traceFile -p "Security: SChannel" 0xffffffffffffffff 0xff -bs 1024 -mode $mode -max $MaxFileSizeMB -ets
 
     if ($LASTEXITCODE -ne 0) {
         Write-Error "logman failed. exit code: $LASTEXITCODE; stdout: $logmanResult"
@@ -4716,6 +4762,90 @@ function Stop-GatherNetworkInfo {
     $process.Dispose()
 }
 
+function Start-PerfTrace {
+    [CmdletBinding(PositionalBinding=$false)]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path,
+        [string]$FileName = 'perf',
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$IntervalSecond = 1,
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$MaxFileSizeMB = 1024,
+        [ValidateSet('NewFile','Circular')]
+        [string]$LogFileMode = 'NewFile'
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+    $Path = Resolve-Path $Path
+    
+    $counters = @(
+        '\LogicalDisk(*)\*'
+        '\Memory\*'
+        '\Network Interface(*)\*'
+        '\Paging File(*)\*'
+        '\PhysicalDisk(*)\*'
+        '\Process(*)\*'
+        '\Processor Information(*)\*'
+        '\Processor(*)\*'
+        '\TCPv4\*'
+        '\TCPv6\*'
+    )
+
+    $configFile = Join-Path $Path "perf.config"
+    Out-File -FilePath $configFile -InputObject $counters -Force -Encoding "ascii"
+    
+    $filePath = Join-Path $Path $FileName
+    Write-Log "Staring PerfCounter. Mode: $LogFileMode, IntervalSecond: $IntervalSecond, MaxFileSizeMB: $MaxFileSizeMB, FilePath: $filePath"
+
+    switch ($LogFileMode) {
+        'NewFile' {
+            #$stdout = & logman.exe create counter -n 'PerfCounter' -cf $configFile -si $IntervalSecond -max $MaxFileSizeMB -o $filePath -cnf 0 -ow -v 'nnnnnn' -f 'csv'
+            $stdout = & logman.exe create counter -n 'PerfCounter' -cf $configFile -si $IntervalSecond -max $MaxFileSizeMB -o $filePath -ow -v 'mmddhhmm' -f 'bin' -cnf 0
+            break
+        }
+
+        'Circular' {
+            $stdout = & logman.exe create counter -n 'PerfCounter' -cf $configFile -si $IntervalSecond -max $MaxFileSizeMB -o $filePath -ow -v 'mmddhhmm' -f 'bincirc' # -cnf 0
+            break
+        }
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "logman failed with 0x$('{0:x}'-f $LASTEXITCODE). $stdout"
+    }
+
+    $stdout = & logman.exe start 'PerfCounter'
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "logman failed with 0x$('{0:x}'-f $LASTEXITCODE). $stdout"
+    }
+}
+
+function Stop-PerfTrace {
+    [CmdletBinding(PositionalBinding=$false)]
+    param(
+        [string]$DataCollectorSetName = 'PerfCounter'
+    )
+
+    $stdout = & logman query $DataCollectorSetName
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "logman query $DataCollectorSetName failed with 0x$('{0:x}' -f $LASTEXITCODE). $stdout"
+        return
+    }
+
+    Write-Log "Stopping $DataCollectorSetName"
+    $stdout = & logman.exe stop $DataCollectorSetName
+    $stdout = & logman.exe delete $DataCollectorSetName
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "logman failed with 0x$('{0:x}' -f $LASTEXITCODE). $stdout"
+        return
+    }
+}
+
 <#
 Get processes and its user (only for Outlook.exe).
 PowerShell 4's Get-Process has -IncludeUserName, but I'm using WMI here for now.
@@ -4823,7 +4953,7 @@ function Collect-OutlookInfo {
         # Folder to place collected data
         $Path,
         [Parameter(Mandatory=$true)]
-        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'WFP', 'TTD')]
+        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance')]
         # What to collect
         [array]$Component,
         [ValidateSet('None', 'Mini', 'Full')]
@@ -5070,6 +5200,11 @@ function Collect-OutlookInfo {
             $wfpStarted = $true
         }
 
+        if ($Component -contains 'Performance') {
+            Start-PerfTrace -Path (Join-Path $tempPath 'Performance')
+            $perfStarted = $true
+        }
+
         if ($Component -contains 'CrashDump') {
             Add-WerDumpKey -Path (Join-Path $tempPath 'WerDump') -TargetProcess 'Outlook.exe'
             $crashDumpStarted = $true
@@ -5135,7 +5270,7 @@ function Collect-OutlookInfo {
             $ttdStarted = $true
         }
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted) {
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted) {
             Write-Log "Waiting for the user to stop"
             Read-Host "Hit enter to stop"
         }
@@ -5214,6 +5349,10 @@ function Collect-OutlookInfo {
 
         if ($wfpStarted) {
             Stop-WfpTrace $wfpJob
+        }
+
+        if ($perfStarted) {
+            Stop-PerfTrace
         }
 
         if ($crashDumpStarted) {
@@ -5336,4 +5475,4 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
     $PSDefaultParameterValues.Add("Out-File:Encoding", 'utf8')
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Collect-OutlookInfo
