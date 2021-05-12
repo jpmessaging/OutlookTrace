@@ -1463,17 +1463,18 @@ function Start-PSR {
     param(
         [parameter(Mandatory = $true)]
         $Path,
-        $FileName = "PSR.zip",
+        $FileName = "PSR.mht",
         [switch]$ShowGUI
     )
 
     if (-not (Test-Path $Path -ErrorAction Stop)) {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
+    $Path = Resolve-Path $Path
 
-    # File name must be ***.zip
-    if ([IO.Path]::GetExtension($FileName) -ne ".zip"){
-        $FileName = [IO.Path]::GetFileNameWithoutExtension($FileName) + '.zip'
+    # File name must be ***.mht
+    if ([IO.Path]::GetExtension($FileName) -ne ".mht"){
+        $FileName = [IO.Path]::GetFileNameWithoutExtension($FileName) + '.mht'
     }
 
     # For Win7, maxsc is 100
@@ -1495,10 +1496,10 @@ function Start-PSR {
     Write-Log "Starting PSR $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
     $outputFile = Join-Path $Path -ChildPath $FileName
     if ($ShowGUI) {
-        & psr /start /maxsc $maxScreenshotCount /maxlogsize 10 /output $outputFile /exitonsave 1
+        & psr /start /maxsc $maxScreenshotCount /maxlogsize 10 /output $outputFile /exitonsave 1 /noarc 1
     }
     else {
-        & psr /start /maxsc $maxScreenshotCount /maxlogsize 10 /output $outputFile /exitonsave 1 /gui 0
+        & psr /start /maxsc $maxScreenshotCount /maxlogsize 10 /output $outputFile /exitonsave 1 /gui 0 /noarc 1
     }
 
     # PSR doesn't return anything even on failure. Check if process is spawned.
@@ -1513,16 +1514,36 @@ function Stop-PSR {
     [CmdletBinding()]
     param ()
 
-    $process = Get-Process -Name psr -ErrorAction SilentlyContinue
-    if (-not $process){
+    $currentInstance = Get-Process -Name psr -ErrorAction SilentlyContinue
+
+    if (-not $currentInstance){
         Write-Error 'There is no psr.exe process'
         return
     }
 
     Write-Log 'Stopping PSR'
-    & psr /stop
+    $stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru
 
-    Wait-Process -InputObject $process
+    Wait-Process -InputObject $currentInstance
+
+    # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hang.
+    # The existing instance is supposed to signal an event and 'psr /stop' instance is waiting for this event to be signaled. But it seems this does not happen when there were no clicks.
+    # So to avoid this, the following code manually single the handle so that 'psr /stop' shuts down.
+    try {
+        $PSR_CLEANUP_COMPLETED = '{CD3E5009-5C9D-4E9B-B5B6-CAE1D8799AE3}'
+        $h = [System.Threading.EventWaitHandle]::OpenExisting($PSR_CLEANUP_COMPLETED)
+        $h.Set() | Out-Null
+        Write-Log "PSR_CLEANUP_COMPLETED was manually signaled."
+        Wait-Process -InputObject $stopInstance
+    }
+    catch {
+        # ignore
+    }
+    finally {
+        if ($stopInstance) {
+            $stopInstance.Dispose()
+        }
+    }
 }
 
 function Save-EventLog {
@@ -4780,7 +4801,7 @@ function Start-PerfTrace {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
     $Path = Resolve-Path $Path
-    
+
     $counters = @(
         '\LogicalDisk(*)\*'
         '\Memory\*'
@@ -4796,7 +4817,7 @@ function Start-PerfTrace {
 
     $configFile = Join-Path $Path "perf.config"
     Out-File -FilePath $configFile -InputObject $counters -Force -Encoding "ascii"
-    
+
     $filePath = Join-Path $Path $FileName
     Write-Log "Staring PerfCounter. Mode: $LogFileMode, IntervalSecond: $IntervalSecond, MaxFileSizeMB: $MaxFileSizeMB, FilePath: $filePath"
 
@@ -4969,7 +4990,8 @@ function Collect-OutlookInfo {
         [switch]$SkipArchive,
         # AutoFlush log file
         [switch]$AutoFlush,
-        [switch]$SkipAutoUpdate
+        [switch]$SkipAutoUpdate,
+        [int]$PsrRecycleIntervalMin = 10
     )
 
     # Explicitly check admin rights
@@ -5165,7 +5187,29 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'PSR') {
-            Start-PSR -Path $tempPath #-ShowGUI
+            # Start PSR as a task and restart after some time until canceled.
+            # This task creates PSR_***.mht in $psrPath.
+            $psrCts = New-Object System.Threading.CancellationTokenSource
+            $psrPath = Join-Path $tempPath 'PSR'
+
+            $psrTask = Start-Task -ScriptBlock {
+                param(
+                    [string]$path,
+                    [System.Threading.CancellationToken]$cancelToken,
+                    [int]$waitDurationMS
+                )
+
+                while ($true) {
+                    Start-PSR -Path $path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')"
+                    $canceled = $cancelToken.WaitHandle.WaitOne($waitDurationMS)
+                    Stop-PSR
+                    if ($canceled) {
+                        Write-Log "PSR task cancellation is acknowledged."
+                        break
+                    }
+                }
+            } -ArgumentList $psrPath, $psrCts.Token, ($PsrRecycleIntervalMin * 60 * 1000)
+
             $psrStarted = $true
         }
 
@@ -5364,16 +5408,9 @@ function Collect-OutlookInfo {
         }
 
         if ($psrStarted) {
-            Stop-PSR
-            try {
-                Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
-                $psrZipFile = Join-Path $tempPath 'PSR.zip'
-                [IO.Compression.ZipFile]::ExtractToDirectory($psrZipFile, (Join-Path $tempPath 'PSR'))
-                Remove-Item $psrZipFile
-            }
-            catch {
-                Write-Log -Message "Failed to unzip $psrZipFile. $_"
-            }
+            # Cancel PSR task.
+            $psrCts.Cancel()
+            $(Receive-Task $psrTask -AutoRemoveTask) 2>&1 | Write-Log
         }
 
         Write-Progress -Activity 'Stopping traces' -Status "Please wait." -Completed
