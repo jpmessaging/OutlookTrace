@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-04-26'
+$Version = 'v2021-05-16'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -1085,7 +1085,7 @@ function Start-OutlookTrace {
     $traceFile = Join-Path $Path -ChildPath $FileName
 
     if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME,$logmanCommand)) {
-        Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`"; traceFile:`"$traceFile`"; logFileMode:`"$mode`"; maxFileSize: `"$MaxFileSizeMB`""
+        Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`", traceFile:`"$traceFile`", logFileMode:`"$mode`", maxFileSize: `"$MaxFileSizeMB`""
 
         $err = $($stdout = Invoke-Command {
             $ErrorActionPreference = 'Continue'
@@ -1250,7 +1250,7 @@ function Stop-NetshTrace {
     if ($err -or $LASTEXITCODE -ne 0) {
         Write-Log "Failed to stop netsh trace ($SessionName). exit code: $LASTEXITCODE; stdout: $stdout; error: $err"
         Write-Log "Stopping with Stop-EtwSession"
-        Stop-EtwSession -SessionName $SessionName
+        Stop-EtwSession -SessionName $SessionName -ErrorAction SilentlyContinue
     }
 
     Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
@@ -1493,7 +1493,6 @@ function Start-PSR {
         return
     }
 
-    Write-Log "Starting PSR $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
     $outputFile = Join-Path $Path -ChildPath $FileName
     if ($ShowGUI) {
         & psr /start /maxsc $maxScreenshotCount /maxlogsize 10 /output $outputFile /exitonsave 1 /noarc 1
@@ -1508,6 +1507,8 @@ function Start-PSR {
         Write-Error "PSR failed to start"
         return
     }
+
+    Write-Log "PSR started $(if ($ShowGUI) {'with UI'} else {'without UI'}). PID: $($process.Id), maxScreenshotCount: $maxScreenshotCount"
 }
 
 function Stop-PSR {
@@ -5066,12 +5067,9 @@ function Collect-OutlookInfo {
     Write-Log "Parameters $($sb.ToString())"
 
     # To use Start-Task, make sure to open runspaces first and close it when finished.
-    # MaxRunspaces should be greater than or equal to 2. If it's 1, some tasks may never finish.
-    # Here's why: there's a task "outlookMonitorTask", which keeps (mostly) sleeping. But it occupies a runspace from the pool.
-    # If there is only one runspace available in the pool, other tasks that started after outlookMonitorTask never get a chance to run.
-
+    # Currently MaxRunspaces is 6 or more because there are 6 tasks at most. 2 of them, outlookMonitorTask and psrTask, are long running.
+    Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(6, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
     # Open-TaskRunspace -Variables (Get-Variable 'logWriter')
-    Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces (2 * [int]$env:NUMBER_OF_PROCESSORS)
 
     # Configure log file mode and max file size for ETW traces (OutlookTrace, WAM, LDAP, and CAPI)
     $PSDefaultParameterValues['Start-*Trace:LogFileMode'] = $LogFileMode
@@ -5168,6 +5166,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Netsh') {
+            Write-Progress -Activity "Starting Netsh trace" -Status "Please wait" -PercentComplete -1
             # When netsh trace is run for the first time, it does not capture packets (even with "capture=yes").
             # To workaround, netsh is started and stopped immediately.
             $tempNetshName = 'netsh_test'
@@ -5176,6 +5175,7 @@ function Collect-OutlookInfo {
             Remove-Item (Join-Path $tempPath $tempNetshName) -Recurse -Force -ErrorAction SilentlyContinue
 
             Start-NetshTrace -Path (Join-Path $tempPath 'Netsh') -RerpotMode $NetshReportMode
+            Write-Progress -Activity "Starting Netsh trace" -Completed
             $netshTraceStarted = $true
         }
 
@@ -5188,28 +5188,43 @@ function Collect-OutlookInfo {
 
         if ($Component -contains 'PSR') {
             # Start PSR as a task and restart after some time until canceled.
-            # This task creates PSR_***.mht in $psrPath.
+            # This task creates PSR_***.mht in $psrPath. When LogFileMode is 'Circular', only files writen within the last 1 hour will be kept.
             $psrCts = New-Object System.Threading.CancellationTokenSource
             $psrPath = Join-Path $tempPath 'PSR'
+            $psrStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
+
+            Write-Log "Starting a PSR task. PsrRecycleIntervalMin: $PsrRecycleIntervalMin"
 
             $psrTask = Start-Task -ScriptBlock {
                 param(
                     [string]$path,
                     [System.Threading.CancellationToken]$cancelToken,
-                    [int]$waitDurationMS
+                    [int]$waitDurationMS,
+                    $psrStartedEvent,
+                    [bool]$circular
                 )
 
                 while ($true) {
                     Start-PSR -Path $path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')"
+                    $psrStartedEvent.Set() | Out-Null
                     $canceled = $cancelToken.WaitHandle.WaitOne($waitDurationMS)
                     Stop-PSR
                     if ($canceled) {
                         Write-Log "PSR task cancellation is acknowledged."
                         break
                     }
+                    if ($circular) {
+                        $removedCount = 0
+                        $cutoff = [datetime]::Now.AddHours(-1)
+                        Get-ChildItem $path -Filter '*.mht' | Where-Object {$_.LastWriteTime -lt $cutoff} | ForEach-Object { Remove-Item $_.FullName; $removedCount++ }
+                        if ($removedCount) {
+                            Write-Log "$removedCount mht files were removed because they were older than 1 hour"
+                        }
+                    }
                 }
-            } -ArgumentList $psrPath, $psrCts.Token, ($PsrRecycleIntervalMin * 60 * 1000)
+            } -ArgumentList $psrPath, $psrCts.Token, ($PsrRecycleIntervalMin * 60 * 1000), $psrStartedEvent, ($LogFileMode -eq 'Circular')
 
+            $psrStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan) | Out-Null
             $psrStarted = $true
         }
 
@@ -5245,7 +5260,9 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Performance') {
+            Write-Progress -Activity "Starting performance trace" -Status "Please wait" -PercentComplete -1
             Start-PerfTrace -Path (Join-Path $tempPath 'Performance')
+            Write-Progress -Activity "Starting performance trace" -Completed
             $perfStarted = $true
         }
 
