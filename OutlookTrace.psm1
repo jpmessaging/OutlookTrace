@@ -2099,7 +2099,7 @@ function Save-NetworkInfo {
         # 'Test-NetConnection bing.com -InformationLevel Detailed -CommonTCPPort HTTP'
         {Get-NetRoute} = $null
         {Get-NetIPaddress} = $null
-        {Get-NetLbfoTeam} = $null
+        # {Get-NetLbfoTeam} = $null
 
         # {Get-Service -Name:VMMS} = $null
         # {Get-VMSwitch} = $null
