@@ -2504,15 +2504,17 @@ function Get-OutlookProfile {
     }
 
     # List Outlook "profiles" keys
-    $profiles = @(
-        $versionKeys = @(Get-ChildItem (Join-Path $userRegRoot 'Software\Microsoft\Office\') -ErrorAction SilentlyContinue | Where-Object {$_.Name -match '\d\d\.0'})
-        if ($versionKeys.Count) {
-            foreach ($versionKey in $versionKeys) {
-                Get-ChildItem (Join-Path $versionKey.PsPath '\Outlook\Profiles') -ErrorAction SilentlyContinue
-                $versionKey.Close()
-            }
+    $profiles = New-Object System.Collections.Generic.List[object]
+    $versionKeys = @(Get-ChildItem (Join-Path $userRegRoot 'Software\Microsoft\Office\') -ErrorAction SilentlyContinue | Where-Object {$_.Name -match '\d\d\.0'})
+    $defaultProfile = $null
+
+    foreach ($versionKey in $versionKeys) {
+        Get-ChildItem (Join-Path $versionKey.PsPath '\Outlook\Profiles') -ErrorAction SilentlyContinue | ForEach-Object {$profiles.Add($_)}
+        if (-not $defaultProfile) {
+            $defaultProfile = Get-ItemProperty (Join-Path $versionKey.PsPath 'Outlook') -Name 'DefaultProfile' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultProfile'
         }
-    )
+        $versionKey.Close()
+    }
 
     if (-not $profiles.Count) {
         Write-Log "There are no profiles for $User."
@@ -2563,6 +2565,7 @@ function Get-OutlookProfile {
         [PSCustomObject]@{
             User = $User
             Profile = $profile.Name
+            IsDefault = (Split-Path $profile.Name -Leaf) -eq $defaultProfile
             CachedMode = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
             DownloadPublicFolderFavorites = $CACHE_PUBLIC
             DownloadSharedFolders = $CACHE_DELEGATE_PIM
