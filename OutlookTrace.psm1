@@ -4995,7 +4995,7 @@ function Collect-OutlookInfo {
         # AutoFlush log file
         [switch]$AutoFlush,
         [switch]$SkipAutoUpdate,
-        [int]$PsrRecycleIntervalMin = 10
+        [int]$PsrRecycleIntervalMin = 5
     )
 
     # Explicitly check admin rights
