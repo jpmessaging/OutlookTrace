@@ -35,7 +35,7 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 
     例:
     ```
-    Collect-OutlookInfo -Path c:\temp -Component Configuration, Netsh, Outlook
+    Collect-OutlookInfo -Path C:\temp -Component Configuration, Outlook, Netsh, PSR, WAM
     ```
 
 7. 正常にトレースが開始されると、"Hit enter to stop" と表示されます。

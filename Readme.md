@@ -34,7 +34,7 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
     e.g.
     ```
-    Collect-OutlookInfo -Path c:\temp -Component Configuration, Netsh, Outlook
+    Collect-OutlookInfo -Path C:\temp -Component Configuration, Outlook, Netsh, PSR, WAM
     ```
 
 7. When traces have started successfully, it shows "Hit enter to stop".
