@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-05-31'
+$Version = 'v2021-06-03'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -2028,22 +2028,23 @@ function Save-OSConfiguration {
         New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
     }
 
-    # Key = command to run, Value = file name used for saving
-    $commands = [ordered]@{
-        {Get-WmiObject -Class Win32_ComputerSystem} = 'Win32_ComputerSystem.xml'
-        {Get-WmiObject -Class Win32_OperatingSystem} = 'Win32_OperatingSystem.xml'
-        {Get-ProxySetting} = $null
-        {Get-NLMConnectivity} = $null
-        {Get-WSCAntivirus} = $null
-        {Get-InstalledUpdate} = $null
-        {Get-JoinInformation} = $null
-        {Get-DeviceJoinStatus} = 'DeviceJoinStatus.txt'
-    }
+    $lognUser = Get-LogonUser -ErrorAction SilentlyContinue
 
-    $commands.GetEnumerator() | ForEach-Object {
-        $command = $_.Key
-        $fileName = $_.Value
-        Run-Command $command -Path $Path -FileName $fileName
+    $commands = @(
+        @{ScriptBlock = {Get-WmiObject -Class Win32_ComputerSystem}; FileName = 'Win32_ComputerSystem.xml'}
+        @{ScriptBlock = {Get-WmiObject -Class Win32_OperatingSystem}; FileName = 'Win32_OperatingSystem.xml'}
+        # @{ScriptBlock = {param($User) Get-ProxySetting -User $user}}
+        @{ScriptBlock = {Get-WinHttpDefaultProxy}}
+        @{ScriptBlock = {param($logonUser) Get-WinInetProxy -User $logonUser.Name}; ArgumentList = $lognUser}
+        @{ScriptBlock = {Get-NLMConnectivity}}
+        @{ScriptBlock = {Get-WSCAntivirus}}
+        @{ScriptBlock = {Get-InstalledUpdate}}
+        @{ScriptBlock = {Get-JoinInformation}}
+        @{ScriptBlock = {Get-DeviceJoinStatus}; FileName = 'DeviceJoinStatus.txt'}
+    )
+
+    foreach ($command in $commands) {
+        Run-Command @command -Path $Path
     }
 }
 
@@ -2085,47 +2086,42 @@ function Save-NetworkInfo {
     }
 
     # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
-    # Key = command to run, Value = file name used for saving. When file name is $null, Run-Command decides the file name.
-    $commands = [ordered]@{
-        {Get-NetAdapter -IncludeHidden} = $null
-        {Get-NetAdapterAdvancedProperty} = $null
-        {Get-NetAdapterBinding -IncludeHidden} = $null
-        {Get-NetIpConfiguration -Detailed} = $null
-        {Get-DnsClientNrptPolicy} = $null
-        # 'Resolve-DnsName bing.com'
-        # 'ping bing.com -4'
-        # 'ping bing.com -6'
-        # 'Test-NetConnection bing.com -InformationLevel Detailed'
-        # 'Test-NetConnection bing.com -InformationLevel Detailed -CommonTCPPort HTTP'
-        {Get-NetRoute} = $null
-        {Get-NetIPaddress} = $null
-        # {Get-NetLbfoTeam} = $null
-
-        # {Get-Service -Name:VMMS} = $null
-        # {Get-VMSwitch} = $null
-        # {Get-VMNetworkAdapter -all} = $null
-        # {Get-WindowsOptionalFeature -Online} = $null
-        # {Get-Service} = $null
-        # {Get-PnpDevice | Get-PnpDeviceProperty -KeyName DEVPKEY_Device_InstanceId,DEVPKEY_Device_DevNodeStatus,DEVPKEY_Device_ProblemCode} = $null
-
-        {Get-NetIPInterface} = $null
-        {Get-NetConnectionProfile} = $null
-        {ipconfig /all} = $null
+    $commands = @(
+        @{ScriptBlock = {Get-NetAdapter -IncludeHidden}}
+        @{ScriptBlock = {Get-NetAdapterAdvancedProperty}}
+        @{ScriptBlock = {Get-NetAdapterBinding -IncludeHidden}}
+        @{ScriptBlock = {Get-NetIpConfiguration -Detailed}}
+        @{ScriptBlock = {Get-DnsClientNrptPolicy}}
+        # @{ScriptBlock = {Resolve-DnsName 'bing.com'}}
+        # @{ScriptBlock = {ping bing.com -4}}
+        # @{ScriptBlock = {ping bing.com -6}}
+        # @{ScriptBlock = {Test-NetConnection 'bing.com' -InformationLevel Detailed}}
+        # @{ScriptBlock = {Test-NetConnection 'bing.com' -InformationLevel Detailed -CommonTCPPort HTTP}}
+        @{ScriptBlock = {Get-NetRoute}}
+        @{ScriptBlock = {Get-NetIPaddress}}
+        # @{ScriptBlock = {Get-NetLbfoTeam}}
+        # @{ScriptBlock = {Get-Service -Name:VMMS}}
+        # @{ScriptBlock = {Get-VMSwitch}}
+        # @{ScriptBlock = {Get-VMNetworkAdapter -all}}
+        # @{ScriptBlock = {Get-WindowsOptionalFeature -Online}}
+        # @{ScriptBlock = {Get-Service}}
+        # @{ScriptBlock = {Get-PnpDevice | Get-PnpDeviceProperty -KeyName DEVPKEY_Device_InstanceId,DEVPKEY_Device_DevNodeStatus,DEVPKEY_Device_ProblemCode}}
+        @{ScriptBlock = {Get-NetIPInterface}}
+        @{ScriptBlock = {Get-NetConnectionProfile}}
+        @{ScriptBlock = {ipconfig /all}}
 
         # Dump Windows Firewall config
-        {netsh advfirewall monitor show currentprofile} = $null # current profiles
-        {netsh advfirewall monitor show firewall} = $null # firewall configuration
-        {netsh advfirewall monitor show consec} = $null # connection security configuration
-        {netsh advfirewall firewall show rule name=all verbose} = $null # firewall rules
-        {netsh advfirewall consec show rule name=all verbose} = $null # connection security rules
-        {netsh advfirewall monitor show firewall rule name=all} = $null # firewall rules from Dynamic Store
-        {netsh advfirewall monitor show consec rule name=all} = $null # connection security rules from Dynamic Store
-    }
+        @{ScriptBlock = {netsh advfirewall monitor show currentprofile}}
+        @{ScriptBlock = {netsh advfirewall monitor show firewall}}
+        @{ScriptBlock = {netsh advfirewall monitor show consec}}
+        @{ScriptBlock = {netsh advfirewall firewall show rule name=all verbose}}
+        @{ScriptBlock = {netsh advfirewall consec show rule name=all verbose}}
+        @{ScriptBlock = {netsh advfirewall monitor show firewall rule name=all}}
+        @{ScriptBlock = {netsh advfirewall monitor show consec rule name=all}}
+    )
 
-    $commands.GetEnumerator() | ForEach-Object {
-        $command = $_.Key
-        $fileName = $_.Value
-        Run-Command $command -Path $Path -FileName $fileName
+    foreach ($command in $commands) {
+        Run-Command @command -Path $Path
     }
 }
 
@@ -2258,7 +2254,7 @@ function Save-NetworkInfoMT {
     Write-Log "All tasks are complete."
 }
 
-function Get-ProxySetting {
+function Get-ProxySetting_old {
     [CmdletBinding()]
     param(
     )
@@ -2350,6 +2346,324 @@ public static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURR
 
     Write-Log "UserIE*** properties correspond to WINHTTP_CURRENT_USER_IE_PROXY_CONFIG obtained by WinHttpGetIEProxyConfigForCurrentUser. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info"
     Write-Log "WinHttp*** properties correspond to WINHTTP_PROXY_INFO obtained by WinHttpGetDefaultProxyConfiguration. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config"
+
+    [PSCustomObject]$props
+}
+
+<#
+.SYNOPSIS
+    Get WinInet proxy settings for a user.
+
+.DESCRIPTION
+    Get WinInet proxy settings for a user. If User is not give, the current user is used.
+
+.EXAMPLE
+    Get-WinInetProxy -User user01
+
+    ProxySettingsPerUser :
+    User                 : Admin
+    Connection           : DefaultConnectionSettings
+    AutoDetect           : True
+    AutoConfigUrl        :
+    Proxy                : myproxy2:8081
+    ProxyBypass          : <local>
+#>
+function Get-WinInetProxy {
+    [CmdletBinding(PositionalBinding=$false)]
+    param(
+        [Parameter(Position=0)]
+        [string]$User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name.Split('\')[1]
+    )
+
+    # For now, I want to include the result of WinHttpGetIEProxyConfigForCurrentUser because it automatically gets the WinInet proxy setting of "acitve" connection.
+    # I do not know how to determine which connection is active yet.
+    Add-WinHttpType
+    $props = [ordered]@{}
+    $winInetProxy = New-Object Win32.WinHttp+WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
+
+    if ([Win32.WinHttp]::WinHttpGetIEProxyConfigForCurrentUser([ref] $winInetProxy)) {
+        $props['fAutoDetect'] = $winInetProxy.fAutoDetect
+        $props['lpszAutoConfigUrl'] = if ($winInetProxy.lpszAutoConfigUrl) { MarshalString $winInetProxy.lpszAutoConfigUrl }
+        $props['lpszProxy'] = if ($winInetProxy.lpszProxy) { MarshalString $winInetProxy.lpszProxy}
+        $props['lpszProxyBypass'] = if ($winInetProxy.lpszProxyBypass) { MarshalString $winInetProxy.lpszProxyBypass}
+        $props['User'] = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $currentUserActiveConnProxy = [PSCustomObject]$props
+    }
+    else {
+        Write-Error ("Win32 WinHttpGetIEProxyConfigForCurrentUser failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+    }
+
+    # If ProxySettingsPerUser is 0, then HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections will be referenced instead of a current user's registry.
+    $proxySettingsPerUser = Get-ItemProperty 'Registry::HKLM\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings' -Name 'ProxySettingsPerUser' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'ProxySettingsPerUser'
+
+    if ($proxySettingsPerUser -eq 0) {
+        $regRoot = 'Registry::HKLM'
+    }
+    else {
+        $err = $($regRoot = Get-UserRegistryRoot -User $User) 2>&1
+        if (-not $regRoot) {
+            Write-Error "Cannot get user $User's registry root. $err"
+            return
+        }
+    }
+
+    # From wininet.h
+    $PER_CONN_FLAGS = @{
+        PROXY_TYPE_DIRECT         = 1
+        PROXY_TYPE_PROXY          = 2
+        PROXY_TYPE_AUTO_PROXY_URL = 4
+        PROXY_TYPE_AUTO_DETECT    = 8
+    }
+
+    # There might be multiple connections besides "DefaultConnectionSettings" if there are VPNs.
+    $connectionsKey = Join-Path $regRoot 'SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections'
+    $connections = @(Get-Item $connectionsKey | Select-Object -ExpandProperty Property)
+
+    # It's possible that there is no connection at all (maybe IE has never been started).
+    # In this case, return the default configuration (This is what WinHttpGetIEProxyConfigForCurrentUser does anyway).
+    if ($connections.Count -eq 0) {
+        Write-Log "No connections are found under $connectionsKey. Returning a default setting."
+        $props = [ordered]@{}
+        $props['ProxySettingsPerUser'] = $proxySettingsPerUser
+        $props['User'] = $User
+        $props['Connection'] = 'DefaultConnectionSettings'
+        $props['AutoDetect'] = $true
+        $props['AutoConfigUrl'] = $null
+        $props['Proxy'] = $null
+        $props['ProxyBypass'] = $null
+        $props['ActiveConnectionProxy'] = $currentUserActiveConnProxy
+        [PSCustomObject]$props
+        return
+    }
+
+    foreach ($connection in $connections) {
+        # Skip SavedLegacySettings & WinHttpSettings (in HKLM)
+        if ($connection -eq 'SavedLegacySettings' -or $connection -eq 'WinHttpSettings') {
+            continue
+        }
+
+        $raw = $null
+        $raw = Get-ItemProperty $connectionsKey -Name $connection -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $connection
+        #$raw = Get-ItemPropertyValue $connectionsKey -Name $connection
+        if (-not $raw) {
+            continue
+        }
+
+        # Parse the data
+        $structversion = [BitConverter]::ToInt32($raw, 0)
+        $settingsVersion = [BitConverter]::ToInt32($raw, 4)
+        $flags = [BitConverter]::ToInt32($raw, 8)
+
+        $proxySize = [BitConverter]::ToInt32($raw, 12)
+        $proxy = [Text.Encoding]::ASCII.GetString($raw, 16, $proxySize)
+        $position = 16 + $proxySize
+
+        $proxyBypassSize = [BitConverter]::ToInt32($raw, $position)
+        $proxyBypass = [Text.Encoding]::ASCII.GetString($raw, $position + 4, $proxyBypassSize)
+        $position += 4 + $proxyBypassSize
+
+        $autoConfigUrlSize = [BitConverter]::ToInt32($raw, $position)
+        $autoConfigUrl = [Text.Encoding]::ASCII.GetString($raw, $position + 4, $autoConfigUrlSize)
+
+        $winInetProxy = [PSCustomObject]@{
+            StructVersion = $structversion
+            SettingsVersion = $settingsVersion
+            Flags = $flags
+            Proxy = $proxy
+            ProxyBypass = $proxyBypass
+            AutoConfigUrl = $autoConfigUrl
+        }
+
+        $props = [ordered]@{}
+        $props['ProxySettingsPerUser'] = $proxySettingsPerUser
+        $props['User'] = $User
+        $props['Connection'] = $connection
+
+        $props['AutoDetect'] = ($winInetProxy.Flags -band $PER_CONN_FLAGS['PROXY_TYPE_AUTO_DETECT']) -as [bool]
+        $props['AutoConfigUrl'] = if ($flags -band $PER_CONN_FLAGS['PROXY_TYPE_AUTO_PROXY_URL'] -and $winInetProxy.AutoConfigUrl) {$winInetProxy.AutoConfigUrl}
+        $props['Proxy'] = if ($winInetProxy.Flags -band $PER_CONN_FLAGS['PROXY_TYPE_PROXY'] -and $winInetProxy.Proxy) {$winInetProxy.Proxy}
+        $props['ProxyBypass'] = if ($winInetProxy.Flags -band $PER_CONN_FLAGS['PROXY_TYPE_PROXY'] -and $winInetProxy.ProxyBypass) {$winInetProxy.ProxyBypass}
+
+        # This data is temporarily.
+        if (-not $activeConnAdded -and $currentUserActiveConnProxy) {
+            $props['ActiveConnectionProxy'] = $currentUserActiveConnProxy
+            $activeConnAdded = $true
+        }
+
+        [PSCustomObject]$props
+    }
+}
+
+function Add-WinHttpType {
+    $WinHttpDef = @'
+// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public struct WINHTTP_PROXY_INFO
+{
+    public ProxyAccessType dwAccessType;
+    public IntPtr lpszProxy;
+    public IntPtr lpszProxyBypass;
+}
+
+// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+public struct WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
+{
+    public bool fAutoDetect;
+    public IntPtr lpszAutoConfigUrl;
+    public IntPtr lpszProxy;
+    public IntPtr lpszProxyBypass;
+}
+
+// From winhttp.h
+// WinHttpOpen dwAccessType values (also for WINHTTP_PROXY_INFO::dwAccessType)
+public enum ProxyAccessType
+{
+    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY = 0,
+    WINHTTP_ACCESS_TYPE_NO_PROXY = 1,
+    WINHTTP_ACCESS_TYPE_NAMED_PROXY = 3,
+    WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY = 4
+}
+
+// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetdefaultproxyconfiguration
+[DllImport("winhttp.dll", SetLastError = true)]
+public static extern bool WinHttpGetDefaultProxyConfiguration(out WINHTTP_PROXY_INFO proxyInfo);
+
+// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetieproxyconfigforcurrentuser
+[DllImport("winhttp.dll", SetLastError = true)]
+public static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURRENT_USER_IE_PROXY_CONFIG proxyConfig);
+
+// Need GlobalFree to free the memory allocated for WINHTTP_PROXY_INFO & WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
+[DllImport("kernel32.dll", CallingConvention = CallingConvention.StdCall)]
+public static extern IntPtr GlobalFree(IntPtr hMem);
+'@
+
+    if (-not ('Win32.WinHttp' -as [type])) {
+        Add-Type -MemberDefinition $WinHttpDef -Name WinHttp -Namespace Win32
+    }
+}
+
+
+<#
+.SYNOPSIS
+    Helper function to marshal an unmanaged string to a managed string.
+    This function will GlobaFree the given pointer.
+#>
+function MarshalString {
+    [CmdletBinding(PositionalBinding=$false)]
+    param(
+        [Parameter(Position=0)]
+        [IntPtr]$Ptr,
+        [ValidateSet('Ansi', 'Unicode')]
+        [string]$UnmanagedStringType = 'Unicode'
+    )
+
+    switch ($UnmanagedStringType) {
+        'Ansi'    { [Runtime.InteropServices.Marshal]::PtrToStringAnsi($Ptr); break }
+        'Unicode' { [Runtime.InteropServices.Marshal]::PtrToStringUni($Ptr); break }
+    }
+
+    # Don't use [Runtime.InteropServices.Marshal]::FreeHGlobal($Ptr) here because it uses LocalFree(), not GlobalFree().
+    [Win32.WinHttp]::GlobalFree($Ptr) | Out-Null
+}
+
+<#
+.SYNOPSIS
+    Get WinHttp's default proxy
+#>
+function Get-WinHttpDefaultProxy {
+    [CmdletBinding(PositionalBinding=$false)]
+    param()
+
+    Add-WinHttpType
+    $props= [ordered]@{}
+    $proxyInfo = New-Object Win32.WinHttp+WINHTTP_PROXY_INFO
+
+    if ([Win32.WinHttp]::WinHttpGetDefaultProxyConfiguration([ref] $proxyInfo)) {
+        $props['AccessType'] = $proxyInfo.dwAccessType
+        $props['Proxy'] = if ($proxyInfo.lpszProxy) {MarshalString $proxyInfo.lpszProxy}
+        $props['ProxyBypass'] = if ($proxyInfo.lpszProxyBypass) {MarshalString $proxyInfo.lpszProxyBypass}
+        $props['WINHTTP_PROXY_INFO'] = $proxyInfo # for debugging purpuse
+    }
+    else {
+        Write-Error ("Win32 WinHttpGetDefaultProxyConfiguration failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+    }
+
+    [PSCustomObject]$props
+}
+
+<#
+.SYNOPSIS
+    Get WinHttp default proxy and the user's WinInet proxy settings.
+
+.OUTPUTS
+    "WinInet***" properties correspond to WINHTTP_CURRENT_USER_IE_PROXY_CONFIG obtained by WinHttpGetIEProxyConfigForCurrentUser. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info"
+    "WinHttp***" properties correspond to WINHTTP_PROXY_INFO obtained by WinHttpGetDefaultProxyConfiguration. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config"
+#>
+function Get-ProxySetting {
+    [CmdletBinding(PositionalBinding=$false)]
+    param(
+        [string]$User
+    )
+
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    Write-Log "Running as $currentUser"
+
+    # props hold the return object properties.
+    $props= [ordered]@{}
+
+    # Get WebProxy class to get IE config
+    # N.B. GetDefaultProxy won't be really needed, but I'm keeping it for now.
+    # It's possible that [System.Net.WebProxy]::GetDefaultProxy() throws
+    try {
+        $props['WebProxyDefault'] = [System.Net.WebProxy]::GetDefaultProxy()
+    }
+    catch {
+        Write-Log "$_"
+    }
+
+    Add-WinHttpType
+
+    # Get WinHttp's default proxy
+    $proxyInfo = New-Object Win32.WinHttp+WINHTTP_PROXY_INFO
+
+    if ([Win32.WinHttp]::WinHttpGetDefaultProxyConfiguration([ref] $proxyInfo)) {
+        $props['WinHttpAccessType'] = $proxyInfo.dwAccessType
+        $props['WinHttpProxy'] = if ($proxyInfo.lpszProxy) {MarshalString $proxyInfo.lpszProxy}
+        $props['WinHttpProxyBypass'] = if ($proxyInfo.lpszProxyBypass) {MarshalString $proxyInfo.lpszProxyBypass}
+    }
+    else {
+        Write-Error ("Win32 WinHttpGetDefaultProxyConfiguration failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+    }
+
+    # Get User's WinInet proxy
+    # If User is not specified or the given user is the current user, then just use WinHttpGetIEProxyConfigForCurrentUser; otherwise use Get-WinInetProxy for th user
+    $currentUserName = $currentUser.Split('\') | Select-Object -Last 1
+    if (-not $User -or $User -match $currentUserName) {
+        Write-Log "Invoking WinHttpGetIEProxyConfigForCurrentUser"
+        $winInetProxy = New-Object Win32.WinHttp+WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
+
+        if ([Win32.WinHttp]::WinHttpGetIEProxyConfigForCurrentUser([ref] $winInetProxy)) {
+            $props['WinInetAutoDetect'] = $winInetProxy.fAutoDetect
+            $props['WinINetAutoConfigUrl'] = if ($winInetProxy.lpszAutoConfigUrl) { MarshalString $winInetProxy.lpszAutoConfigUrl }
+            $props['WinInetProxy'] = if ($winInetProxy.lpszProxy) { MarshalString $winInetProxy.lpszProxy}
+            $props['WinInetProxyBypass'] = if ($winInetProxy.lpszProxyBypass) { MarshalString $winInetProxy.lpszProxyBypass}
+        }
+        else {
+            Write-Error ("Win32 WinHttpGetIEProxyConfigForCurrentUser failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+        }
+    }
+    else {
+        Write-Log "`"$User`" does not match current user `"$currentUserName`". Invoking Get-WinInetProxy"
+        $winInetProxy = Get-WinInetProxy -User $User
+        if ($winInetProxy) {
+            $props['WinInetAutoDetect'] = $winInetProxy.AutoDetect
+            $props['WinInetAutoConfigUrl'] = $winInetProxy.AutoConfigUrl
+            $props['WinInetProxy'] = $winInetProxy.Proxy
+            $props['WinInetProxyBypass'] = $winInetProxy.ProxyBypass
+            $props['User'] = if ($User) {$User} else {$currentUser}
+        }
+    }
 
     [PSCustomObject]$props
 }
@@ -5532,4 +5846,4 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
     $PSDefaultParameterValues.Add("Out-File:Encoding", 'utf8')
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Save-OSConfiguration, Get-ProxySetting, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Collect-OutlookInfo
