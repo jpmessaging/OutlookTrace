@@ -12,11 +12,11 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-06-02'
+$Version = 'v2021-06-08'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
-$outlook2016Providers =
+$Outlook2016Providers =
 @'
 "{9efff48f-728d-45a1-8001-536349a2db37}" 0xFFFFFFFFFFFFFFFF 64
 "{f50d9315-e17e-43c1-8370-3edf6cc057be}" 0xFFFFFFFFFFFFFFFF 64
@@ -51,7 +51,7 @@ $outlook2016Providers =
 "{8736922d-e8b2-47eb-8564-23e77e728cf3}" 0x00000414         64
 '@
 
-$outlook2013Providers =
+$Outlook2013Providers =
 @'
 "{284b8d30-4aa6-4a0f-9143-ce2e8e1f10f0}" 0xFFFFFFFFFFFFFFFF 64
 "{02cac15f-d4be-400e-9127-d54982aa4ae9}" 0xFFFFFFFFFFFFFFFF 64
@@ -72,13 +72,13 @@ $outlook2013Providers =
 "{02fd33df-f746-4a10-93a0-2bc6273bc8e4}" 0xFFFFFFFFFFFFFFFF 64
 '@
 
-$outlook2010Providers =
+$Outlook2010Providers =
 @'
 "{f94cbe33-31c2-492d-9bf8-573beff84c94}" 0x0FB7FFEF 64
 "{e3c8312d-b20c-4831-995e-5ec5f5522215}" 0x00124586 64
 '@
 
-$wamProviders =
+$WamProviders =
 @'
 {077b8c4a-e425-578d-f1ac-6fdf1220ff68}
 {5836994d-a677-53e7-1389-588ad1420cc5}
@@ -110,17 +110,460 @@ $wamProviders =
 {8BFE6B98-510E-478D-B868-142CD4DEDC1A}
 '@
 
+$Win32Interop = @'
+namespace Win32
+{
+    using System;
+    using System.Runtime.InteropServices;
+    using System.Collections.Generic;
+    using System.ComponentModel;
+    using Microsoft.Win32.SafeHandles;
 
-# ETW Logging Mode Constants for logman
-# https://docs.microsoft.com/en-us/windows/win32/etw/logging-mode-constants
-$LogmanMode = [PSCustomObject]@{
-    EVENT_TRACE_FILE_MODE_SEQUENTIAL = "sequential"
-    EVENT_TRACE_FILE_MODE_CIRCULAR   = 'circular'
-    EVENT_TRACE_FILE_MODE_APPEND     = 'append'
-    EVENT_TRACE_FILE_MODE_NEWFILE    = 'newfile'
-    EVENT_TRACE_USE_GLOBAL_SEQUENCE  = 'globalsequence'
-    EVENT_TRACE_USE_LOCAL_SEQUENCE   = 'localsequence'
+    public static class Advapi32
+    {
+        // https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-event_trace_properties
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct EVENT_TRACE_PROPERTIES
+        {
+            public WNODE_HEADER Wnode;
+            public uint BufferSize;
+            public uint MinimumBuffers;
+            public uint MaximumBuffers;
+            public uint MaximumFileSize;
+            public uint LogFileMode;
+            public uint FlushTimer;
+            public uint EnableFlags;
+            public int AgeLimit;
+            public uint NumberOfBuffers;
+            public uint FreeBuffers;
+            public uint EventsLost;
+            public uint BuffersWritten;
+            public uint LogBuffersLost;
+            public uint RealTimeBuffersLost;
+            public IntPtr LoggerThreadId;
+            public int LogFileNameOffset;
+            public int LoggerNameOffset;
+        }
+
+        // https://docs.microsoft.com/en-us/windows/win32/etw/wnode-header
+        [StructLayout(LayoutKind.Sequential)]
+        public struct WNODE_HEADER
+        {
+            public uint BufferSize;
+            public uint ProviderId;
+            public ulong HistoricalContext;
+            public ulong KernelHandle;
+            public Guid Guid;
+            public uint ClientContext;
+            public uint Flags;
+        }
+
+        public struct EventTraceProperties
+        {
+            public EVENT_TRACE_PROPERTIES Properties;
+            public string SessionName;
+            public string LogFileName;
+
+            public EventTraceProperties(EVENT_TRACE_PROPERTIES properties, string sessionName, string logFileName)
+            {
+                Properties = properties;
+                SessionName = sessionName;
+                LogFileName = logFileName;
+            }
+        }
+
+        //https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-queryalltracesw
+        [DllImport("Advapi32.dll", ExactSpelling = true)]
+        public static extern int QueryAllTracesW(IntPtr[] PropertyArray, uint PropertyArrayCount, ref int LoggerCount);
+
+        //https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-stoptracew
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        public static extern int StopTraceW(ulong TraceHandle, string InstanceName, IntPtr Properties); // TRACEHANDLE is defined as ULONG64
+
+        const int MAX_SESSIONS = 64;
+        const int MAX_NAME_COUNT = 1024; // max char count for LogFileName & SessionName
+        const uint ERROR_SUCCESS = 0;
+
+        // https://docs.microsoft.com/en-us/windows/win32/etw/wnode-header
+        // > The size of memory must include the room for the EVENT_TRACE_PROPERTIES structure plus the session name string and log file name string that follow the structure in memory.
+        static readonly int PropertiesSize = Marshal.SizeOf(typeof(EVENT_TRACE_PROPERTIES)) + 2 * sizeof(char) * MAX_NAME_COUNT; // EVENT_TRACE_PROPERTIES + LogFileName & LoggerName
+        static readonly int LoggerNameOffset = Marshal.SizeOf(typeof(EVENT_TRACE_PROPERTIES));
+        static readonly int LogFileNameOffset = LoggerNameOffset + sizeof(char) * MAX_NAME_COUNT;
+
+        public static List<EventTraceProperties> QueryAllTraces()
+        {
+            List<EventTraceProperties> eventProperties = null;
+            int BufferSize = PropertiesSize * MAX_SESSIONS;
+
+            // Wrap the native memory in SafeHandle-derived class
+            using (Win32.SafeCoTaskMemFreeHandle safeHandle = new Win32.SafeCoTaskMemFreeHandle(Marshal.AllocCoTaskMem(BufferSize)))
+            {
+                IntPtr pBuffer = safeHandle.DangerousGetHandle();
+                Win32.Kernel32.RtlZeroMemory(pBuffer, BufferSize);
+                IntPtr[] sessions = new IntPtr[64];
+
+                for (int i = 0; i < 64; ++i)
+                {
+                    //sessions[i] = pBuffer + (i * PropertiesSize); // This does not compile in .NET 2.0
+                    sessions[i] = new IntPtr(pBuffer.ToInt64() + (i * PropertiesSize));
+
+                    // Marshal from managed to native
+                    EVENT_TRACE_PROPERTIES props = new EVENT_TRACE_PROPERTIES();
+                    props.Wnode.BufferSize = (uint)PropertiesSize;
+                    props.LoggerNameOffset = LoggerNameOffset;
+                    props.LogFileNameOffset = LogFileNameOffset;
+                    Marshal.StructureToPtr(props, sessions[i], false);
+                }
+
+                int loggerCount = 0;
+                int status = QueryAllTracesW(sessions, MAX_SESSIONS, ref loggerCount);
+
+                if (status != ERROR_SUCCESS)
+                {
+                    throw new Win32Exception(status);
+                }
+
+                eventProperties = new List<EventTraceProperties>();
+                for (int i = 0; i < loggerCount; ++i)
+                {
+                    // Marshal back from native to managed.
+                    EVENT_TRACE_PROPERTIES props = (EVENT_TRACE_PROPERTIES)Marshal.PtrToStructure(sessions[i], typeof(EVENT_TRACE_PROPERTIES));
+                    string sessionName = Marshal.PtrToStringUni(new IntPtr(sessions[i].ToInt64() + LoggerNameOffset));
+                    string logFileName = Marshal.PtrToStringUni(new IntPtr(sessions[i].ToInt64() + LogFileNameOffset));
+
+                    //eventProperties.Add(new EventTraceProperties { Properties = props, SessionName = sessionName, LogFileName = logFileName });
+                    eventProperties.Add(new EventTraceProperties(props, sessionName, logFileName));
+                }
+            }
+
+            return eventProperties;
+        }
+
+        public static EventTraceProperties StopTrace(string SessionName)
+        {
+            using (var safeHandle = new SafeCoTaskMemFreeHandle(Marshal.AllocCoTaskMem(PropertiesSize)))
+            {
+                IntPtr pProps = safeHandle.DangerousGetHandle();
+                Win32.Kernel32.RtlZeroMemory(pProps, PropertiesSize);
+
+                EVENT_TRACE_PROPERTIES props = new EVENT_TRACE_PROPERTIES();
+                props.Wnode.BufferSize = (uint)PropertiesSize;
+                props.LoggerNameOffset = LoggerNameOffset;
+                props.LogFileNameOffset = LogFileNameOffset;
+                Marshal.StructureToPtr(props, pProps, false);
+
+                int status = StopTraceW(0, SessionName, pProps);
+                if (status != ERROR_SUCCESS)
+                {
+                    throw new Win32Exception(status);
+                }
+
+                props = (EVENT_TRACE_PROPERTIES)Marshal.PtrToStructure(pProps, typeof(EVENT_TRACE_PROPERTIES));
+                string sessionName = Marshal.PtrToStringUni(new IntPtr(pProps.ToInt64() + LoggerNameOffset));
+                string logFileName = Marshal.PtrToStringUni(new IntPtr(pProps.ToInt64() + LogFileNameOffset));
+
+                return new EventTraceProperties(props, sessionName, logFileName);
+            }
+        }
+    } // end of class Advapi32
+
+    public static class Dbghelp
+    {
+        [Flags]
+        public enum MINIDUMP_TYPE {
+            MiniDumpNormal                         = 0x00000000,
+            MiniDumpWithDataSegs                   = 0x00000001,
+            MiniDumpWithFullMemory                 = 0x00000002,
+            MiniDumpWithHandleData                 = 0x00000004,
+            MiniDumpFilterMemory                   = 0x00000008,
+            MiniDumpScanMemory                     = 0x00000010,
+            MiniDumpWithUnloadedModules            = 0x00000020,
+            MiniDumpWithIndirectlyReferencedMemory = 0x00000040,
+            MiniDumpFilterModulePaths              = 0x00000080,
+            MiniDumpWithProcessThreadData          = 0x00000100,
+            MiniDumpWithPrivateReadWriteMemory     = 0x00000200,
+            MiniDumpWithoutOptionalData            = 0x00000400,
+            MiniDumpWithFullMemoryInfo             = 0x00000800,
+            MiniDumpWithThreadInfo                 = 0x00001000,
+            MiniDumpWithCodeSegs                   = 0x00002000,
+            MiniDumpWithoutAuxiliaryState          = 0x00004000,
+            MiniDumpWithFullAuxiliaryState         = 0x00008000,
+            MiniDumpWithPrivateWriteCopyMemory     = 0x00010000,
+            MiniDumpIgnoreInaccessibleMemory       = 0x00020000,
+            MiniDumpWithTokenInformation           = 0x00040000,
+            MiniDumpWithModuleHeaders              = 0x00080000,
+            MiniDumpFilterTriage                   = 0x00100000,
+            MiniDumpWithAvxXStateContext           = 0x00200000,
+            MiniDumpWithIptTrace                   = 0x00400000,
+            MiniDumpValidTypeFlags                 = 0x007fffff,
+        }
+
+        [DllImport("Dbghelp.dll", SetLastError=true)]
+        public static extern bool MiniDumpWriteDump(
+            IntPtr hProcess,
+            uint ProcessId,
+            IntPtr hFile,
+            uint DumpType,
+            IntPtr ExceptionParam,
+            IntPtr UserStreamParam,
+            IntPtr CallbackParam
+        );
+    } // end of class Dbghelp
+
+    public static class Kernel32
+    {
+        // Need GlobalFree to free the memory allocated for WINHTTP_PROXY_INFO & WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
+        [DllImport("kernel32.dll", CallingConvention = CallingConvention.StdCall)]
+        public static extern IntPtr GlobalFree(IntPtr hMem);
+
+        [DllImport("kernel32.dll", ExactSpelling = true)]
+        public static extern void RtlZeroMemory(IntPtr dst, int length);
+    }
+
+    // ETW Logging Mode Constants for logman
+    // https://docs.microsoft.com/en-us/windows/win32/etw/logging-mode-constants
+    public static class Logman
+    {
+        public static class Mode
+        {
+            public static string EVENT_TRACE_FILE_MODE_SEQUENTIAL = "sequential";
+            public static string EVENT_TRACE_FILE_MODE_CIRCULAR   = "circular";
+            public static string EVENT_TRACE_FILE_MODE_APPEND     = "append";
+            public static string EVENT_TRACE_FILE_MODE_NEWFILE    = "newfile";
+            public static string EVENT_TRACE_USE_GLOBAL_SEQUENCE  = "globalsequence";
+            public static string EVENT_TRACE_USE_LOCAL_SEQUENCE   = "localsequence";
+        }
+    }
+
+    public static class Netapi32
+    {
+        public enum NETSETUP_JOIN_STATUS
+        {
+            NetSetupUnknownStatus = 0,
+            NetSetupUnjoined,
+            NetSetupWorkgroupName,
+            NetSetupDomainName
+        }
+
+        [DllImport("Netapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        public static extern uint NetGetJoinInformation(string server, out IntPtr name, out uint status);
+
+        [DllImport("Netapi32.dll", ExactSpelling = true)]
+        public static extern uint NetApiBufferFree(IntPtr Buffer);
+    }
+
+    public static class Netlistmgr
+    {
+        // From netlistmgr.h
+        public const string CLSID_NetworkListManager = "DCB00C01-570F-4A9B-8D69-199FDBA5723B";
+
+        // # NLM_CONNECTIVITY enumeration
+        // # https://docs.microsoft.com/en-us/windows/win32/api/netlistmgr/ne-netlistmgr-nlm_connectivity
+        [Flags]
+        public enum NLM_CONNECTIVITY
+        {
+            NLM_CONNECTIVITY_DISCONNECTED      = 0,
+            NLM_CONNECTIVITY_IPV4_NOTRAFFIC    = 1,
+            NLM_CONNECTIVITY_IPV6_NOTRAFFIC    = 2,
+            NLM_CONNECTIVITY_IPV4_SUBNET	   = 0x10,
+            NLM_CONNECTIVITY_IPV4_LOCALNETWORK = 0x20,
+            NLM_CONNECTIVITY_IPV4_INTERNET	   = 0x40,
+            NLM_CONNECTIVITY_IPV6_SUBNET	   = 0x100,
+            NLM_CONNECTIVITY_IPV6_LOCALNETWORK = 0x200,
+            NLM_CONNECTIVITY_IPV6_INTERNET	   = 0x400
+        }
+    }
+
+    public static class Ole32
+    {
+        [DllImport("ole32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        public static extern uint CLSIDFromProgID(string progOd, out Guid clsid);
+
+        [DllImport("ole32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        public static extern uint StringFromCLSID([MarshalAs(UnmanagedType.LPStruct)] Guid refclsid, out IntPtr pClsidString);
+    }
+
+    // SafeHandle-derived class for the native memory that should be freed by GlobalFree.
+    public class SafeGlobalFreeHandle: SafeHandleZeroOrMinusOneIsInvalid
+    {
+        public SafeGlobalFreeHandle(): base(true) {}
+        public SafeGlobalFreeHandle(bool ownsHandle): base(ownsHandle) {}
+        public SafeGlobalFreeHandle(IntPtr handle, bool ownsHandle = true): base(ownsHandle)
+        {
+            SetHandle(handle);
+        }
+
+        override protected bool ReleaseHandle()
+        {
+            return Win32.Kernel32.GlobalFree(handle) == IntPtr.Zero;
+        }
+    }
+
+    // SafeHandle-derived class for the native Unicode string that should be freed by GlobalFree
+    public class SafeGlobalFreeString: SafeGlobalFreeHandle
+    {
+        public SafeGlobalFreeString(): base(true) {}
+        public SafeGlobalFreeString(bool ownsHandle): base(ownsHandle) {}
+        public SafeGlobalFreeString(IntPtr handle, bool ownsHandle = true): base(ownsHandle)
+        {
+            SetHandle(handle);
+        }
+
+        public override string ToString()
+        {
+            return Marshal.PtrToStringUni(handle);
+        }
+    }
+
+    // SafeHandle-derived class for the native memory that should be freed by CoTaskMemFree.
+    public class SafeCoTaskMemFreeHandle: SafeHandle
+    {
+        public SafeCoTaskMemFreeHandle(): base(IntPtr.Zero, true) {}
+        public SafeCoTaskMemFreeHandle(IntPtr handle, bool ownsHandle = true): base(IntPtr.Zero, ownsHandle)
+        {
+            SetHandle(handle);
+        }
+
+        public override bool IsInvalid
+        {
+            get { return IsClosed || handle == IntPtr.Zero; }
+        }
+
+        override protected bool ReleaseHandle()
+        {
+            Marshal.FreeCoTaskMem(handle);
+            return true;
+        }
+    }
+
+    public static class WinHttp
+    {
+        // Some error codes from winhttp.h
+        public enum Error
+        {
+            WINHTTP_ERROR_BASE                      = 12000,
+            ERROR_WINHTTP_INTERNAL_ERROR            = WINHTTP_ERROR_BASE + 4,
+            ERROR_WINHTTP_NAME_NOT_RESOLVED         = WINHTTP_ERROR_BASE + 7,
+            ERROR_WINHTTP_INCORRECT_HANDLE_TYPE     = WINHTTP_ERROR_BASE + 18,
+            ERROR_WINHTTP_INCORRECT_HANDLE_STATE    = WINHTTP_ERROR_BASE + 19,
+            ERROR_WINHTTP_AUTO_PROXY_SERVICE_ERROR  = WINHTTP_ERROR_BASE + 178,
+            ERROR_WINHTTP_BAD_AUTO_PROXY_SCRIPT     = WINHTTP_ERROR_BASE + 166,
+            ERROR_WINHTTP_UNABLE_TO_DOWNLOAD_SCRIPT = WINHTTP_ERROR_BASE + 167,
+            ERROR_WINHTTP_UNHANDLED_SCRIPT_TYPE     = WINHTTP_ERROR_BASE + 176,
+            ERROR_WINHTTP_SCRIPT_EXECUTION_ERROR    = WINHTTP_ERROR_BASE + 177,
+            ERROR_WINHTTP_NOT_INITIALIZED           = WINHTTP_ERROR_BASE + 172,
+            ERROR_WINHTTP_SECURE_FAILURE            = WINHTTP_ERROR_BASE + 175,
+            ERROR_WINHTTP_AUTODETECTION_FAILED      = WINHTTP_ERROR_BASE + 180
+        }
+
+        // https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info
+        public struct WINHTTP_PROXY_INFO
+        {
+            public ProxyAccessType dwAccessType;
+            public IntPtr lpszProxy;
+            public IntPtr lpszProxyBypass;
+        }
+
+        // https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
+        {
+            public bool fAutoDetect;
+            public IntPtr lpszAutoConfigUrl;
+            public IntPtr lpszProxy;
+            public IntPtr lpszProxyBypass;
+        }
+
+        // From winhttp.h
+        // WinHttpOpen dwAccessType values (also for WINHTTP_PROXY_INFO::dwAccessType)
+        public enum ProxyAccessType
+        {
+            WINHTTP_ACCESS_TYPE_DEFAULT_PROXY = 0,
+            WINHTTP_ACCESS_TYPE_NO_PROXY = 1,
+            WINHTTP_ACCESS_TYPE_NAMED_PROXY = 3,
+            WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY = 4
+        }
+
+        [Flags]
+        public enum AutoDetectType
+        {
+            WINHTTP_AUTO_DETECT_TYPE_DHCP = 0x1,
+            WINHTTP_AUTO_DETECT_TYPE_DNS_A = 0x2
+        }
+
+        // https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetdefaultproxyconfiguration
+        [DllImport("winhttp.dll", SetLastError = true)]
+        public static extern bool WinHttpGetDefaultProxyConfiguration(out WINHTTP_PROXY_INFO proxyInfo);
+
+        // https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetieproxyconfigforcurrentuser
+        [DllImport("winhttp.dll", SetLastError = true)]
+        public static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURRENT_USER_IE_PROXY_CONFIG proxyConfig);
+
+        // https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpdetectautoproxyconfigurl
+        [DllImport("winhttp.dll", SetLastError = true)]
+        public static extern bool WinHttpDetectAutoProxyConfigUrl(AutoDetectType dwAutoDetectFlags, out Win32.SafeGlobalFreeString autoConfigUrlHandle);
+    } // end of class WinHttp
+
+    public static class WinInet
+    {
+        // From wininet.h
+        [Flags]
+        public enum PER_CONN_FLAGS
+        {
+            PROXY_TYPE_DIRECT         = 1,
+            PROXY_TYPE_PROXY          = 2,
+            PROXY_TYPE_AUTO_PROXY_URL = 4,
+            PROXY_TYPE_AUTO_DETECT    = 8
+        }
+    }
+
+    public static class Wscapi
+    {
+        public enum WSC_SECURITY_PROVIDER_HEALTH
+        {
+            WSC_SECURITY_PROVIDER_HEALTH_GOOD,
+            WSC_SECURITY_PROVIDER_HEALTH_NOTMONITORED,
+            WSC_SECURITY_PROVIDER_HEALTH_POOR,
+            WSC_SECURITY_PROVIDER_HEALTH_SNOOZE
+        }
+
+        // https://docs.microsoft.com/en-us/windows/win32/api/wscapi/ne-wscapi-wsc_security_provider
+        [Flags]
+        public enum WSC_SECURITY_PROVIDER
+        {
+            // Represents the aggregation of all firewalls for this computer.
+            WSC_SECURITY_PROVIDER_FIREWALL =                   0x1,
+            // Represents the Automatic updating settings for this computer.
+            WSC_SECURITY_PROVIDER_AUTOUPDATE_SETTINGS  =       0x2,
+            // Represents the aggregation of all antivirus products for this comptuer.
+            WSC_SECURITY_PROVIDER_ANTIVIRUS =                  0x4,
+            // Represents the aggregation of all antispyware products for this comptuer.
+            WSC_SECURITY_PROVIDER_ANTISPYWARE =                0x8,
+            // Represents the settings that restrict the access of web sites in each of the internet zones.
+            WSC_SECURITY_PROVIDER_INTERNET_SETTINGS =          0x10,
+            // Represents the User Account Control settings on this machine.
+            WSC_SECURITY_PROVIDER_USER_ACCOUNT_CONTROL =       0x20,
+            // Represents the running state of the Security Center service on this machine.
+            WSC_SECURITY_PROVIDER_SERVICE =                    0x40,
+
+            WSC_SECURITY_PROVIDER_NONE =                       0,
+
+            // Aggregates all of the items that Security Center monitors.
+            WSC_SECURITY_PROVIDER_ALL =                             WSC_SECURITY_PROVIDER_FIREWALL |
+                                                                    WSC_SECURITY_PROVIDER_AUTOUPDATE_SETTINGS |
+                                                                    WSC_SECURITY_PROVIDER_ANTIVIRUS |
+                                                                    WSC_SECURITY_PROVIDER_ANTISPYWARE |
+                                                                    WSC_SECURITY_PROVIDER_INTERNET_SETTINGS |
+                                                                    WSC_SECURITY_PROVIDER_USER_ACCOUNT_CONTROL |
+                                                                    WSC_SECURITY_PROVIDER_SERVICE
+        }
+
+        // https://docs.microsoft.com/en-us/windows/win32/api/wscapi/nf-wscapi-wscgetsecurityproviderhealth
+        [DllImport("Wscapi.dll", SetLastError = true)]
+        public static extern int WscGetSecurityProviderHealth(uint Providers, out int pHealth);
+    }
 }
+'@
 
 function Open-Log {
     [CmdletBinding()]
@@ -983,11 +1426,11 @@ function Start-WamTrace {
 
     # Create a provider listing
     $providerFile = Join-Path $Path -ChildPath 'wam.prov'
-    Set-Content $wamProviders -Path $providerFile -ErrorAction Stop
+    Set-Content $WamProviders -Path $providerFile -ErrorAction Stop
 
     switch ($LogFileMode) {
         'NewFile' {
-            $mode = @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
+            $mode = @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
 
             # In order to use newfile, file name must contain "%d"
             if ($FileName -notlike "*%d*") {
@@ -997,7 +1440,7 @@ function Start-WamTrace {
         }
 
         'Circular' {
-            $mode =  @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+            $mode =  @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
 
             if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
                 $MaxFileSizeMB = 2048
@@ -1054,16 +1497,16 @@ function Start-OutlookTrace {
     Write-Log "Creating a provider listing according to the version $major"
 
     switch ($major) {
-        14 {Set-Content $outlook2010Providers -Path $providerFile -ErrorAction Stop; break}
-        15 {Set-Content $outlook2013Providers -Path $providerFile -ErrorAction Stop; break}
-        16 {Set-Content $outlook2016Providers -Path $providerFile -ErrorAction Stop; break}
+        14 {Set-Content $Outlook2010Providers -Path $providerFile -ErrorAction Stop; break}
+        15 {Set-Content $Outlook2013Providers -Path $providerFile -ErrorAction Stop; break}
+        16 {Set-Content $Outlook2016Providers -Path $providerFile -ErrorAction Stop; break}
         default {throw "Couldn't find the version from $_"}
     }
 
     # Configure log file mode, filename, and max file size if ncessary.
     switch ($LogFileMode) {
         'NewFile' {
-            $mode = @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
+            $mode = @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
 
             # In order to use newfile, file name must contain "%d"
             if ($FileName -notlike "*%d*") {
@@ -1073,7 +1516,7 @@ function Start-OutlookTrace {
         }
 
         'Circular' {
-            $mode =  @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+            $mode =  @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
 
             if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
                 $MaxFileSizeMB = 2048
@@ -1256,184 +1699,12 @@ function Stop-NetshTrace {
     Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
 }
 
-# Instead of logman, use Win32 QueryAllTracesW, StopTraceW.
-# https://docs.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-queryalltracesw
-$ETWType = @'
-// https://docs.microsoft.com/en-us/windows/win32/etw/wnode-header
-[StructLayout(LayoutKind.Sequential)]
-public struct WNODE_HEADER
-{
-    public uint BufferSize;
-    public uint ProviderId;
-    public ulong HistoricalContext;
-    public ulong KernelHandle;
-    public Guid Guid;
-    public uint ClientContext;
-    public uint Flags;
-}
-
-// https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-event_trace_properties
-[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-public struct EVENT_TRACE_PROPERTIES
-{
-    public WNODE_HEADER Wnode;
-    public uint BufferSize;
-    public uint MinimumBuffers;
-    public uint MaximumBuffers;
-    public uint MaximumFileSize;
-    public uint LogFileMode;
-    public uint FlushTimer;
-    public uint EnableFlags;
-    public int AgeLimit;
-    public uint NumberOfBuffers;
-    public uint FreeBuffers;
-    public uint EventsLost;
-    public uint BuffersWritten;
-    public uint LogBuffersLost;
-    public uint RealTimeBuffersLost;
-    public IntPtr LoggerThreadId;
-    public int LogFileNameOffset;
-    public int LoggerNameOffset;
-}
-
-public struct EventTraceProperties
-{
-    public EVENT_TRACE_PROPERTIES Properties;
-    public string SessionName;
-    public string LogFileName;
-
-    public EventTraceProperties(EVENT_TRACE_PROPERTIES properties, string sessionName, string logFileName)
-    {
-        Properties = properties;
-        SessionName = sessionName;
-        LogFileName = logFileName;
-    }
-}
-
-[DllImport("kernel32.dll", ExactSpelling = true)]
-public static extern void RtlZeroMemory(IntPtr dst, int length);
-
-[DllImport("Advapi32.dll", ExactSpelling = true)]
-public static extern int QueryAllTracesW(IntPtr[] PropertyArray, uint PropertyArrayCount, ref int LoggerCount);
-
-[DllImport("Advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-public static extern int StopTraceW(ulong TraceHandle, string InstanceName, IntPtr Properties); // TRACEHANDLE is defined as ULONG64
-
-const int MAX_SESSIONS = 64;
-const int MAX_NAME_COUNT = 1024; // max char count for LogFileName & SessionName
-const uint ERROR_SUCCESS = 0;
-
-// https://docs.microsoft.com/en-us/windows/win32/etw/wnode-header
-// > The size of memory must include the room for the EVENT_TRACE_PROPERTIES structure plus the session name string and log file name string that follow the structure in memory.
-static readonly int PropertiesSize = Marshal.SizeOf(typeof(EVENT_TRACE_PROPERTIES)) + 2 * sizeof(char) * MAX_NAME_COUNT; // EVENT_TRACE_PROPERTIES + LogFileName & LoggerName
-static readonly int LoggerNameOffset = Marshal.SizeOf(typeof(EVENT_TRACE_PROPERTIES));
-static readonly int LogFileNameOffset = LoggerNameOffset + sizeof(char) * MAX_NAME_COUNT;
-
-public static List<EventTraceProperties> QueryAllTraces()
-{
-    IntPtr pBuffer = IntPtr.Zero;
-    List<EventTraceProperties> eventProperties = null;
-    try
-    {
-        // Allocate native memorty to hold the entire data.
-        int BufferSize = PropertiesSize * MAX_SESSIONS;
-        pBuffer = Marshal.AllocCoTaskMem(BufferSize);
-        RtlZeroMemory(pBuffer, BufferSize);
-
-        IntPtr[] sessions = new IntPtr[64];
-
-        for (int i = 0; i < 64; ++i)
-        {
-            //sessions[i] = pBuffer + (i * PropertiesSize); // This does not compile in .NET 2.0
-            sessions[i] = new IntPtr(pBuffer.ToInt64() + (i * PropertiesSize));
-
-            // Marshal from managed to native
-            EVENT_TRACE_PROPERTIES props = new EVENT_TRACE_PROPERTIES();
-            props.Wnode.BufferSize = (uint)PropertiesSize;
-            props.LoggerNameOffset = LoggerNameOffset;
-            props.LogFileNameOffset = LogFileNameOffset;
-            Marshal.StructureToPtr(props, sessions[i], false);
-        }
-
-        int loggerCount = 0;
-        int status = QueryAllTracesW(sessions, MAX_SESSIONS, ref loggerCount);
-
-        if (status != ERROR_SUCCESS)
-        {
-            throw new Win32Exception(status);
-        }
-
-        eventProperties = new List<EventTraceProperties>();
-        for (int i = 0; i < loggerCount; ++i)
-        {
-            // Marshal back from native to managed.
-            EVENT_TRACE_PROPERTIES props = (EVENT_TRACE_PROPERTIES)Marshal.PtrToStructure(sessions[i], typeof(EVENT_TRACE_PROPERTIES));
-            string sessionName = Marshal.PtrToStringUni(new IntPtr(sessions[i].ToInt64() + LoggerNameOffset));
-            string logFileName = Marshal.PtrToStringUni(new IntPtr(sessions[i].ToInt64() + LogFileNameOffset));
-
-            //eventProperties.Add(new EventTraceProperties { Properties = props, SessionName = sessionName, LogFileName = logFileName });
-            eventProperties.Add(new EventTraceProperties(props,sessionName, logFileName));
-        }
-    }
-    finally
-    {
-        if (pBuffer != IntPtr.Zero)
-        {
-            Marshal.FreeCoTaskMem(pBuffer);
-            pBuffer = IntPtr.Zero;
-        }
-    }
-
-    return eventProperties;
-}
-
-public static EventTraceProperties StopTrace(string SessionName)
-{
-    IntPtr pProps = IntPtr.Zero;
-    try
-    {
-        pProps = Marshal.AllocCoTaskMem(PropertiesSize);
-        RtlZeroMemory(pProps, PropertiesSize);
-
-        EVENT_TRACE_PROPERTIES props = new EVENT_TRACE_PROPERTIES();
-        props.Wnode.BufferSize = (uint)PropertiesSize;
-        props.LoggerNameOffset = LoggerNameOffset;
-        props.LogFileNameOffset = LogFileNameOffset;
-        Marshal.StructureToPtr(props, pProps, false);
-
-        int status = StopTraceW(0, SessionName, pProps);
-        if (status != ERROR_SUCCESS)
-        {
-            throw new Win32Exception(status);
-        }
-
-        props = (EVENT_TRACE_PROPERTIES)Marshal.PtrToStructure(pProps, typeof(EVENT_TRACE_PROPERTIES));
-        string sessionName = Marshal.PtrToStringUni(new IntPtr(pProps.ToInt64() + LoggerNameOffset));
-        string logFileName = Marshal.PtrToStringUni(new IntPtr(pProps.ToInt64() + LogFileNameOffset));
-
-        //return new EventTraceProperties { Properties = props, SessionName = sessionName, LogFileName = logFileName };
-        return new EventTraceProperties(props, sessionName, logFileName);
-    }
-    finally
-    {
-        if (pProps != IntPtr.Zero)
-        {
-            Marshal.FreeCoTaskMem(pProps);
-        }
-    }
-}
-'@
-
 function Get-EtwSession {
     [CmdletBinding()]
     param()
 
-    if (-not ('Win32.ETW' -as [type])) {
-        Add-type -MemberDefinition $ETWType -Namespace Win32 -Name ETW -UsingNamespace System.Collections.Generic, System.ComponentModel
-    }
-
     try {
-        [Win32.ETW]::QueryAllTraces()
+        [Win32.Advapi32]::QueryAllTraces()
     }
     catch {
         Write-Error -Message "QueryAllTraces failed. $_" -Exception $_.Exception
@@ -1447,12 +1718,8 @@ function Stop-EtwSession {
         [string]$SessionName
     )
 
-    if (-not ('Win32.ETW' -as [type])) {
-        Add-type -MemberDefinition $ETWType -Namespace Win32 -Name ETW -UsingNamespace System.Collections.Generic, System.ComponentModel
-    }
-
     try {
-        return [Win32.ETW]::StopTrace($SessionName)
+        return [Win32.Advapi32]::StopTrace($SessionName)
     }
     catch {
         Write-Error -Message "StopTrace for $SessionName failed. $_" -Exception $_.Exception
@@ -1527,9 +1794,9 @@ function Stop-PSR {
 
     Wait-Process -InputObject $currentInstance
 
-    # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hang.
+    # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hung.
     # The existing instance is supposed to signal an event and 'psr /stop' instance is waiting for this event to be signaled. But it seems this does not happen when there were no clicks.
-    # So to avoid this, the following code manually single the handle so that 'psr /stop' shuts down.
+    # So to avoid this, the following code manually signal the handle so that 'psr /stop' shuts down.
     try {
         $PSR_CLEANUP_COMPLETED = '{CD3E5009-5C9D-4E9B-B5B6-CAE1D8799AE3}'
         $h = [System.Threading.EventWaitHandle]::OpenExisting($PSR_CLEANUP_COMPLETED)
@@ -1739,6 +2006,64 @@ function Get-InstalledUpdate
     }
 }
 
+function Resolve-User {
+    [CmdletBinding(PositionalBinding=$false)]
+    param(
+        [Parameter(Position=0, Mandatory=$true)]
+        # User Name or SID
+        [string]$Identity
+    )
+
+    if ($null -eq $Script:ResolveCache) {
+        $Script:ResolveCache = @{}
+    }
+
+    # Return the cached entry if available.
+    if ($Script:ResolveCache.ContainsKey($Identity)) {
+        $Script:ResolveCache[$Identity]
+        return
+    }
+
+    # Note: WMI Win32_UserAccount can be very slow. I'm avoiding here.
+    # Get-WmiObject -Class Win32_UserAccount -Filter "Name = '$userName'"
+
+    # Is is SID?
+    $sid = $account = $nul
+    try {
+        $sid = New-Object System.Security.Principal.SecurityIdentifier($Identity)
+        $account = $sid.Translate([System.Security.Principal.NTAccount])
+    }
+    catch {
+        # Ignore
+    }
+
+    # If not SID, then must be the account name
+    if (-not $sid) {
+        try {
+            $account = New-Object System.Security.Principal.NTAccount($Identity)
+            $sid = $account.Translate([System.Security.Principal.SecurityIdentifier])
+        }
+        catch {
+            # Ignore
+        }
+    }
+
+    if ($null -eq $sid -or $null -eq $account) {
+        Write-Error "Cannot resolve $Identity."
+        return
+    }
+
+    $resolved = [PSCustomObject]@{
+        Name = $account.ToString()
+        SID = $sid.ToString()
+    } | Add-Member -MemberType ScriptMethod -Name 'ToString' -Value {$this.Name} -Force -PassThru
+
+    # Add to cache
+    $Script:ResolveCache.Add($resolved.Name, $resolved)
+    $Script:ResolveCache.Add($resolved.SID, $resolved)
+
+    $resolved
+}
 
 function Get-LogonUser {
     [CmdletBinding()]
@@ -1778,56 +2103,8 @@ function Get-LogonUser {
     $match = [Regex]::Match($currentSession, '^>(?<name>.+?)\s{2,}')
     $userName = $match.Groups['name'].Value
 
-    # WMI Win32_UserAccount can be very slow. I'm avoiding here.
-    # Get-WmiObject -Class Win32_UserAccount -Filter "Name = '$userName'"
-
-    $sid = ConvertTo-UserSID $userName
-
-    $Script:LogonUser = [PSCustomObject]@{
-        Name = $userName
-        SID = $sid
-    }
-
+    $Script:LogonUser = Resolve-User $userName
     $Script:LogonUser
-}
-
-function ConvertTo-UserSID {
-    [CmdletBinding()]
-    param (
-        [parameter(Mandatory = $true)]
-        [string]$UserName
-    )
-
-    try {
-        $account = New-Object System.Security.Principal.NTAccount($UserName)
-        $sid = $account.Translate([System.Security.Principal.SecurityIdentifier]).Value
-        return $sid
-    }
-    catch {
-        Write-Error -Message "Cannot obtain user SID for $UserName." -Exception $_.Exception
-    }
-}
-
-<#
-.SYNOPSIS
-Test if a given string is a valid SID
-#>
-function Test-SID {
-    [CmdletBinding()]
-    param(
-        [parameter(Mandatory = $true)]
-        [string]$SID
-    )
-
-    try {
-        New-Object System.Security.Principal.SecurityIdentifier($SID) | Out-Null
-        return $true
-    }
-    catch {
-        # ignore error here
-    }
-
-    $false
 }
 
 <#
@@ -1844,18 +2121,8 @@ function Get-UserRegistryRoot {
     )
 
     if ($User) {
-        # If user SID is given use it as it is; otherwise convert SID. when failed to convert, just return. An ErrorRecord will be written to error stream by ConvertTo-UserSID
-        if (Test-SID $User) {
-            $userSID = $User
-        }
-        else {
-            $userSID = ConvertTo-UserSID $User
-            if (-not $userSID) {
-                return
-            }
-        }
-
-        $userRegRoot = "HKEY_USERS\$userSID"
+        $resolvedUser = Resolve-User $User
+        $userRegRoot = "HKEY_USERS\$($resolvedUser.SID)"
 
         if (-not ($userRegRoot -and (Test-Path "Registry::$userRegRoot"))) {
             Write-Error "Cannot find $userRegRoot."
@@ -1889,19 +2156,13 @@ function Get-UserProfilePath {
         $User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     }
 
-    # If user SID is given use it as it is; otherwise convert SID. when failed to convert, just return. An ErrorRecord will be written to error stream by ConvertTo-UserSID
-    if (Test-SID $User) {
-        $userSID = $User
-    }
-    else {
-        $userSID = ConvertTo-UserSID $User
-        if (-not $userSID) {
-            return
-        }
+    $resolvedUser = Resolve-User $User
+    if (-not $resolvedUser) {
+        return
     }
 
     # Get the value of ProfileImagePath
-    $userProfile = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$userSID\"
+    $userProfile = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($resolvedUser.SID)\"
     $userProfile.ProfileImagePath
 }
 
@@ -1957,6 +2218,8 @@ function Save-OfficeRegistry {
         "HKCU\Software\Wow6432Node\Microsoft\Office"
         "HKCU\Software\Wow6432Node\Policies\Microsoft\Office"
         "HKCU\SOFTWARE\Classes\Local Settings\Software\Microsoft\MSIPC"
+        "HKCU\Software\Policies"
+        "HKCU\Software\IM Providers"
         "HKLM\Software\Microsoft\Office"
         "HKLM\Software\Policies\Microsoft\Office"
         "HKLM\Software\WOW6432Node\Microsoft\Office"
@@ -2028,14 +2291,10 @@ function Save-OSConfiguration {
         New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
     }
 
-    $lognUser = Get-LogonUser -ErrorAction SilentlyContinue
-
     $commands = @(
         @{ScriptBlock = {Get-WmiObject -Class Win32_ComputerSystem}; FileName = 'Win32_ComputerSystem.xml'}
         @{ScriptBlock = {Get-WmiObject -Class Win32_OperatingSystem}; FileName = 'Win32_OperatingSystem.xml'}
-        # @{ScriptBlock = {param($User) Get-ProxySetting -User $user}}
         @{ScriptBlock = {Get-WinHttpDefaultProxy}}
-        @{ScriptBlock = {param($logonUser) Get-WinInetProxy -User $logonUser.Name}; ArgumentList = $lognUser}
         @{ScriptBlock = {Get-NLMConnectivity}}
         @{ScriptBlock = {Get-WSCAntivirus}}
         @{ScriptBlock = {Get-InstalledUpdate}}
@@ -2254,102 +2513,6 @@ function Save-NetworkInfoMT {
     Write-Log "All tasks are complete."
 }
 
-function Get-ProxySetting_old {
-    [CmdletBinding()]
-    param(
-    )
-
-    Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
-
-    # props hold the return object properties.
-    $props= @{}
-
-    # Get WebProxy class to get IE config
-    # N.B. GetDefaultProxy won't be really needed, but I'm keeping it for now.
-    # It's possible that [System.Net.WebProxy]::GetDefaultProxy() throws
-    try {
-        $props['WebProxyDefault'] = [System.Net.WebProxy]::GetDefaultProxy()
-    }
-    catch {
-        Write-Log "$_"
-    }
-
-    # Get WinHttp & current user's IE proxy settings.
-    # Use Win32 WinHttpGetDefaultProxyConfiguration & WinHttpGetIEProxyConfigForCurrentUser.
-    # I'm not using "netsh winhttp show proxy", because the output is system language dependent.  Netsh just calls this function anyway.
-    $WinHttpDef = @'
-// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info
-[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-public struct WINHTTP_PROXY_INFO
-{
-    public uint dwAccessType;
-    public string lpszProxy;
-    public string lpszProxyBypass;
-}
-
-// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config
-[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-public struct WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
-{
-    public bool fAutoDetect;
-    public string lpszAutoConfigUrl;
-    public string lpszProxy;
-    public string lpszProxyBypass;
-}
-
-// From winhttp.h
-// WinHttpOpen dwAccessType values (also for WINHTTP_PROXY_INFO::dwAccessType)
-public enum ProxyAccessType
-{
-    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY = 0,
-    WINHTTP_ACCESS_TYPE_NO_PROXY = 1,
-    WINHTTP_ACCESS_TYPE_NAMED_PROXY = 3,
-    WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY = 4
-}
-
-// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetdefaultproxyconfiguration
-[DllImport("winhttp.dll", SetLastError = true)]
-public static extern bool WinHttpGetDefaultProxyConfiguration(out WINHTTP_PROXY_INFO proxyInfo);
-
-// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetieproxyconfigforcurrentuser
-[DllImport("winhttp.dll", SetLastError = true)]
-public static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURRENT_USER_IE_PROXY_CONFIG proxyConfig);
-'@
-
-    if (-not ('Win32.WinHttp' -as [type])) {
-        Add-Type -MemberDefinition $WinHttpDef -Name WinHttp -Namespace Win32
-    }
-
-    $proxyInfo = New-Object Win32.WinHttp+WINHTTP_PROXY_INFO
-    if ([Win32.WinHttp]::WinHttpGetDefaultProxyConfiguration([ref] $proxyInfo)) {
-        $props['WinHttpDirectAccess'] = $proxyInfo.dwAccessType -eq [Win32.WinHttp+ProxyAccessType]::WINHTTP_ACCESS_TYPE_NO_PROXY
-        $props['WinHttpProxyServer'] = $proxyInfo.lpszProxy
-        $props['WinHttpBypassList'] = $proxyInfo.lpszProxyBypass
-        $props['WINHTTP_PROXY_INFO'] = $proxyInfo # for debugging purpuse
-    }
-    else {
-        Write-Error ("Win32 WinHttpGetDefaultProxyConfiguration failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
-    }
-
-    $userIEProxyConfig = New-Object Win32.WinHttp+WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
-    if ([Win32.WinHttp]::WinHttpGetIEProxyConfigForCurrentUser([ref] $userIEProxyConfig)) {
-        $props['UserIEAutoDetect'] = $userIEProxyConfig.fAutoDetect
-        $props['UserIEAutoConfigUrl'] = $userIEProxyConfig.lpszAutoConfigUrl
-        $props['UserIEProxy'] = $userIEProxyConfig.lpszProxy
-        $props['UserIEProxyBypass'] = $userIEProxyConfig.lpszProxyBypass
-        $props['WINHTTP_CURRENT_USER_IE_PROXY_CONFIG'] = $userIEProxyConfig # for debugging purpuse
-        $props['User'] = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    }
-    else {
-        Write-Error ("Win32 WinHttpGetIEProxyConfigForCurrentUser failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
-    }
-
-    Write-Log "UserIE*** properties correspond to WINHTTP_CURRENT_USER_IE_PROXY_CONFIG obtained by WinHttpGetIEProxyConfigForCurrentUser. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info"
-    Write-Log "WinHttp*** properties correspond to WINHTTP_PROXY_INFO obtained by WinHttpGetDefaultProxyConfiguration. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config"
-
-    [PSCustomObject]$props
-}
-
 <#
 .SYNOPSIS
     Get WinInet proxy settings for a user.
@@ -2372,20 +2535,24 @@ function Get-WinInetProxy {
     [CmdletBinding(PositionalBinding=$false)]
     param(
         [Parameter(Position=0)]
-        [string]$User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name.Split('\')[1]
+        [string]$User
     )
+
+    if (-not $User) {
+        $User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name.Split('\')[1]
+    }
 
     # For now, I want to include the result of WinHttpGetIEProxyConfigForCurrentUser because it automatically gets the WinInet proxy setting of "acitve" connection.
     # I do not know how to determine which connection is active yet.
-    Add-WinHttpType
     $props = [ordered]@{}
     $winInetProxy = New-Object Win32.WinHttp+WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
 
     if ([Win32.WinHttp]::WinHttpGetIEProxyConfigForCurrentUser([ref] $winInetProxy)) {
         $props['fAutoDetect'] = $winInetProxy.fAutoDetect
-        $props['lpszAutoConfigUrl'] = if ($winInetProxy.lpszAutoConfigUrl) { MarshalString $winInetProxy.lpszAutoConfigUrl }
-        $props['lpszProxy'] = if ($winInetProxy.lpszProxy) { MarshalString $winInetProxy.lpszProxy}
-        $props['lpszProxyBypass'] = if ($winInetProxy.lpszProxyBypass) { MarshalString $winInetProxy.lpszProxyBypass}
+        # Wrap the native string data in SafeHandle-derived class so that the memory will be properly freed (By GlobalFree in this case) when GC collects them.
+        $props['lpszAutoConfigUrl'] = (New-Object Win32.SafeGlobalFreeString -ArgumentList $winInetProxy.lpszAutoConfigUrl).ToString()
+        $props['lpszProxy'] = (New-Object Win32.SafeGlobalFreeString -ArgumentList $winInetProxy.lpszProxy).ToString()
+        $props['lpszProxyBypass'] = (New-Object Win32.SafeGlobalFreeString -ArgumentList $winInetProxy.lpszProxyBypass).ToString()
         $props['User'] = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
         $currentUserActiveConnProxy = [PSCustomObject]$props
     }
@@ -2393,7 +2560,7 @@ function Get-WinInetProxy {
         Write-Error ("Win32 WinHttpGetIEProxyConfigForCurrentUser failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
     }
 
-    # If ProxySettingsPerUser is 0, then HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections will be referenced instead of a current user's registry.
+    # If ProxySettingsPerUser is 0, then check HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections, instead of the user's registry.
     $proxySettingsPerUser = Get-ItemProperty 'Registry::HKLM\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings' -Name 'ProxySettingsPerUser' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'ProxySettingsPerUser'
 
     if ($proxySettingsPerUser -eq 0) {
@@ -2405,14 +2572,6 @@ function Get-WinInetProxy {
             Write-Error "Cannot get user $User's registry root. $err"
             return
         }
-    }
-
-    # From wininet.h
-    $PER_CONN_FLAGS = @{
-        PROXY_TYPE_DIRECT         = 1
-        PROXY_TYPE_PROXY          = 2
-        PROXY_TYPE_AUTO_PROXY_URL = 4
-        PROXY_TYPE_AUTO_DETECT    = 8
     }
 
     # There might be multiple connections besides "DefaultConnectionSettings" if there are VPNs.
@@ -2444,7 +2603,7 @@ function Get-WinInetProxy {
 
         $raw = $null
         $raw = Get-ItemProperty $connectionsKey -Name $connection -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $connection
-        #$raw = Get-ItemPropertyValue $connectionsKey -Name $connection
+
         if (-not $raw) {
             continue
         }
@@ -2468,7 +2627,7 @@ function Get-WinInetProxy {
         $winInetProxy = [PSCustomObject]@{
             StructVersion = $structversion
             SettingsVersion = $settingsVersion
-            Flags = $flags
+            Flags = $flags -as [Win32.WinInet+PER_CONN_FLAGS]
             Proxy = $proxy
             ProxyBypass = $proxyBypass
             AutoConfigUrl = $autoConfigUrl
@@ -2479,10 +2638,10 @@ function Get-WinInetProxy {
         $props['User'] = $User
         $props['Connection'] = $connection
 
-        $props['AutoDetect'] = ($winInetProxy.Flags -band $PER_CONN_FLAGS['PROXY_TYPE_AUTO_DETECT']) -as [bool]
-        $props['AutoConfigUrl'] = if ($flags -band $PER_CONN_FLAGS['PROXY_TYPE_AUTO_PROXY_URL'] -and $winInetProxy.AutoConfigUrl) {$winInetProxy.AutoConfigUrl}
-        $props['Proxy'] = if ($winInetProxy.Flags -band $PER_CONN_FLAGS['PROXY_TYPE_PROXY'] -and $winInetProxy.Proxy) {$winInetProxy.Proxy}
-        $props['ProxyBypass'] = if ($winInetProxy.Flags -band $PER_CONN_FLAGS['PROXY_TYPE_PROXY'] -and $winInetProxy.ProxyBypass) {$winInetProxy.ProxyBypass}
+        $props['AutoDetect'] = ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_AUTO_DETECT) -as [bool]
+        $props['AutoConfigUrl'] = if ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_AUTO_PROXY_URL -and $winInetProxy.AutoConfigUrl) {$winInetProxy.AutoConfigUrl}
+        $props['Proxy'] = if ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_PROXY -and $winInetProxy.Proxy) {$winInetProxy.Proxy}
+        $props['ProxyBypass'] = if ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_PROXY -and $winInetProxy.ProxyBypass) {$winInetProxy.ProxyBypass}
 
         # This data is temporarily.
         if (-not $activeConnAdded -and $currentUserActiveConnProxy) {
@@ -2494,60 +2653,14 @@ function Get-WinInetProxy {
     }
 }
 
-function Add-WinHttpType {
-    $WinHttpDef = @'
-// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_proxy_info
-[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-public struct WINHTTP_PROXY_INFO
-{
-    public ProxyAccessType dwAccessType;
-    public IntPtr lpszProxy;
-    public IntPtr lpszProxyBypass;
-}
-
-// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config
-[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-public struct WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
-{
-    public bool fAutoDetect;
-    public IntPtr lpszAutoConfigUrl;
-    public IntPtr lpszProxy;
-    public IntPtr lpszProxyBypass;
-}
-
-// From winhttp.h
-// WinHttpOpen dwAccessType values (also for WINHTTP_PROXY_INFO::dwAccessType)
-public enum ProxyAccessType
-{
-    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY = 0,
-    WINHTTP_ACCESS_TYPE_NO_PROXY = 1,
-    WINHTTP_ACCESS_TYPE_NAMED_PROXY = 3,
-    WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY = 4
-}
-
-// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetdefaultproxyconfiguration
-[DllImport("winhttp.dll", SetLastError = true)]
-public static extern bool WinHttpGetDefaultProxyConfiguration(out WINHTTP_PROXY_INFO proxyInfo);
-
-// https://docs.microsoft.com/en-us/windows/win32/api/winhttp/nf-winhttp-winhttpgetieproxyconfigforcurrentuser
-[DllImport("winhttp.dll", SetLastError = true)]
-public static extern bool WinHttpGetIEProxyConfigForCurrentUser(out WINHTTP_CURRENT_USER_IE_PROXY_CONFIG proxyConfig);
-
-// Need GlobalFree to free the memory allocated for WINHTTP_PROXY_INFO & WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
-[DllImport("kernel32.dll", CallingConvention = CallingConvention.StdCall)]
-public static extern IntPtr GlobalFree(IntPtr hMem);
-'@
-
-    if (-not ('Win32.WinHttp' -as [type])) {
-        Add-Type -MemberDefinition $WinHttpDef -Name WinHttp -Namespace Win32
-    }
-}
-
-
 <#
 .SYNOPSIS
     Helper function to marshal an unmanaged string to a managed string.
     This function will GlobaFree the given pointer.
+
+.Notes
+    Not used currently. I'll let SafeHandle-derived classes to take care of resource release and string data marshaling.
+    See SafeGlobalHandle defined in Win32Interop type definition.
 #>
 function MarshalString {
     [CmdletBinding(PositionalBinding=$false)]
@@ -2564,7 +2677,71 @@ function MarshalString {
     }
 
     # Don't use [Runtime.InteropServices.Marshal]::FreeHGlobal($Ptr) here because it uses LocalFree(), not GlobalFree().
-    [Win32.WinHttp]::GlobalFree($Ptr) | Out-Null
+    [Win32.Kernel32]::GlobalFree($Ptr) | Out-Null
+}
+
+
+<#
+.SYNOPSIS
+    Get proxy auto config (PAC) URL & file of WinInet proxy settings.
+    It tries both manual PAC URL and WPAD protocol.
+
+.Link
+    Web Proxy Auto-Discovery Protocol
+    https://datatracker.ietf.org/doc/html/draft-ietf-wrec-wpad-01
+#>
+function Get-ProxyAutoConfig {
+    [CmdletBinding(PositionalBinding=$false)]
+    param(
+        # Only detect wpad URL, skip downloading.
+        [Parameter(Position=0)]
+        [string]$User,
+        [switch]$SkipDownload
+    )
+
+    # Helper function to download a PAC file.
+    function Get-PAC {
+        [CmdletBinding()]
+        param($Url)
+        $pac = $null
+        if (-not $SkipDownload) {
+            try {
+                $pac = Invoke-RestMethod -Uri $url
+            }
+            catch {
+                Write-Error "Failed to downloading PAC file from $url. $_"
+            }
+        }
+
+        [ordered]@{ Url = $url; Pac = $pac }
+    }
+
+    foreach($proxy in @(Get-WinInetProxy -User $User)) {
+        # If AutoDetect is on, detect URL with WPAD using WinHttpDetectAutoProxyConfigUrl.
+        if ($proxy.AutoDetect) {
+            [Win32.SafeGlobalFreeString]$wpadUrl = $null
+            if ([Win32.WinHttp]::WinHttpDetectAutoProxyConfigUrl([Win32.WinHttp+AutoDetectType] 'WINHTTP_AUTO_DETECT_TYPE_DHCP, WINHTTP_AUTO_DETECT_TYPE_DNS_A',[ref]$wpadUrl)) {
+                Get-PAC $wpadUrl.ToString() | ForEach-Object {$_.Add('WPAD', $true); $_.Add('User', $proxy.User); [PSCustomObject]$_}
+            }
+            else {
+                $ec = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                $winhttpEc = $ec -as [Win32.WinHttp+Error]
+
+                if ($winhttpEc) {
+                    Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $winhttpEc ($($winhttpEc.value__))"
+                }
+                else {
+                    Write-Error ("WinHttpDetectAutoProxyConfigUrl failed with 0x{0:x8}" -f $ec)
+                }
+
+                return
+            }
+        }
+
+        if ($proxy.AutoConfigUrl) {
+            Get-PAC $proxy.AutoConfigUrl | ForEach-Object {$_.Add('WPAD', $false); $_.Add('User', $proxy.User); [PSCustomObject]$_}
+        }
+     }
 }
 
 <#
@@ -2575,15 +2752,16 @@ function Get-WinHttpDefaultProxy {
     [CmdletBinding(PositionalBinding=$false)]
     param()
 
-    Add-WinHttpType
     $props= [ordered]@{}
     $proxyInfo = New-Object Win32.WinHttp+WINHTTP_PROXY_INFO
 
     if ([Win32.WinHttp]::WinHttpGetDefaultProxyConfiguration([ref] $proxyInfo)) {
         $props['AccessType'] = $proxyInfo.dwAccessType
-        $props['Proxy'] = if ($proxyInfo.lpszProxy) {MarshalString $proxyInfo.lpszProxy}
-        $props['ProxyBypass'] = if ($proxyInfo.lpszProxyBypass) {MarshalString $proxyInfo.lpszProxyBypass}
-        $props['WINHTTP_PROXY_INFO'] = $proxyInfo # for debugging purpuse
+
+        # Wrap the native string data in SafeHandle-derived class so that the memory will be properly freed (By GlobalFree in this case) when GC collects them.
+        $props['Proxy'] = (New-Object Win32.SafeGlobalFreeString -ArgumentList $proxyInfo.lpszProxy).ToString()
+        $props['ProxyBypass'] = (New-Object Win32.SafeGlobalFreeString -ArgumentList $proxyInfo.lpszProxyBypass).ToString()
+        #$props['WINHTTP_PROXY_INFO'] = $proxyInfo # for debugging purpuse
     }
     else {
         Write-Error ("Win32 WinHttpGetDefaultProxyConfiguration failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
@@ -2621,8 +2799,6 @@ function Get-ProxySetting {
     catch {
         Write-Log "$_"
     }
-
-    Add-WinHttpType
 
     # Get WinHttp's default proxy
     $proxyInfo = New-Object Win32.WinHttp+WINHTTP_PROXY_INFO
@@ -2672,41 +2848,16 @@ function Get-NLMConnectivity {
     [CmdletBinding()]
     param()
 
-    $CLSID_NetworkListManager = [Guid]'DCB00C01-570F-4A9B-8D69-199FDBA5723B'
-    $type = [Type]::GetTypeFromCLSID($CLSID_NetworkListManager)
+    $type = [Type]::GetTypeFromCLSID([Win32.Netlistmgr]::CLSID_NetworkListManager)
     $nlm = [Activator]::CreateInstance($type)
 
     $isConnectedToInternet = $nlm.IsConnectedToInternet
-    $conn = $nlm.GetConnectivity()
-    Write-Log ("INetworkListManager::GetConnectivity 0x{0:x8}" -f $conn)
+    [Win32.Netlistmgr+NLM_CONNECTIVITY]$connectivity = $nlm.GetConnectivity()
+    Write-Log ("INetworkListManager::GetConnectivity: $connectivity (0x$("{0:x8}" -f $connectivity.value__))")
 
     $refCount = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($nlm);
     Write-Log "NetworkListManager COM object's remaining ref count: $refCount"
     $nlm = $null
-
-    # NLM_CONNECTIVITY enumeration
-    # https://docs.microsoft.com/en-us/windows/win32/api/netlistmgr/ne-netlistmgr-nlm_connectivity
-
-    # From netlistmgr.h
-    $NLM_CONNECTIVITY = @{
-        NLM_CONNECTIVITY_DISCONNECTED      = 0
-        NLM_CONNECTIVITY_IPV4_NOTRAFFIC    = 1
-        NLM_CONNECTIVITY_IPV6_NOTRAFFIC    = 2
-        NLM_CONNECTIVITY_IPV4_SUBNET	   = 0x10
-        NLM_CONNECTIVITY_IPV4_LOCALNETWORK = 0x20
-        NLM_CONNECTIVITY_IPV4_INTERNET	   = 0x40
-        NLM_CONNECTIVITY_IPV6_SUBNET	   = 0x100
-        NLM_CONNECTIVITY_IPV6_LOCALNETWORK = 0x200
-        NLM_CONNECTIVITY_IPV6_INTERNET	   = 0x400
-    }
-
-    $connectivity = New-Object System.Collections.Generic.List[string]
-
-    foreach ($entry in $NLM_CONNECTIVITY.GetEnumerator()) {
-        if ($conn -band $entry.Value) {
-            $connectivity.Add($entry.Key)
-        }
-    }
 
     [PSCustomObject]@{
         IsConnectedToInternet = $isConnectedToInternet
@@ -2718,32 +2869,12 @@ function Get-WSCAntivirus {
     [CmdletBinding()]
     param()
 
-    $WscDef = @'
-    public enum WSC_SECURITY_PROVIDER_HEALTH
-    {
-        WSC_SECURITY_PROVIDER_HEALTH_GOOD,
-        WSC_SECURITY_PROVIDER_HEALTH_NOTMONITORED,
-        WSC_SECURITY_PROVIDER_HEALTH_POOR,
-        WSC_SECURITY_PROVIDER_HEALTH_SNOOZE
-    }
-
-    // https://docs.microsoft.com/en-us/windows/win32/api/wscapi/nf-wscapi-wscgetsecurityproviderhealth
-    [DllImport("Wscapi.dll", SetLastError = true)]
-    public static extern int WscGetSecurityProviderHealth(uint Providers, out int pHealth);
-'@
-
-    if (-not ('Win32.WSC' -as [type])) {
-        Add-Type -MemberDefinition $WscDef -Name WSC -Namespace Win32
-    }
-
-    # from Wscapi.h
-    $WSC_SECURITY_PROVIDER_ANTIVIRUS = 4 -as [Uint32]
-    [Win32.WSC+WSC_SECURITY_PROVIDER_HEALTH]$health = [Win32.WSC+WSC_SECURITY_PROVIDER_HEALTH]::WSC_SECURITY_PROVIDER_HEALTH_POOR
+    [Win32.Wscapi+WSC_SECURITY_PROVIDER_HEALTH]$health = [Win32.Wscapi+WSC_SECURITY_PROVIDER_HEALTH]::WSC_SECURITY_PROVIDER_HEALTH_POOR
 
     # This call could fail with a terminating error on the server OS since Wscapi.dll is not available.
     # Catch it and convert it a non-terminating error so that the caller can ignore with ErrorAction.
     try {
-        $hr = [Win32.WSC]::WscGetSecurityProviderHealth($WSC_SECURITY_PROVIDER_ANTIVIRUS, [ref]$health)
+        $hr = [Win32.Wscapi]::WscGetSecurityProviderHealth([Win32.Wscapi+WSC_SECURITY_PROVIDER]::WSC_SECURITY_PROVIDER_ANTIVIRUS, [ref]$health)
         [PSCustomObject]@{
             HRESULT = $hr
             Health  = $health
@@ -2758,30 +2889,10 @@ function Get-JoinInformation {
     [CmdletBinding()]
     param()
 
-    $def = @'
-[DllImport("Netapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-public static extern uint NetGetJoinInformation(string server, out IntPtr name, out uint status);
-
-[DllImport("Netapi32.dll", ExactSpelling = true)]
-public static extern uint NetApiBufferFree(IntPtr Buffer);
-
-public enum NETSETUP_JOIN_STATUS
-{
-    NetSetupUnknownStatus = 0,
-    NetSetupUnjoined,
-    NetSetupWorkgroupName,
-    NetSetupDomainName
-}
-'@
-
-    if (-not ('Win32.NetAPI' -as [type])) {
-        Add-Type -MemberDefinition $def -Namespace 'Win32' -Name 'NetAPI'
-    }
-
     [IntPtr]$pName = [IntPtr]::Zero
-    [uint32]$status = 0
+    [Win32.Netapi32+NETSETUP_JOIN_STATUS]$status = 'NetSetupUnknownStatus'
 
-    $sc = [Win32.NetAPI]::NetGetJoinInformation($null, [ref]$pName, [ref]$status)
+    $sc = [Win32.Netapi32]::NetGetJoinInformation($null, [ref]$pName, [ref]$status)
 
     if ($sc -ne 0) {
         Write-Error "NetGetJoinInformation failed with $sc." -Exception (New-Object ComponentModel.Win32Exception($sc))
@@ -2789,8 +2900,8 @@ public enum NETSETUP_JOIN_STATUS
     }
 
     $name = [System.Runtime.InteropServices.Marshal]::PtrToStringUni($pName)
+    $sc = [Win32.Netapi32]::NetApiBufferFree($pName)
 
-    $sc = [Win32.NetAPI]::NetApiBufferFree($pName)
     if ($sc -ne 0) {
         Write-Error "NetApiBufferFree failed with $sc." -Exception (New-Object ComponentModel.Win32Exception($sc))
         return
@@ -2798,7 +2909,7 @@ public enum NETSETUP_JOIN_STATUS
 
     [PSCustomObject]@{
         Name = $name
-        JoinStatus = [Enum]::GetName([Win32.NetAPI+NETSETUP_JOIN_STATUS], $status)
+        JoinStatus = $status
     }
 }
 
@@ -2924,7 +3035,7 @@ function Get-CachedAutodiscoverLocation {
                 Path = [System.Environment]::ExpandEnvironmentVariables($forcePstPath)
             }
 
-            # If ForcePSTPath is found in the policicy key, no need to check the rest.
+            # If ForcePSTPath is found in the policy key, no need to check the rest.
             break
         }
     }
@@ -3040,7 +3151,7 @@ function Start-LdapTrace {
     # Configure ETW session parameters
     switch ($LogFileMode) {
         'NewFile' {
-            $mode = @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
+            $mode = @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
 
             # In order to use newfile, file name must contain "%d"
             if ($FileName -notlike "*%d*") {
@@ -3050,7 +3161,7 @@ function Start-LdapTrace {
         }
 
         'Circular' {
-            $mode =  @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+            $mode =  @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
 
             if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
                 $MaxFileSizeMB = 2048
@@ -3399,7 +3510,7 @@ function Start-CapiTrace {
 
     switch ($LogFileMode) {
         'NewFile' {
-            $mode = @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
+            $mode = @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
 
             # In order to use newfile, file name must contain "%d"
             if ($FileName -notlike "*%d*") {
@@ -3409,7 +3520,7 @@ function Start-CapiTrace {
         }
 
         'Circular' {
-            $mode =  @($LogmanMode.EVENT_TRACE_USE_GLOBAL_SEQUENCE, $LogmanMode.EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+            $mode =  @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
 
             if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
                 $MaxFileSizeMB = 2048
@@ -4346,36 +4457,6 @@ function Save-Dump {
         [int]$ProcessId
     )
 
-   <#
-    The Native signature:
-    see https://docs.microsoft.com/en-us/windows/win32/api/minidumpapiset/nf-minidumpapiset-minidumpwritedump
-
-    BOOL MiniDumpWriteDump(
-    HANDLE                            hProcess,
-    DWORD                             ProcessId,
-    HANDLE                            hFile,
-    MINIDUMP_TYPE                     DumpType,
-    PMINIDUMP_EXCEPTION_INFORMATION   ExceptionParam,
-    PMINIDUMP_USER_STREAM_INFORMATION UserStreamParam,
-    PMINIDUMP_CALLBACK_INFORMATION    CallbackParam
-    );
-    #>
-    $DbgHelp = @'
-    [DllImport("Dbghelp.dll", SetLastError=true)]
-    public static extern bool MiniDumpWriteDump(
-        IntPtr hProcess,
-        uint ProcessId,
-        IntPtr hFile,
-        uint DumpType,
-        IntPtr ExceptionParam,
-        IntPtr UserStreamParam,
-        IntPtr CallbackParam);
-'@
-
-    if (-not ('DbgHelp' -as [type])) {
-        Add-type -MemberDefinition $DbgHelp -Name DbgHelp -Namespace Win32
-    }
-
     if (-not (Test-Path $Path)) {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
@@ -4396,8 +4477,9 @@ function Save-Dump {
         $writeDumpSuccess = $false
 
         Write-Log "Calling Win32 MiniDumpWriteDump"
-        # Note: 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4) | MiniDumpWithFullMemory (2)
-        if ([Win32.DbgHelp]::MiniDumpWriteDump($process.Handle, $ProcessId, $dumpFileStream.Handle, 0x61826, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)) {
+        $dumpType = [Win32.Dbghelp+MINIDUMP_TYPE] 'MiniDumpWithTokenInformation, MiniDumpIgnoreInaccessibleMemory, MiniDumpWithThreadInfo, MiniDumpWithFullMemoryInfo, MiniDumpWithUnloadedModules, MiniDumpWithHandleData, MiniDumpWithFullMemory'
+
+        if ([Win32.DbgHelp]::MiniDumpWriteDump($process.Handle, $ProcessId, $dumpFileStream.Handle, $dumpType, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)) {
             [PSCustomObject]@{
                 ProcessID = $process.Id
                 ProcessName = $process.Name
@@ -4855,18 +4937,6 @@ function ConvertTo-CLSID {
         [string]$User
     )
 
-    $def = @'
-    [DllImport("ole32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-    public static extern uint CLSIDFromProgID(string progOd, out Guid clsid);
-
-    [DllImport("ole32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-    public static extern uint StringFromCLSID([MarshalAs(UnmanagedType.LPStruct)] Guid refclsid, out IntPtr pClsidString);
-'@
-
-    if (-not ('Win32.OLE' -as [type])) {
-        Add-Type -MemberDefinition $def -Namespace Win32 -Name OLE -ErrorAction Stop
-    }
-
     [uint32]$S_OK = 0
 
     [Guid]$CLSID = [Guid]::Empty
@@ -5288,34 +5358,44 @@ function Invoke-AutoUpdate {
 function Collect-OutlookInfo {
     [CmdletBinding(SupportsShouldProcess=$true, PositionalBinding=$false)]
     param (
-        [Parameter(Mandatory=$true, Position=0)]
         # Folder to place collected data
+        [Parameter(Mandatory=$true, Position=0)]
         $Path,
+        # What to collect
         [Parameter(Mandatory=$true)]
         [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance')]
-        # What to collect
         [array]$Component,
-        [ValidateSet('None', 'Mini', 'Full')]
         # This controls the level of netsh trace report
+        [ValidateSet('None', 'Mini', 'Full')]
         $NetshReportMode = 'None',
+        # ETW trace file mode.
         [ValidateSet('NewFile','Circular')]
         [string]$LogFileMode = 'NewFile',
+        # Max file size for ETW trace files. By default, 256 MB when NewFile and 2048 MB when Circular.
         [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxFileSizeMB,
+        # Archive type. Currently supports Zip or Cab. Zip is fastesr, but Cab is smaller.
         [ValidateSet('Zip', 'Cab')]
         [string]$ArchiveType = 'Zip',
+        # Skip archiving
         [Alias('SkipZip')]
         [switch]$SkipArchive,
-        # AutoFlush log file
+        # AutoFlush log file.
         [switch]$AutoFlush,
+        # Skip running autoupdate of this script.
         [switch]$SkipAutoUpdate,
-        [int]$PsrRecycleIntervalMin = 5
+        # PSR recycle interval in minutes.
+        [int]$PsrRecycleIntervalMin = 5,
+        # Target user whose configuration is collected. By default, it's the logon user (Note: Not necessarily the current user running the script).
+        [string]$User
     )
 
-    # Explicitly check admin rights
-    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-        Write-Warning "Please run as administrator."
-        return
+    # Explicitly check admin rights depending on the request.
+    if ($Component -contains 'Outlook' -or $Component -contains 'Netsh' -or $Component -contains 'CAPI' -or $Component -contains 'LDAP' -or $Component -contains 'WAM') {
+        if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+            Write-Warning "Please run as administrator."
+            return
+        }
     }
 
     if ($env:PROCESSOR_ARCHITEW6432 -and $PSVersionTable.PSVersion.Major -eq 2) {
@@ -5337,6 +5417,17 @@ function Collect-OutlookInfo {
         $os = Get-WmiObject -Class 'Win32_OperatingSystem'
         Write-Error "tttracer is not available on this machine. $($os.Caption) ($($os.Version))."
         return
+    }
+
+    # If User is given, use it as the target user; Otherwise, use the logon user.
+    if ($PSBoundParameters.ContainsKey('User')) {
+        $targetUser = Resolve-User $User
+        if (-not $targetUser) {
+            return
+        }
+    }
+    else {
+        $targetUser = Get-LogonUser
     }
 
     if (-not (Test-Path $Path -ErrorAction Stop)){
@@ -5373,6 +5464,7 @@ function Collect-OutlookInfo {
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
     Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
     Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) {'Skipped due to SkipAutoUpdate switch'} else {$autoUpdate.Message})"
+    Write-Log "Target user: $($targetUser.Name) ($($targetUser.SID))"
 
     $sb = New-Object System.Text.StringBuilder
     foreach ($paramName in $PSBoundParameters.Keys) {
@@ -5431,28 +5523,29 @@ function Collect-OutlookInfo {
             $networkInfoTask = Start-Task {param($path) Save-NetworkInfo -Path $path} -ArgumentList $NetworkDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
-            $LogonUser = Get-LogonUser -IgnoreCache -ErrorAction SilentlyContinue
 
             Write-Log "Starting officeRegistryTask."
-            $officeRegistryTask = Start-Task {param($path, $sid) Save-OfficeRegistry -Path $path -User $sid} -ArgumentList $RegistryDir, $LogonUser.SID
+            $officeRegistryTask = Start-Task {param($path, $user) Save-OfficeRegistry -Path $path -User $user} -ArgumentList $RegistryDir, $targetUser
 
             Write-Log "Starting oSConfigurationTask."
             $oSConfigurationTask = Start-Task {param($path) Save-OSConfiguration -Path $path} -ArgumentList $OSDir
+            Run-Command {param($user) Get-WinInetProxy -User $user} -ArgumentList $targetUser -Path $OSDir
+            Run-Command {param($user) Get-ProxyAutoConfig -User $user} -ArgumentList $targetUser -Path $OSDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
             Run-Command {Get-OfficeInfo} -Path $OfficeDir
-            Run-Command {param($LogonUser) Get-OutlookProfile -User $LogonUser.SID} -ArgumentList $LogonUser -Path $OfficeDir
-            Run-Command {param($LogonUser) Get-OutlookAddin -User $LogonUser.SID} -ArgumentList $LogonUser -Path $OfficeDir
+            Run-Command {param($user) Get-OutlookProfile -User $user} -ArgumentList $targetUser -Path $OfficeDir
+            Run-Command {param($user) Get-OutlookAddin -User $user} -ArgumentList $targetUser -Path $OfficeDir
             Run-Command {Get-ClickToRunConfiguration} -Path $OfficeDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
-            Run-Command {param($LogonUser, $OfficeDir) Save-CachedAutodiscover -User $LogonUser.SID -Path $(Join-Path $OfficeDir 'Cached AutoDiscover')} -ArgumentList $LogonUser, $OfficeDir
+            Run-Command {param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover')} -ArgumentList $targetUser, $OfficeDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
             Run-Command {param($OSDir) Save-Process -Path $OSDir} -ArgumentList $OSDir
 
-            if ($LogonUser) {
-                $LogonUser | Export-Clixml -Path (Join-Path $OSDir 'LogonUser.xml')
+            if ($targetUser) {
+                $targetUser | Export-Clixml -Path (Join-Path $OSDir 'User.xml')
             }
 
             # The user might start & stop Outlook while tracing. In order to capture Outlook's instance, run a task to check Outlook.exe periodically until it finds an instance.
@@ -5758,7 +5851,7 @@ function Collect-OutlookInfo {
 
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
-            Run-Command {param($LogonUser, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $($LogonUser.SID)} -ArgumentList $LogonUser, $MSIPCDir
+            Run-Command {param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user} -ArgumentList $targetUser, $MSIPCDir
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
 
             if ($oSConfigurationTask) {
@@ -5846,4 +5939,9 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
     $PSDefaultParameterValues.Add("Out-File:Encoding", 'utf8')
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Collect-OutlookInfo
+# Add type for Win32 interop
+if (-not ('Win32.Kernel32' -as [type])) {
+    Add-Type -TypeDefinition $Win32Interop
+}
+
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Collect-OutlookInfo
