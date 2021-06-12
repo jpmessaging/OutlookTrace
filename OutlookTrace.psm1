@@ -300,9 +300,9 @@ namespace Win32
 
         [DllImport("Dbghelp.dll", SetLastError=true)]
         public static extern bool MiniDumpWriteDump(
-            IntPtr hProcess,
+            SafeHandle hProcess,
             uint ProcessId,
-            IntPtr hFile,
+            SafeHandle hFile,
             uint DumpType,
             IntPtr ExceptionParam,
             IntPtr UserStreamParam,
@@ -315,6 +315,9 @@ namespace Win32
         // Need GlobalFree to free the memory allocated for WINHTTP_PROXY_INFO & WINHTTP_CURRENT_USER_IE_PROXY_CONFIG
         [DllImport("kernel32.dll", CallingConvention = CallingConvention.StdCall)]
         public static extern IntPtr GlobalFree(IntPtr hMem);
+
+        [DllImport("kernel32.dll")]
+        public static extern bool IsWow64Process(SafeHandle hProcess, out bool wow64Process);
 
         [DllImport("kernel32.dll", ExactSpelling = true)]
         public static extern void RtlZeroMemory(IntPtr dst, int length);
@@ -434,6 +437,12 @@ namespace Win32
             Marshal.FreeCoTaskMem(handle);
             return true;
         }
+    }
+
+    public static class User32
+    {
+        [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
+        public static extern uint SendMessageTimeoutW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
     }
 
     public static class WinHttp
@@ -2300,6 +2309,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = {Get-InstalledUpdate}}
         @{ScriptBlock = {Get-JoinInformation}}
         @{ScriptBlock = {Get-DeviceJoinStatus}; FileName = 'DeviceJoinStatus.txt'}
+        @{ScriptBlock = {Get-WebView2}}
     )
 
     foreach ($command in $commands) {
@@ -4447,51 +4457,74 @@ function Stop-WfpTrace {
     Remove-Job -Job $WfpJob
 }
 
-
+<#
+.SYNOPSIS
+    Save a user-mode memory dump file of a process.
+    By default, this function automatically detects if a process is WOW6432 (i.e. 32bit process on 64bit OS), and it collects 32bit process dump in that case.
+    To get a 64bit dump with WOW6432 layer, use SkipWow64Check switch parameter.
+#>
 function Save-Dump {
-    [CmdletBinding()]
+    [CmdletBinding(PositionalBinding=$false)]
     param(
+        # Folder to save a dump file
         [parameter(Mandatory = $true)]
-        $Path, # Folder to save a dump file
+        $Path,
         [parameter(Mandatory = $true)]
-        [int]$ProcessId
+        [int]$ProcessId,
+        # Skip WOW64 check.
+        [switch]$SkipWow64Check
     )
 
     if (-not (Test-Path $Path)) {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
-
     $Path = Resolve-Path $Path
-    $process = $null
 
-    try{
-        $process = Get-Process -Id $ProcessId -ErrorAction Stop
-        if (-not $process.Handle) {
-            # This scenario is possible for a system process.
-            Write-Error "Cannot obtain the process handle of $($process.Name)."
-            return
-        }
+    # Get the target process.
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
 
+    if (-not $process) {
+        Write-Error "Cannot find a process with PID $ProcessId."
+        return
+    }
+    elseif (-not $process.Handle) {
+         # This scenario is possible for a system process.
+         Write-Error "Cannot obtain the process handle of $($process.Name)."
+        return
+    }
+
+    $wow64 = $false
+    if (-not $SkipWow64Check) {
+        # Check if the target process is WOW6432 (i.e. 32bit on 64bit OS)
+        [Win32.Kernel32]::IsWow64Process($process.SafeHandle, [ref]$wow64) | Out-Null
+    }
+
+    if ($wow64) {
+        $ps32 = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
+        # BUGBUG: ryusukef $PSCommandPath does not work when this function is running in a worker runspace.
+        $command = "& {Import-Module '$PSComman$Script:MyModulePath' -DisableNameChecking; Save-Dump -Path '$Path' -ProcessId $ProcessId -SkipWow64Check}"
+        Write-Log "Invoking $ps32 -c `"$command`""
+        & $ps32 -NoProfile -WindowStyle Hidden -OutputFormat XML -c $command
+    }
+    else {
         $dumpFile = Join-Path $Path "$($process.Name)_$(Get-Date -Format 'yyyy-MM-dd-HHmmss').dmp"
         $dumpFileStream = [System.IO.File]::Create($dumpFile)
         $writeDumpSuccess = $false
 
-        Write-Log "Calling Win32 MiniDumpWriteDump"
-        $dumpType = [Win32.Dbghelp+MINIDUMP_TYPE] 'MiniDumpWithTokenInformation, MiniDumpIgnoreInaccessibleMemory, MiniDumpWithThreadInfo, MiniDumpWithFullMemoryInfo, MiniDumpWithUnloadedModules, MiniDumpWithHandleData, MiniDumpWithFullMemory'
+        $dumpType = [Win32.Dbghelp+MINIDUMP_TYPE]'MiniDumpWithTokenInformation, MiniDumpIgnoreInaccessibleMemory, MiniDumpWithThreadInfo, MiniDumpWithFullMemoryInfo, MiniDumpWithUnloadedModules, MiniDumpWithHandleData, MiniDumpWithFullMemory'
 
-        if ([Win32.DbgHelp]::MiniDumpWriteDump($process.Handle, $ProcessId, $dumpFileStream.Handle, $dumpType, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)) {
+        if ([Win32.DbgHelp]::MiniDumpWriteDump($process.SafeHandle, $ProcessId, $dumpFileStream.SafeFileHandle, $dumpType, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)) {
             [PSCustomObject]@{
-                ProcessID = $process.Id
+                ProcessID = $ProcessId
                 ProcessName = $process.Name
                 DumpFile = $dumpFile
             }
             $writeDumpSuccess = $true
         }
         else {
-            Write-Error ("Failed to save a memory dump of $Process. Error = 0x{0:x}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+            Write-Error ("Failed to save a memory dump of $process. Error = 0x{0:x}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
         }
-    }
-    finally {
+
         if ($dumpFileStream) {
             $dumpFileStream.Close()
 
@@ -4504,6 +4537,78 @@ function Save-Dump {
             $process.Dispose()
         }
     }
+}
+
+function Save-HungDump {
+    [CmdletBinding(PositionalBinding=$false)]
+    param(
+        # Folder to save dump files
+        [Parameter(Mandatory=$true, Position=0)]
+        [string]$Path,
+        # Target process (either Name or PID)
+        [Parameter(Mandatory=$true, Position=1)]
+        [int]$ProcessId,
+        [int]$TimeoutSecond = 5,
+        [int]$DumpCount = 1,
+        [Threading.CancellationToken]$CancellationToken
+    )
+
+    if (-not ($process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+        Write-Error "Cannnot find a process with PID $ProcessId."
+        return
+    }
+
+    $hWnd = $process.MainWindowHandle
+    $name = $process.Name
+
+    $ERROR_INVALID_WINDOW_HANDLE = 1400
+    $ERROR_TIMEOUT = 1460
+    $savedDumpCount = 0
+
+    # Start monitoring
+    while ($true) {
+        if ($CancellationToken.IsCancellationRequested) {
+            Write-Log "Cancel request acknowledged."
+            break
+        }
+
+        $result = [IntPtr]::Zero
+        if (-not ([Win32.User32]::SendMessageTimeoutW($hWnd, 0, [IntPtr]::Zero, [IntPtr]::Zero, 0, $TimeoutSecond * 1000, [ref]$result))) {
+            $ec = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+
+            # if error code is 0 or ERROR_TIMEOUT, timeout occurred.
+            if ($ec -eq 0 -or $ec -eq $ERROR_TIMEOUT) {
+                Write-Host "Hung window detected with $name (PID $ProcessId). $($savedDumpCount+1)/$DumpCount" -ForegroundColor Green
+                Write-Log "Hung window detected with $name (PID $ProcessId). $($savedDumpCount+1)/$DumpCount"
+                $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId
+                $savedDumpCount++
+                Write-Log "Saved dump file: $($dumpResult.DumpFile)"
+
+                if ($savedDumpCount -ge $DumpCount) {
+                    Write-Log "Dump count reached $DumpCount. Existing."
+                    break
+                }
+
+                Start-Sleep -Seconds 1
+                # To avoid too many dumps in a short time period, wait for one timeout period before starting the next monitoring cycle.
+                #Start-Sleep -Seconds $TimeoutSecond
+            }
+            elseif ($ec -eq $ERROR_INVALID_WINDOW_HANDLE -and $process.HasExited) {
+                Write-Log "$($process.Name) (PID $ProcessId) has exited."
+                return
+            }
+            else {
+                Write-Error ("SendMessageTimeoutW failed with 0x{0:x8}" -f [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+                return
+            }
+        }
+        else {
+            Write-Verbose "SendMessageTimeoutW succeeded"
+            Start-Sleep -Seconds 1
+        }
+    }
+
+    $process.Dispose()
 }
 
 function Save-MSIPC {
@@ -5113,6 +5218,23 @@ function Get-ClickToRunConfiguration {
     Get-ItemProperty Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\Configuration
 }
 
+function Get-WebView2 {
+    [CmdletBinding(PositionalBinding=$false)]
+    param (
+    )
+
+    $paths = @(
+        'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+        'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+    )
+
+    foreach ($path in $paths) {
+        if (Test-Path $path) {
+            Get-ItemProperty $path
+        }
+    }
+}
+
 function Get-DeviceJoinStatus {
     [CmdletBinding()]
     param()
@@ -5363,7 +5485,7 @@ function Collect-OutlookInfo {
         $Path,
         # What to collect
         [Parameter(Mandatory=$true)]
-        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance')]
+        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'HungDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance')]
         [array]$Component,
         # This controls the level of netsh trace report
         [ValidateSet('None', 'Mini', 'Full')]
@@ -5387,7 +5509,11 @@ function Collect-OutlookInfo {
         # PSR recycle interval in minutes.
         [int]$PsrRecycleIntervalMin = 5,
         # Target user whose configuration is collected. By default, it's the logon user (Note: Not necessarily the current user running the script).
-        [string]$User
+        [string]$User,
+        # Number of seconds used to detect a hung window when "HungDump" is requested in Component.
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$HungTimeoutSecond = 5,
+        [string]$HungMonitorTarget = 'Outlook' # This is just for testing.
     )
 
     # Explicitly check admin rights depending on the request.
@@ -5475,9 +5601,13 @@ function Collect-OutlookInfo {
     }
     Write-Log "Parameters $($sb.ToString())"
 
+    # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
+    # Open-TaskRunspace defines all the script variables in runspaces
+    $Script:MyModulePath = $PSCommandPath
+
     # To use Start-Task, make sure to open runspaces first and close it when finished.
-    # Currently MaxRunspaces is 6 or more because there are 6 tasks at most. 2 of them, outlookMonitorTask and psrTask, are long running.
-    Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(6, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
+    # Currently MaxRunspaces is 7 or more because there are 7 tasks at most. 3 of them, outlookMonitorTask, psrTask, and hungMonitorTask are long running.
+    Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(7, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
     # Open-TaskRunspace -Variables (Get-Variable 'logWriter')
 
     # Configure log file mode and max file size for ETW traces (OutlookTrace, WAM, LDAP, and CAPI)
@@ -5702,6 +5832,38 @@ function Collect-OutlookInfo {
             }
         }
 
+        if ($Component -contains 'HungDump') {
+            $hungDumpCts = New-Object System.Threading.CancellationTokenSource
+            Write-Log "Starting hungMonitorTask. HungTimeoutSecond: $HungTimeoutSecond."
+
+            # Save at most 10 dump files for now.
+            $hungMonitorTask = Start-Task -ScriptBlock {
+                param($path, $timeout, $dumpCount, $cancelToken, $name)
+
+                # Wait for Outlook to come live.
+                while ($true) {
+                    if ($cancelToken.IsCancellationRequested) {
+                        return
+                    }
+
+                    $outlookProc = Get-Process -Name $name -ErrorAction SilentlyContinue
+
+                    if ($outlookProc) {
+                        break
+                    }
+                    Start-Sleep -Seconds 2
+                }
+
+                $id = $outlookProc.Id
+                $outlookProc.Dispose()
+
+                Write-Log "hungMonitorTask has found $name (PID $id). Starting hung window monitoring."
+                Save-HungDump -Path $path -ProcessId $id -DumpCount $dumpCount -CancellationToken $cancelToken
+            } -ArgumentList (Join-Path $tempPath 'HungDump'), $HungTimeoutSecond, 10, $hungDumpCts.Token, $HungMonitorTarget
+
+            $hungDumpStarted = $true
+        }
+
         if ($Component -contains 'TTD') {
             # If Outlook is already running, attach to it. Otherwise, start TTD with OnLaunch option and ask the user to start Outlook.
             if ($outlookProcess = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue) {
@@ -5741,9 +5903,14 @@ function Collect-OutlookInfo {
             $ttdStarted = $true
         }
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted) {
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted) {
             Write-Log "Waiting for the user to stop"
-            Read-Host "Hit enter to stop"
+            Write-Host "Hit enter to stop:"
+
+            # To allow Write-Host from another runspace, don't block the host by Read-Host here.
+            while (-not $Host.UI.RawUI.KeyAvailable -or $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown").VirtualKeyCode -ne 13) {
+                Start-Sleep 1
+            }
         }
     }
     catch {
@@ -5826,6 +5993,11 @@ function Collect-OutlookInfo {
             Stop-PerfTrace
         }
 
+        if ($hungDumpStarted) {
+            $hungDumpCts.Cancel()
+            $(Receive-Task $hungMonitorTask -AutoRemoveTask) 2>&1 | Write-Log
+        }
+
         if ($crashDumpStarted) {
             Remove-WerDumpKey -TargetProcess 'Outlook.exe'
         }
@@ -5835,7 +6007,6 @@ function Collect-OutlookInfo {
         }
 
         if ($psrStarted) {
-            # Cancel PSR task.
             $psrCts.Cancel()
             $(Receive-Task $psrTask -AutoRemoveTask) 2>&1 | Write-Log
         }
@@ -5944,4 +6115,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
     Add-Type -TypeDefinition $Win32Interop
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Collect-OutlookInfo
