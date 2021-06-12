@@ -1605,7 +1605,7 @@ function Start-NetshTrace {
     $traceFile = Join-Path $Path -ChildPath $FileName
     $err = $($stdout = Invoke-Command  {
         $ErrorActionPreference = 'Continue'
-        & $netshexe trace start scenario=$scenario capture=yes tracefile="`"$traceFile`"" overwrite=yes maxSize=2000  # correlation=yes
+        & $netshexe trace start scenario=$scenario capture=yes tracefile="`"$traceFile`"" overwrite=yes maxSize=2048 # correlation=yes
     }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
@@ -5496,7 +5496,7 @@ function Collect-OutlookInfo {
         # Max file size for ETW trace files. By default, 256 MB when NewFile and 2048 MB when Circular.
         [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxFileSizeMB,
-        # Archive type. Currently supports Zip or Cab. Zip is fastesr, but Cab is smaller.
+        # Archive type. Currently supports Zip or Cab. Zip is faster, but Cab is smaller.
         [ValidateSet('Zip', 'Cab')]
         [string]$ArchiveType = 'Zip',
         # Skip archiving
