@@ -5223,16 +5223,10 @@ function Get-WebView2 {
     param (
     )
 
-    $paths = @(
+    @(
         'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
         'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-    )
-
-    foreach ($path in $paths) {
-        if (Test-Path $path) {
-            Get-ItemProperty $path
-        }
-    }
+    ) | ForEach-Object {Get-ItemProperty $_ -ErrorAction SilentlyContinue}
 }
 
 function Get-DeviceJoinStatus {
