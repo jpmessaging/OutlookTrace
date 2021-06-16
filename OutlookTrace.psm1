@@ -577,13 +577,13 @@ namespace Win32
 function Open-Log {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [string]$Path,
         [switch]$AutoFlush
     )
 
     if ($Script:logWriter) {
-       Close-Log
+        Close-Log
     }
 
     # Open a file & add header
@@ -602,9 +602,9 @@ function Open-Log {
 function Write-Log {
     [CmdletBinding()]
     param (
-        [Parameter(ValueFromPipeline=$true)]
+        [Parameter(ValueFromPipeline = $true)]
         [string]$Message,
-        [Parameter(ValueFromPipeline=$true)]
+        [Parameter(ValueFromPipeline = $true)]
         [System.Management.Automation.ErrorRecord]$ErrorRecord
     )
 
@@ -698,8 +698,8 @@ function Open-TaskRunspace {
         if ($MyInvocation.MyCommand.Module) {
             Get-Command -Module $MyInvocation.MyCommand.Module | ForEach-Object {
                 $initialSessionState.Commands.Add($(
-                    New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($_.Name, $_.ScriptBlock)
-                ))
+                        New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($_.Name, $_.ScriptBlock)
+                    ))
             }
         }
 
@@ -710,18 +710,18 @@ function Open-TaskRunspace {
 
         # Import Script-scoped variable.
         if ($IncludeScriptVariables) {
-            foreach ($_ in @(Get-Variable -Scope Script | Where-Object {$_.Options -notmatch 'Constant' -and $_.Value})) {
+            foreach ($_ in @(Get-Variable -Scope Script | Where-Object { $_.Options -notmatch 'Constant' -and $_.Value })) {
                 $initialSessionState.Variables.Add($(
-                    New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
-                ))
+                        New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
+                    ))
             }
         }
 
         # Import given variables
         foreach ($_ in $Variables) {
             $initialSessionState.Variables.Add($(
-                New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
-            ))
+                    New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
+                ))
         }
 
         $Script:runspacePool = [runspacefactory]::CreateRunspacePool($MinRunspaces, $MaxRunspaces, $initialSessionState, $Host)
@@ -770,16 +770,16 @@ function Start-Task {
     [CmdletBinding()]
     param (
         # Command to execute.
-        [Parameter(ParameterSetName='Command', Mandatory=$true, Position=0)]
+        [Parameter(ParameterSetName = 'Command', Mandatory = $true, Position = 0)]
         [string]$Command,
         # Parameters (name and value) to the command.
-        [Parameter(ParameterSetName='Command')]
+        [Parameter(ParameterSetName = 'Command')]
         $Parameters,
         # ScriptBlock to execute.
-        [Parameter(ParameterSetName='Script', Mandatory=$true, Position=0)]
+        [Parameter(ParameterSetName = 'Script', Mandatory = $true, Position = 0)]
         [ScriptBlock]$ScriptBlock,
         # ArgumentList to ScriptBlock
-        [Parameter(ParameterSetName='Script')]
+        [Parameter(ParameterSetName = 'Script')]
         [object[]]$ArgumentList
     )
 
@@ -814,10 +814,10 @@ function Start-Task {
     $ar = $ps.BeginInvoke()
 
     [PSCustomObject]@{
-        AsyncResult = $ar
-        PowerShell = $ps
+        AsyncResult  = $ar
+        PowerShell   = $ps
         # These are for diagnostic purpose
-        ScriptBlock = $ScriptBlock
+        ScriptBlock  = $ScriptBlock
         ArgumentList = $ArgumentList
     }
 }
@@ -831,7 +831,7 @@ When timeout occurs, there is no output.
 function Wait-Task {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
         $Task,
         # By default, it waits indefinitely
         # TimeSpan that represents -1 milliseconds is to wait indefinitely.
@@ -856,7 +856,7 @@ function Wait-Task {
 function Receive-Task {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
         $Task,
         [switch]$AutoRemoveTask,
         [string]$TaskErrorVariable
@@ -913,7 +913,7 @@ function Receive-Task {
 function Remove-Task {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
         $Task
     )
 
@@ -932,7 +932,7 @@ function Remove-Task {
 
 function Stop-Task {
     param (
-        [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
         $Task
     )
 
@@ -948,10 +948,10 @@ function Compress-Folder {
     [CmdletBinding()]
     param(
         # Folder path to compress
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [string]$Path,
         # Destination folder path
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [string]$Destination,
         # Filter for items in $Path
         [string[]]$Filter,
@@ -970,10 +970,10 @@ function Compress-Folder {
         [CmdletBinding()]
         param(
             # Folder path to compress
-            [Parameter(Mandatory=$true)]
+            [Parameter(Mandatory = $true)]
             [string]$Path,
             # Destination folder path
-            [Parameter(Mandatory=$true)]
+            [Parameter(Mandatory = $true)]
             [string]$Destination,
             # Filter for items in $Path
             [string[]]$Filter,
@@ -1004,22 +1004,22 @@ function Compress-Folder {
 
         # Apply filters if any.
         if ($Filter.Count) {
-            $files = @(foreach ($f in $Filter) { Get-ChildItem -LiteralPath $Path -Filter $f -Recurse -Force | Where-Object {-not $_.PSIsContainer}})
+            $files = @(foreach ($f in $Filter) { Get-ChildItem -LiteralPath $Path -Filter $f -Recurse -Force | Where-Object { -not $_.PSIsContainer } })
         }
         else {
-            $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force | Where-Object {-not $_.PSIsContainer})
+            $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force | Where-Object { -not $_.PSIsContainer })
         }
 
         if ($PSBoundParameters.ContainsKey('FromDateTime') -and $FromDateTime -ne [DateTime]::MinValue) {
-            $files = @($files | Where-Object {$_.LastWriteTime -ge $FromDateTime})
+            $files = @($files | Where-Object { $_.LastWriteTime -ge $FromDateTime })
         }
 
         if ($PSBoundParameters.ContainsKey('ToDateTime') -and $ToDateTime -ne ([DateTime]::MaxValue)) {
-            $files = @($files | Where-Object {$_.LastWriteTime -le $ToDateTime})
+            $files = @($files | Where-Object { $_.LastWriteTime -le $ToDateTime })
         }
 
         # Remove duplicate by Fullname
-        $files = @($files | Group-Object -Property 'FullName' | ForEach-Object {$_.Group | Select-Object -First 1})
+        $files = @($files | Group-Object -Property 'FullName' | ForEach-Object { $_.Group | Select-Object -First 1 })
 
         # If there are no files after filters are applied, bail.
         if ($files.Count -eq 0) {
@@ -1042,7 +1042,7 @@ function Compress-Folder {
 
         if (Test-Path $zipFilePath) {
             # Append a random string to the zip file name.
-            $zipFileName =  $zipFileName + "_" + [IO.Path]::GetRandomFileName().Substring(0,8) + '.zip'
+            $zipFileName = $zipFileName + "_" + [IO.Path]::GetRandomFileName().Substring(0, 8) + '.zip'
             $zipFilePath = Join-Path $Destination $zipFileName
         }
 
@@ -1111,10 +1111,10 @@ function Compress-Folder {
         [CmdletBinding()]
         param(
             # Folder path to compress
-            [Parameter(Mandatory=$true)]
+            [Parameter(Mandatory = $true)]
             [string]$Path,
             # Destination folder path
-            [Parameter(Mandatory=$true)]
+            [Parameter(Mandatory = $true)]
             [string]$Destination,
             # Filter for items in $Path
             [string[]]$Filter,
@@ -1151,22 +1151,22 @@ function Compress-Folder {
         else {
             # Apply filters.
             if ($Filter.Count) {
-                $files = @(foreach ($f in $Filter) { Get-ChildItem -LiteralPath $Path -Filter $f -Recurse -Force | Where-Object {-not $_.PSIsContainer}})
+                $files = @(foreach ($f in $Filter) { Get-ChildItem -LiteralPath $Path -Filter $f -Recurse -Force | Where-Object { -not $_.PSIsContainer } })
             }
             else {
-                $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force | Where-Object {-not $_.PSIsContainer})
+                $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force | Where-Object { -not $_.PSIsContainer })
             }
 
             if ($PSBoundParameters.ContainsKey('FromDateTime') -and $FromDateTime -ne [DateTime]::MinValue) {
-                $files = @($files | Where-Object {$_.LastWriteTime -ge $FromDateTime})
+                $files = @($files | Where-Object { $_.LastWriteTime -ge $FromDateTime })
             }
 
             if ($PSBoundParameters.ContainsKey('ToDateTime') -and $ToDateTime -ne [DateTime]::MaxValue) {
-                $files = @($files | Where-Object {$_.LastWriteTime -le $ToDateTime})
+                $files = @($files | Where-Object { $_.LastWriteTime -le $ToDateTime })
             }
 
             # Remove duplicate by Fullname
-            $files = @($files | Group-Object -Property 'FullName' | ForEach-Object {$_.Group | Select-Object -First 1})
+            $files = @($files | Group-Object -Property 'FullName' | ForEach-Object { $_.Group | Select-Object -First 1 })
 
             # If there are no files after filters are applied, bail.
             if ($files.Count -eq 0) {
@@ -1175,7 +1175,7 @@ function Compress-Folder {
             }
 
             # Copy filtered files to a temporary folder
-            $tempPath = Join-Path $env:TEMP ([IO.Path]::GetRandomFileName().Substring(0,8))
+            $tempPath = Join-Path $env:TEMP ([IO.Path]::GetRandomFileName().Substring(0, 8))
             New-Item $tempPath -ItemType Directory | Out-Null
 
             foreach ($file in $files) {
@@ -1208,7 +1208,7 @@ function Compress-Folder {
 
         if (Test-Path $archivePath) {
             # Append a random string to the zip file name.
-            $archiveName =  $archiveName + "_" + [IO.Path]::GetRandomFileName().Substring(0,8) + '.zip'
+            $archiveName = $archiveName + "_" + [IO.Path]::GetRandomFileName().Substring(0, 8) + '.zip'
             $archivePath = Join-Path $Destination $archiveName
         }
 
@@ -1263,17 +1263,17 @@ function Compress-Folder {
         [CmdletBinding()]
         param(
             # Folder path to compress
-            [Parameter(Mandatory=$true)]
+            [Parameter(Mandatory = $true)]
             [string]$Path,
             # Destination folder path
-            [Parameter(Mandatory=$true)]
+            [Parameter(Mandatory = $true)]
             [string]$Destination,
             # Filter for items in $Path
             [string[]]$Filter,
             # DateTime filters
             [DateTime]$FromDateTime,
             [DateTime]$ToDateTime,
-            [ValidateSet('MSZIP','LZX')]
+            [ValidateSet('MSZIP', 'LZX')]
             [string]$CompressionType = 'LZX'
         )
 
@@ -1298,22 +1298,22 @@ function Compress-Folder {
         }
 
         if ($Filter.Count) {
-            $files = @(foreach ($f in $Filter) { Get-ChildItem -LiteralPath $Path -Filter $f -Recurse -Force | Where-Object {-not $_.PSIsContainer}})
+            $files = @(foreach ($f in $Filter) { Get-ChildItem -LiteralPath $Path -Filter $f -Recurse -Force | Where-Object { -not $_.PSIsContainer } })
         }
         else {
-            $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force | Where-Object {-not $_.PSIsContainer})
+            $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force | Where-Object { -not $_.PSIsContainer })
         }
 
         if ($PSBoundParameters.ContainsKey('FromDateTime') -and $FromDateTime -ne [DateTime]::MinValue) {
-            $files = @($files | Where-Object {$_.LastWriteTime -ge $FromDateTime})
+            $files = @($files | Where-Object { $_.LastWriteTime -ge $FromDateTime })
         }
 
         if ($PSBoundParameters.ContainsKey('ToDateTime') -and $ToDateTime -ne [DateTime]::MaxValue) {
-            $files = @($files | Where-Object {$_.LastWriteTime -le $ToDateTime})
+            $files = @($files | Where-Object { $_.LastWriteTime -le $ToDateTime })
         }
 
         # Remove duplicate by Fullname
-        $files = @($files | Group-Object -Property 'FullName' | ForEach-Object {$_.Group | Select-Object -First 1})
+        $files = @($files | Group-Object -Property 'FullName' | ForEach-Object { $_.Group | Select-Object -First 1 })
 
         if ($files.Count -eq 0) {
             Write-Error "There are no files after filters are applied. Server: $env:COMPUTERNAME, Path: $Path, Filter: $Filter, FromDateTime: $FromDateTime, ToDateTime: $ToDateTime"
@@ -1373,7 +1373,7 @@ function Compress-Folder {
 
         if (Test-Path $cabFilePath) {
             # Append a random string to the cab file name.
-            $cabName =  $cabName + "_" + [IO.Path]::GetRandomFileName().Substring(0,8)
+            $cabName = $cabName + "_" + [IO.Path]::GetRandomFileName().Substring(0, 8)
             $cabFilePath = Join-Path $Destination "$cabName.cab"
         }
 
@@ -1411,18 +1411,18 @@ function Compress-Folder {
     }
 
     $params = @{}
-    $PSBoundParameters.Keys | ForEach-Object { if ($compressCmd.Parameters.ContainsKey($_)) { $params.Add($_, $PSBoundParameters[$_])}}
+    $PSBoundParameters.Keys | ForEach-Object { if ($compressCmd.Parameters.ContainsKey($_)) { $params.Add($_, $PSBoundParameters[$_]) } }
     & $compressCmd @params
 }
 
 function Start-WamTrace {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
-        [Parameter(Mandatory=$true, Position=0)]
+        [Parameter(Mandatory = $true, Position = 0)]
         [string]$Path,
         [string]$FileName = 'wam.etl',
         [string]$SessionName = 'WamTrace',
-        [ValidateSet('NewFile','Circular')]
+        [ValidateSet('NewFile', 'Circular')]
         [string]$LogFileMode = 'NewFile',
         [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxFileSizeMB = 256
@@ -1449,7 +1449,7 @@ function Start-WamTrace {
         }
 
         'Circular' {
-            $mode =  @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+            $mode = @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
 
             if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
                 $MaxFileSizeMB = 2048
@@ -1462,9 +1462,9 @@ function Start-WamTrace {
 
     Write-Log "Starting a WAM trace."
     $err = $($stdout = Invoke-Command {
-        $ErrorActionPreference = 'Continue'
-        & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $MaxFileSizeMB -mode $mode -ets
-    }) 2>&1
+            $ErrorActionPreference = 'Continue'
+            & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $MaxFileSizeMB -mode $mode -ets
+        }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
         Write-Error "logman failed. exit code:$LASTEXITCODE; stdout:`"$stdout`"; error:`"$err`""
@@ -1483,13 +1483,13 @@ function Stop-WamTrace {
 }
 
 function Start-OutlookTrace {
-    [CmdletBinding(SupportsShouldProcess=$true, PositionalBinding=$false)]
+    [CmdletBinding(SupportsShouldProcess = $true, PositionalBinding = $false)]
     param(
-        [Parameter(Mandatory=$true, Position=0)]
+        [Parameter(Mandatory = $true, Position = 0)]
         [string]$Path,
         [string]$FileName = 'outlook.etl',
         [string]$SessionName = 'OutlookTrace',
-        [ValidateSet('NewFile','Circular')]
+        [ValidateSet('NewFile', 'Circular')]
         [string]$LogFileMode = 'NewFile',
         [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxFileSizeMB = 256
@@ -1506,10 +1506,10 @@ function Start-OutlookTrace {
     Write-Log "Creating a provider listing according to the version $major"
 
     switch ($major) {
-        14 {Set-Content $Outlook2010Providers -Path $providerFile -ErrorAction Stop; break}
-        15 {Set-Content $Outlook2013Providers -Path $providerFile -ErrorAction Stop; break}
-        16 {Set-Content $Outlook2016Providers -Path $providerFile -ErrorAction Stop; break}
-        default {throw "Couldn't find the version from $_"}
+        14 { Set-Content $Outlook2010Providers -Path $providerFile -ErrorAction Stop; break }
+        15 { Set-Content $Outlook2013Providers -Path $providerFile -ErrorAction Stop; break }
+        16 { Set-Content $Outlook2016Providers -Path $providerFile -ErrorAction Stop; break }
+        default { throw "Couldn't find the version from $_" }
     }
 
     # Configure log file mode, filename, and max file size if ncessary.
@@ -1525,7 +1525,7 @@ function Start-OutlookTrace {
         }
 
         'Circular' {
-            $mode =  @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+            $mode = @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
 
             if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
                 $MaxFileSizeMB = 2048
@@ -1536,13 +1536,13 @@ function Start-OutlookTrace {
 
     $traceFile = Join-Path $Path -ChildPath $FileName
 
-    if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME,$logmanCommand)) {
+    if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, $logmanCommand)) {
         Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`", traceFile:`"$traceFile`", logFileMode:`"$mode`", maxFileSize: `"$MaxFileSizeMB`""
 
         $err = $($stdout = Invoke-Command {
-            $ErrorActionPreference = 'Continue'
-            & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $MaxFileSizeMB -mode $mode -ets
-        }) 2>&1
+                $ErrorActionPreference = 'Continue'
+                & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $MaxFileSizeMB -mode $mode -ets
+            }) 2>&1
 
         if ($err -or $LASTEXITCODE -ne 0) {
             Write-Error "logman failed. exit code:$LASTEXITCODE; stdout:`"$stdout`"; error:`"$err`""
@@ -1603,10 +1603,10 @@ function Start-NetshTrace {
 
     Write-Log "Starting a netsh trace."
     $traceFile = Join-Path $Path -ChildPath $FileName
-    $err = $($stdout = Invoke-Command  {
-        $ErrorActionPreference = 'Continue'
-        & $netshexe trace start scenario=$scenario capture=yes tracefile="`"$traceFile`"" overwrite=yes maxSize=2048 # correlation=yes
-    }) 2>&1
+    $err = $($stdout = Invoke-Command {
+            $ErrorActionPreference = 'Continue'
+            & $netshexe trace start scenario=$scenario capture=yes tracefile="`"$traceFile`"" overwrite=yes maxSize=2048 # correlation=yes
+        }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
         Write-Error "netsh failed.`nexit code: $LASTEXITCODE; stdout: $stdout; error: $err"
@@ -1620,7 +1620,7 @@ function Start-NetshTrace {
     $netshRegPath = 'HKCU:\System\CurrentControlSet\Control\NetTrace\Session\'
     switch ($RerpotMode) {
         'None' { Set-ItemProperty -Path $netshRegPath -Name 'MiniReportEnabled' -Type DWord -Value 0; break }
-        'Mini' { Set-ItemProperty -Path $netshRegPath -Name 'MiniReportEnabled' -Type DWord -Value 1; break}
+        'Mini' { Set-ItemProperty -Path $netshRegPath -Name 'MiniReportEnabled' -Type DWord -Value 1; break }
         'Full' { Set-ItemProperty -Path $netshRegPath -Name 'ReportEnabled' -Type DWord -Value 1; break }
     }
 
@@ -1644,7 +1644,7 @@ function Stop-NetshTrace {
             Start-Sleep -Seconds $retry
         }
 
-        $sessions = @(Get-EtwSession | Where-Object {$_.SessionName -like "*$SessionName*"})
+        $sessions = @(Get-EtwSession | Where-Object { $_.SessionName -like "*$SessionName*" })
         if ($sessions.Count -eq 1) {
             $SessionName = $sessions[0].SessionName
             $sessionFound = $true
@@ -1658,7 +1658,7 @@ function Stop-NetshTrace {
         ++$retry
     }
 
-    if (-not $sessionFound){
+    if (-not $sessionFound) {
         Write-Error "Cannot find a netsh trace session"
         return
     }
@@ -1695,9 +1695,9 @@ function Stop-NetshTrace {
     Write-Log "Stopping $SessionName with netsh trace stop"
 
     $err = $($stdout = Invoke-Command {
-        $ErrorActionPreference = 'Continue'
-        & $netshexe trace stop
-    }) 2>&1
+            $ErrorActionPreference = 'Continue'
+            & $netshexe trace stop
+        }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
         Write-Log "Failed to stop netsh trace ($SessionName). exit code: $LASTEXITCODE; stdout: $stdout; error: $err"
@@ -1749,7 +1749,7 @@ function Start-PSR {
     $Path = Resolve-Path $Path
 
     # File name must be ***.mht
-    if ([IO.Path]::GetExtension($FileName) -ne ".mht"){
+    if ([IO.Path]::GetExtension($FileName) -ne ".mht") {
         $FileName = [IO.Path]::GetFileNameWithoutExtension($FileName) + '.mht'
     }
 
@@ -1793,7 +1793,7 @@ function Stop-PSR {
 
     $currentInstance = Get-Process -Name psr -ErrorAction SilentlyContinue
 
-    if (-not $currentInstance){
+    if (-not $currentInstance) {
         Write-Error 'There is no psr.exe process'
         return
     }
@@ -1826,7 +1826,7 @@ function Stop-PSR {
 function Save-EventLog {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         $Path
     )
 
@@ -1867,10 +1867,10 @@ function Get-MicrosoftUpdate {
     # Constants
     # https://docs.microsoft.com/en-us/windows/desktop/api/msi/nf-msi-msienumpatchesexa
     $PatchState = @{
-        1 = 'MSIPATCHSTATE_APPLIED'
-        2 = 'MSIPATCHSTATE_SUPERSEDED'
-        4 = 'MSIPATCHSTATE_OBSOLETED'
-        8 = 'MSIPATCHSTATE_REGISTERED'
+        1  = 'MSIPATCHSTATE_APPLIED'
+        2  = 'MSIPATCHSTATE_SUPERSEDED'
+        4  = 'MSIPATCHSTATE_OBSOLETED'
+        8  = 'MSIPATCHSTATE_REGISTERED'
         15 = 'MSIPATCHSTATE_ALL'
     }
 
@@ -1930,10 +1930,10 @@ function Get-MicrosoftUpdate {
 
                     [PSCustomObject]@{
                         DisplayName = $displayName
-                        KB = $KB
+                        KB          = $KB
                         MoreInfoURL = $moreInfoURL
-                        Installed = $installed
-                        PatchState = $PatchState[$state]
+                        Installed   = $installed
+                        PatchState  = $PatchState[$state]
                     }
 
                     $patchKey.Close()
@@ -1959,7 +1959,7 @@ function Get-MicrosoftUpdate {
 function Save-MicrosoftUpdate {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         $Path
     )
 
@@ -1972,8 +1972,7 @@ function Save-MicrosoftUpdate {
     Get-MicrosoftUpdate | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
 }
 
-function Get-InstalledUpdate
-{
+function Get-InstalledUpdate {
     [CmdletBinding()]
     param()
 
@@ -2016,9 +2015,9 @@ function Get-InstalledUpdate
 }
 
 function Resolve-User {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
-        [Parameter(Position=0, Mandatory=$true)]
+        [Parameter(Position = 0, Mandatory = $true)]
         # User Name or SID
         [string]$Identity
     )
@@ -2064,8 +2063,8 @@ function Resolve-User {
 
     $resolved = [PSCustomObject]@{
         Name = $account.ToString()
-        SID = $sid.ToString()
-    } | Add-Member -MemberType ScriptMethod -Name 'ToString' -Value {$this.Name} -Force -PassThru
+        SID  = $sid.ToString()
+    } | Add-Member -MemberType ScriptMethod -Name 'ToString' -Value { $this.Name } -Force -PassThru
 
     # Add to cache
     $Script:ResolveCache.Add($resolved.Name, $resolved)
@@ -2093,16 +2092,16 @@ function Get-LogonUser {
     }
 
     $err = $($quserResult = Invoke-Command {
-        $ErrorActionPreference = 'Continue'
-        & quser.exe
-    }) 2>&1
+            $ErrorActionPreference = 'Continue'
+            & quser.exe
+        }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
         Write-Error "quser failed. exit code:$LASTEXITCODE; stdout:`"$quserResult`"; error:`"$err`""
         return
     }
 
-    $currentSession = $quserResult | Where-Object {$_.StartsWith('>')} | Select-Object -First 1
+    $currentSession = $quserResult | Where-Object { $_.StartsWith('>') } | Select-Object -First 1
     if (-not $currentSession) {
         Write-Error "Cannot find current session with quser."
         return
@@ -2236,7 +2235,7 @@ function Save-OfficeRegistry {
 
     $userRegRoot = Get-UserRegistryRoot $User -SkipRegistryPrefix
     if ($userRegRoot) {
-        $registryKeys = $registryKeys | ForEach-Object {$_.Replace("HKCU", $userRegRoot)}
+        $registryKeys = $registryKeys | ForEach-Object { $_.Replace("HKCU", $userRegRoot) }
     }
 
     # Make sure NOT to use WOW64 version of reg.exe when running on 32bit PowerShell on 64bit OS.
@@ -2256,9 +2255,9 @@ function Save-OfficeRegistry {
 
     foreach ($key in $registryKeys) {
         $err = $($queryResult = Invoke-Command {
-            $ErrorActionPreference = 'Continue'
-            & $regexe Query $key
-        }) 2>&1
+                $ErrorActionPreference = 'Continue'
+                & $regexe Query $key
+            }) 2>&1
 
         if ($null -eq $queryResult) {
             Write-Log "$key does not exist"
@@ -2279,9 +2278,9 @@ function Save-OfficeRegistry {
 
         Write-Log "Saving $key to $filePath"
         $err = $(Invoke-Command {
-            $ErrorActionPreference = 'Continue'
-            & $regexe export $key $filePath | Out-Null
-        }) 2>&1
+                $ErrorActionPreference = 'Continue'
+                & $regexe export $key $filePath | Out-Null
+            }) 2>&1
 
         if ($LASTEXITCODE -ne 0) {
             Write-Error "$key is not exported. exit code = $LASTEXITCODE. $err"
@@ -2301,15 +2300,15 @@ function Save-OSConfiguration {
     }
 
     $commands = @(
-        @{ScriptBlock = {Get-WmiObject -Class Win32_ComputerSystem}; FileName = 'Win32_ComputerSystem.xml'}
-        @{ScriptBlock = {Get-WmiObject -Class Win32_OperatingSystem}; FileName = 'Win32_OperatingSystem.xml'}
-        @{ScriptBlock = {Get-WinHttpDefaultProxy}}
-        @{ScriptBlock = {Get-NLMConnectivity}}
-        @{ScriptBlock = {Get-WSCAntivirus}}
-        @{ScriptBlock = {Get-InstalledUpdate}}
-        @{ScriptBlock = {Get-JoinInformation}}
-        @{ScriptBlock = {Get-DeviceJoinStatus}; FileName = 'DeviceJoinStatus.txt'}
-        @{ScriptBlock = {Get-WebView2}}
+        @{ScriptBlock = { Get-WmiObject -Class Win32_ComputerSystem }; FileName = 'Win32_ComputerSystem.xml' }
+        @{ScriptBlock = { Get-WmiObject -Class Win32_OperatingSystem }; FileName = 'Win32_OperatingSystem.xml' }
+        @{ScriptBlock = { Get-WinHttpDefaultProxy } }
+        @{ScriptBlock = { Get-NLMConnectivity } }
+        @{ScriptBlock = { Get-WSCAntivirus } }
+        @{ScriptBlock = { Get-InstalledUpdate } }
+        @{ScriptBlock = { Get-JoinInformation } }
+        @{ScriptBlock = { Get-DeviceJoinStatus }; FileName = 'DeviceJoinStatus.txt' }
+        @{ScriptBlock = { Get-WebView2 } }
     )
 
     foreach ($command in $commands) {
@@ -2329,14 +2328,14 @@ function Save-OSConfigurationMT {
     }
 
     $tasks = @(
-    Start-Task {param($path) Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "Win32_ComputerSystem.xml")
-    Start-Task {param($path) Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "Win32_OperatingSystem.xml")
-    Start-Task {param($path) Get-ProxySetting | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "ProxySetting.xml")
-    Start-Task {param($path) Get-NLMConnectivity | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "NLMConnectivity.xml")
-    Start-Task {param($path) Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "WSCAntivirus.xml")
-    Start-Task {param($path) Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "InstalledUpdate.xml")
-    Start-Task {param($path) Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $path} -ArgumentList (Join-Path $Path "JoinInformation.xml")
-    Start-Task {param($path) Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $path} -ArgumentList (Join-Path $Path "DeviceJoinStatus.txt")
+        Start-Task { param($path) Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "Win32_ComputerSystem.xml")
+        Start-Task { param($path) Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "Win32_OperatingSystem.xml")
+        Start-Task { param($path) Get-ProxySetting | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "ProxySetting.xml")
+        Start-Task { param($path) Get-NLMConnectivity | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "NLMConnectivity.xml")
+        Start-Task { param($path) Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "WSCAntivirus.xml")
+        Start-Task { param($path) Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "InstalledUpdate.xml")
+        Start-Task { param($path) Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "JoinInformation.xml")
+        Start-Task { param($path) Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $path } -ArgumentList (Join-Path $Path "DeviceJoinStatus.txt")
     )
 
     Write-Verbose "waiting for tasks..."
@@ -2356,18 +2355,18 @@ function Save-NetworkInfo {
 
     # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
     $commands = @(
-        @{ScriptBlock = {Get-NetAdapter -IncludeHidden}}
-        @{ScriptBlock = {Get-NetAdapterAdvancedProperty}}
-        @{ScriptBlock = {Get-NetAdapterBinding -IncludeHidden}}
-        @{ScriptBlock = {Get-NetIpConfiguration -Detailed}}
-        @{ScriptBlock = {Get-DnsClientNrptPolicy}}
+        @{ScriptBlock = { Get-NetAdapter -IncludeHidden } }
+        @{ScriptBlock = { Get-NetAdapterAdvancedProperty } }
+        @{ScriptBlock = { Get-NetAdapterBinding -IncludeHidden } }
+        @{ScriptBlock = { Get-NetIpConfiguration -Detailed } }
+        @{ScriptBlock = { Get-DnsClientNrptPolicy } }
         # @{ScriptBlock = {Resolve-DnsName 'bing.com'}}
         # @{ScriptBlock = {ping bing.com -4}}
         # @{ScriptBlock = {ping bing.com -6}}
         # @{ScriptBlock = {Test-NetConnection 'bing.com' -InformationLevel Detailed}}
         # @{ScriptBlock = {Test-NetConnection 'bing.com' -InformationLevel Detailed -CommonTCPPort HTTP}}
-        @{ScriptBlock = {Get-NetRoute}}
-        @{ScriptBlock = {Get-NetIPaddress}}
+        @{ScriptBlock = { Get-NetRoute } }
+        @{ScriptBlock = { Get-NetIPaddress } }
         # @{ScriptBlock = {Get-NetLbfoTeam}}
         # @{ScriptBlock = {Get-Service -Name:VMMS}}
         # @{ScriptBlock = {Get-VMSwitch}}
@@ -2375,18 +2374,18 @@ function Save-NetworkInfo {
         # @{ScriptBlock = {Get-WindowsOptionalFeature -Online}}
         # @{ScriptBlock = {Get-Service}}
         # @{ScriptBlock = {Get-PnpDevice | Get-PnpDeviceProperty -KeyName DEVPKEY_Device_InstanceId,DEVPKEY_Device_DevNodeStatus,DEVPKEY_Device_ProblemCode}}
-        @{ScriptBlock = {Get-NetIPInterface}}
-        @{ScriptBlock = {Get-NetConnectionProfile}}
-        @{ScriptBlock = {ipconfig /all}}
+        @{ScriptBlock = { Get-NetIPInterface } }
+        @{ScriptBlock = { Get-NetConnectionProfile } }
+        @{ScriptBlock = { ipconfig /all } }
 
         # Dump Windows Firewall config
-        @{ScriptBlock = {netsh advfirewall monitor show currentprofile}}
-        @{ScriptBlock = {netsh advfirewall monitor show firewall}}
-        @{ScriptBlock = {netsh advfirewall monitor show consec}}
-        @{ScriptBlock = {netsh advfirewall firewall show rule name=all verbose}}
-        @{ScriptBlock = {netsh advfirewall consec show rule name=all verbose}}
-        @{ScriptBlock = {netsh advfirewall monitor show firewall rule name=all}}
-        @{ScriptBlock = {netsh advfirewall monitor show consec rule name=all}}
+        @{ScriptBlock = { netsh advfirewall monitor show currentprofile } }
+        @{ScriptBlock = { netsh advfirewall monitor show firewall } }
+        @{ScriptBlock = { netsh advfirewall monitor show consec } }
+        @{ScriptBlock = { netsh advfirewall firewall show rule name=all verbose } }
+        @{ScriptBlock = { netsh advfirewall consec show rule name=all verbose } }
+        @{ScriptBlock = { netsh advfirewall monitor show firewall rule name=all } }
+        @{ScriptBlock = { netsh advfirewall monitor show consec rule name=all } }
     )
 
     foreach ($command in $commands) {
@@ -2403,7 +2402,7 @@ If FileName is not give, the file name will be auto-decided. If the command is a
 function Run-Command {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true, Position=0)]
+        [Parameter(Mandatory = $true, Position = 0)]
         [ScriptBlock]$ScriptBlock,
         [object[]]$ArgumentList,
         # Folder to save to
@@ -2497,23 +2496,23 @@ function Save-NetworkInfoMT {
 
     # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
     $tasks = @(
-    Start-Task {param ($Path) Get-NetAdapter -IncludeHidden | Export-Clixml (Join-Path $Path 'NetAdapter.xml')}
-    Start-Task {param ($Path) Get-NetAdapterAdvancedProperty | Export-Clixml (Join-Path $Path 'NetAdapterAdvancedProperty.xml')}
-    Start-Task {param ($Path) Get-NetAdapterBinding -IncludeHidden | Export-Clixml (Join-Path $Path 'NetAdapterBinding.xml')}
-    Start-Task {param ($Path) Get-NetIpConfiguration -Detailed | Export-Clixml (Join-Path $Path 'NetIpConfiguration.xml')}
-    Start-Task {param ($Path) Get-DnsClientNrptPolicy | Export-Clixml (Join-Path $Path 'DnsClientNrptPolicy.xml')}
-    Start-Task {param ($Path) Get-NetRoute | Export-Clixml (Join-Path $Path 'NetRoute.xml')}
-    Start-Task {param ($Path) Get-NetIPaddress | Export-Clixml (Join-Path $Path 'NetIPaddress.xml')}
-    Start-Task {param ($Path) Get-NetLbfoTeam | Export-Clixml (Join-Path $Path 'NetLbfoTeam.xml')}
-    Start-Task {param ($Path) Get-NetIPInterface | Export-Clixml (Join-Path $Path 'NetIPInterface.xml')}
-    Start-Task {param ($Path) Get-NetConnectionProfile | Export-Clixml (Join-Path $Path 'NetConnectionProfile.xml')}
-    Start-Task {param ($Path) ipconfig /all | Out-File (Join-Path $Path 'ipconfig_all.txt')}
-    Start-Task {param ($Path) netsh advfirewall monitor show currentprofile | Out-File (Join-Path $Path 'netsh advfirewall monitor show currentprofile.txt')}
-    Start-Task {param ($Path) netsh advfirewall monitor show firewall | Out-File (Join-Path $Path 'netsh advfirewall monitor show firewall.txt')}
-    Start-Task {param ($Path) netsh advfirewall firewall show rule name=all verbose | Out-File (Join-Path $Path 'netsh advfirewall firewall show rule name=all verbose.txt')}
-    Start-Task {param ($Path) netsh advfirewall consec show rule name=all verbose | Out-File (Join-Path $Path 'netsh advfirewall consec show rule name=all verbose.txt')}
-    Start-Task {param ($Path) netsh advfirewall monitor show firewall rule name=all | Out-File (Join-Path $Path 'netsh advfirewall monitor show firewall rule name=all.txt')}
-    Start-Task {param ($Path) netsh advfirewall monitor show consec rule name=all | Out-File (Join-Path $Path 'netsh advfirewall monitor show consec rule name=all.txt')}
+        Start-Task { param ($Path) Get-NetAdapter -IncludeHidden | Export-Clixml (Join-Path $Path 'NetAdapter.xml') }
+        Start-Task { param ($Path) Get-NetAdapterAdvancedProperty | Export-Clixml (Join-Path $Path 'NetAdapterAdvancedProperty.xml') }
+        Start-Task { param ($Path) Get-NetAdapterBinding -IncludeHidden | Export-Clixml (Join-Path $Path 'NetAdapterBinding.xml') }
+        Start-Task { param ($Path) Get-NetIpConfiguration -Detailed | Export-Clixml (Join-Path $Path 'NetIpConfiguration.xml') }
+        Start-Task { param ($Path) Get-DnsClientNrptPolicy | Export-Clixml (Join-Path $Path 'DnsClientNrptPolicy.xml') }
+        Start-Task { param ($Path) Get-NetRoute | Export-Clixml (Join-Path $Path 'NetRoute.xml') }
+        Start-Task { param ($Path) Get-NetIPaddress | Export-Clixml (Join-Path $Path 'NetIPaddress.xml') }
+        Start-Task { param ($Path) Get-NetLbfoTeam | Export-Clixml (Join-Path $Path 'NetLbfoTeam.xml') }
+        Start-Task { param ($Path) Get-NetIPInterface | Export-Clixml (Join-Path $Path 'NetIPInterface.xml') }
+        Start-Task { param ($Path) Get-NetConnectionProfile | Export-Clixml (Join-Path $Path 'NetConnectionProfile.xml') }
+        Start-Task { param ($Path) ipconfig /all | Out-File (Join-Path $Path 'ipconfig_all.txt') }
+        Start-Task { param ($Path) netsh advfirewall monitor show currentprofile | Out-File (Join-Path $Path 'netsh advfirewall monitor show currentprofile.txt') }
+        Start-Task { param ($Path) netsh advfirewall monitor show firewall | Out-File (Join-Path $Path 'netsh advfirewall monitor show firewall.txt') }
+        Start-Task { param ($Path) netsh advfirewall firewall show rule name=all verbose | Out-File (Join-Path $Path 'netsh advfirewall firewall show rule name=all verbose.txt') }
+        Start-Task { param ($Path) netsh advfirewall consec show rule name=all verbose | Out-File (Join-Path $Path 'netsh advfirewall consec show rule name=all verbose.txt') }
+        Start-Task { param ($Path) netsh advfirewall monitor show firewall rule name=all | Out-File (Join-Path $Path 'netsh advfirewall monitor show firewall rule name=all.txt') }
+        Start-Task { param ($Path) netsh advfirewall monitor show consec rule name=all | Out-File (Join-Path $Path 'netsh advfirewall monitor show consec rule name=all.txt') }
     )
 
     $PSDefaultParameterValues.Remove('Start-Task:ArgumentList')
@@ -2542,9 +2541,9 @@ function Save-NetworkInfoMT {
     ProxyBypass          : <local>
 #>
 function Get-WinInetProxy {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
-        [Parameter(Position=0)]
+        [Parameter(Position = 0)]
         [string]$User
     )
 
@@ -2635,12 +2634,12 @@ function Get-WinInetProxy {
         $autoConfigUrl = [Text.Encoding]::ASCII.GetString($raw, $position + 4, $autoConfigUrlSize)
 
         $winInetProxy = [PSCustomObject]@{
-            StructVersion = $structversion
+            StructVersion   = $structversion
             SettingsVersion = $settingsVersion
-            Flags = $flags -as [Win32.WinInet+PER_CONN_FLAGS]
-            Proxy = $proxy
-            ProxyBypass = $proxyBypass
-            AutoConfigUrl = $autoConfigUrl
+            Flags           = $flags -as [Win32.WinInet+PER_CONN_FLAGS]
+            Proxy           = $proxy
+            ProxyBypass     = $proxyBypass
+            AutoConfigUrl   = $autoConfigUrl
         }
 
         $props = [ordered]@{}
@@ -2649,9 +2648,9 @@ function Get-WinInetProxy {
         $props['Connection'] = $connection
 
         $props['AutoDetect'] = ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_AUTO_DETECT) -as [bool]
-        $props['AutoConfigUrl'] = if ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_AUTO_PROXY_URL -and $winInetProxy.AutoConfigUrl) {$winInetProxy.AutoConfigUrl}
-        $props['Proxy'] = if ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_PROXY -and $winInetProxy.Proxy) {$winInetProxy.Proxy}
-        $props['ProxyBypass'] = if ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_PROXY -and $winInetProxy.ProxyBypass) {$winInetProxy.ProxyBypass}
+        $props['AutoConfigUrl'] = if ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_AUTO_PROXY_URL -and $winInetProxy.AutoConfigUrl) { $winInetProxy.AutoConfigUrl }
+        $props['Proxy'] = if ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_PROXY -and $winInetProxy.Proxy) { $winInetProxy.Proxy }
+        $props['ProxyBypass'] = if ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_PROXY -and $winInetProxy.ProxyBypass) { $winInetProxy.ProxyBypass }
 
         # This data is temporarily.
         if (-not $activeConnAdded -and $currentUserActiveConnProxy) {
@@ -2673,16 +2672,16 @@ function Get-WinInetProxy {
     See SafeGlobalHandle defined in Win32Interop type definition.
 #>
 function MarshalString {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
-        [Parameter(Position=0)]
+        [Parameter(Position = 0)]
         [IntPtr]$Ptr,
         [ValidateSet('Ansi', 'Unicode')]
         [string]$UnmanagedStringType = 'Unicode'
     )
 
     switch ($UnmanagedStringType) {
-        'Ansi'    { [Runtime.InteropServices.Marshal]::PtrToStringAnsi($Ptr); break }
+        'Ansi' { [Runtime.InteropServices.Marshal]::PtrToStringAnsi($Ptr); break }
         'Unicode' { [Runtime.InteropServices.Marshal]::PtrToStringUni($Ptr); break }
     }
 
@@ -2701,10 +2700,10 @@ function MarshalString {
     https://datatracker.ietf.org/doc/html/draft-ietf-wrec-wpad-01
 #>
 function Get-ProxyAutoConfig {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
         # Only detect wpad URL, skip downloading.
-        [Parameter(Position=0)]
+        [Parameter(Position = 0)]
         [string]$User,
         [switch]$SkipDownload
     )
@@ -2726,12 +2725,12 @@ function Get-ProxyAutoConfig {
         [ordered]@{ Url = $url; Pac = $pac }
     }
 
-    foreach($proxy in @(Get-WinInetProxy -User $User)) {
+    foreach ($proxy in @(Get-WinInetProxy -User $User)) {
         # If AutoDetect is on, detect URL with WPAD using WinHttpDetectAutoProxyConfigUrl.
         if ($proxy.AutoDetect) {
             [Win32.SafeGlobalFreeString]$wpadUrl = $null
-            if ([Win32.WinHttp]::WinHttpDetectAutoProxyConfigUrl([Win32.WinHttp+AutoDetectType] 'WINHTTP_AUTO_DETECT_TYPE_DHCP, WINHTTP_AUTO_DETECT_TYPE_DNS_A',[ref]$wpadUrl)) {
-                Get-PAC $wpadUrl.ToString() | ForEach-Object {$_.Add('WPAD', $true); $_.Add('User', $proxy.User); [PSCustomObject]$_}
+            if ([Win32.WinHttp]::WinHttpDetectAutoProxyConfigUrl([Win32.WinHttp+AutoDetectType] 'WINHTTP_AUTO_DETECT_TYPE_DHCP, WINHTTP_AUTO_DETECT_TYPE_DNS_A', [ref]$wpadUrl)) {
+                Get-PAC $wpadUrl.ToString() | ForEach-Object { $_.Add('WPAD', $true); $_.Add('User', $proxy.User); [PSCustomObject]$_ }
             }
             else {
                 $ec = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
@@ -2749,9 +2748,9 @@ function Get-ProxyAutoConfig {
         }
 
         if ($proxy.AutoConfigUrl) {
-            Get-PAC $proxy.AutoConfigUrl | ForEach-Object {$_.Add('WPAD', $false); $_.Add('User', $proxy.User); [PSCustomObject]$_}
+            Get-PAC $proxy.AutoConfigUrl | ForEach-Object { $_.Add('WPAD', $false); $_.Add('User', $proxy.User); [PSCustomObject]$_ }
         }
-     }
+    }
 }
 
 <#
@@ -2759,10 +2758,10 @@ function Get-ProxyAutoConfig {
     Get WinHttp's default proxy
 #>
 function Get-WinHttpDefaultProxy {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param()
 
-    $props= [ordered]@{}
+    $props = [ordered]@{}
     $proxyInfo = New-Object Win32.WinHttp+WINHTTP_PROXY_INFO
 
     if ([Win32.WinHttp]::WinHttpGetDefaultProxyConfiguration([ref] $proxyInfo)) {
@@ -2789,7 +2788,7 @@ function Get-WinHttpDefaultProxy {
     "WinHttp***" properties correspond to WINHTTP_PROXY_INFO obtained by WinHttpGetDefaultProxyConfiguration. See https://docs.microsoft.com/en-us/windows/win32/api/winhttp/ns-winhttp-winhttp_current_user_ie_proxy_config"
 #>
 function Get-ProxySetting {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
         [string]$User
     )
@@ -2798,7 +2797,7 @@ function Get-ProxySetting {
     Write-Log "Running as $currentUser"
 
     # props hold the return object properties.
-    $props= [ordered]@{}
+    $props = [ordered]@{}
 
     # Get WebProxy class to get IE config
     # N.B. GetDefaultProxy won't be really needed, but I'm keeping it for now.
@@ -2815,8 +2814,8 @@ function Get-ProxySetting {
 
     if ([Win32.WinHttp]::WinHttpGetDefaultProxyConfiguration([ref] $proxyInfo)) {
         $props['WinHttpAccessType'] = $proxyInfo.dwAccessType
-        $props['WinHttpProxy'] = if ($proxyInfo.lpszProxy) {MarshalString $proxyInfo.lpszProxy}
-        $props['WinHttpProxyBypass'] = if ($proxyInfo.lpszProxyBypass) {MarshalString $proxyInfo.lpszProxyBypass}
+        $props['WinHttpProxy'] = if ($proxyInfo.lpszProxy) { MarshalString $proxyInfo.lpszProxy }
+        $props['WinHttpProxyBypass'] = if ($proxyInfo.lpszProxyBypass) { MarshalString $proxyInfo.lpszProxyBypass }
     }
     else {
         Write-Error ("Win32 WinHttpGetDefaultProxyConfiguration failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
@@ -2832,8 +2831,8 @@ function Get-ProxySetting {
         if ([Win32.WinHttp]::WinHttpGetIEProxyConfigForCurrentUser([ref] $winInetProxy)) {
             $props['WinInetAutoDetect'] = $winInetProxy.fAutoDetect
             $props['WinINetAutoConfigUrl'] = if ($winInetProxy.lpszAutoConfigUrl) { MarshalString $winInetProxy.lpszAutoConfigUrl }
-            $props['WinInetProxy'] = if ($winInetProxy.lpszProxy) { MarshalString $winInetProxy.lpszProxy}
-            $props['WinInetProxyBypass'] = if ($winInetProxy.lpszProxyBypass) { MarshalString $winInetProxy.lpszProxyBypass}
+            $props['WinInetProxy'] = if ($winInetProxy.lpszProxy) { MarshalString $winInetProxy.lpszProxy }
+            $props['WinInetProxyBypass'] = if ($winInetProxy.lpszProxyBypass) { MarshalString $winInetProxy.lpszProxyBypass }
         }
         else {
             Write-Error ("Win32 WinHttpGetIEProxyConfigForCurrentUser failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
@@ -2847,7 +2846,7 @@ function Get-ProxySetting {
             $props['WinInetAutoConfigUrl'] = $winInetProxy.AutoConfigUrl
             $props['WinInetProxy'] = $winInetProxy.Proxy
             $props['WinInetProxyBypass'] = $winInetProxy.ProxyBypass
-            $props['User'] = if ($User) {$User} else {$currentUser}
+            $props['User'] = if ($User) { $User } else { $currentUser }
         }
     }
 
@@ -2871,7 +2870,7 @@ function Get-NLMConnectivity {
 
     [PSCustomObject]@{
         IsConnectedToInternet = $isConnectedToInternet
-        Connectivity = $connectivity
+        Connectivity          = $connectivity
     }
 }
 
@@ -2918,7 +2917,7 @@ function Get-JoinInformation {
     }
 
     [PSCustomObject]@{
-        Name = $name
+        Name       = $name
         JoinStatus = $status
     }
 }
@@ -2940,11 +2939,11 @@ function Get-OutlookProfile {
 
     # List Outlook "profiles" keys
     $profiles = New-Object System.Collections.Generic.List[object]
-    $versionKeys = @(Get-ChildItem (Join-Path $userRegRoot 'Software\Microsoft\Office\') -ErrorAction SilentlyContinue | Where-Object {$_.Name -match '\d\d\.0'})
+    $versionKeys = @(Get-ChildItem (Join-Path $userRegRoot 'Software\Microsoft\Office\') -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\d\d\.0' })
     $defaultProfile = $null
 
     foreach ($versionKey in $versionKeys) {
-        Get-ChildItem (Join-Path $versionKey.PsPath '\Outlook\Profiles') -ErrorAction SilentlyContinue | ForEach-Object {$profiles.Add($_)}
+        Get-ChildItem (Join-Path $versionKey.PsPath '\Outlook\Profiles') -ErrorAction SilentlyContinue | ForEach-Object { $profiles.Add($_) }
         if (-not $defaultProfile) {
             $defaultProfile = Get-ItemProperty (Join-Path $versionKey.PsPath 'Outlook') -Name 'DefaultProfile' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultProfile'
         }
@@ -2975,7 +2974,7 @@ function Get-OutlookProfile {
         $subkeys = Get-ChildItem $profile.PSPath -Recurse
 
         foreach ($subkey in $subkeys) {
-            if ($subkey.Property | Where-Object {$_ -eq $PR_PROFILE_CONFIG_FLAGS}) {
+            if ($subkey.Property | Where-Object { $_ -eq $PR_PROFILE_CONFIG_FLAGS }) {
                 $bytes = $subkey.GetValue($PR_PROFILE_CONFIG_FLAGS)
                 $flags = [BitConverter]::ToUInt32($bytes, 0)
                 break
@@ -2983,7 +2982,7 @@ function Get-OutlookProfile {
         }
 
         # Close all the sub keys
-        $subkeys | ForEach-Object {$_.Close()}
+        $subkeys | ForEach-Object { $_.Close() }
 
         if (($flags -band $CONFIG_OST_CACHE_PRIVATE) -ne 0) {
             $CACHE_PRIVATE = $true
@@ -2998,13 +2997,13 @@ function Get-OutlookProfile {
         }
 
         [PSCustomObject]@{
-            User = $User
-            Profile = $profile.Name
-            IsDefault = (Split-Path $profile.Name -Leaf) -eq $defaultProfile
-            CachedMode = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
+            User                          = $User
+            Profile                       = $profile.Name
+            IsDefault                     = (Split-Path $profile.Name -Leaf) -eq $defaultProfile
+            CachedMode                    = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
             DownloadPublicFolderFavorites = $CACHE_PUBLIC
-            DownloadSharedFolders = $CACHE_DELEGATE_PIM
-            PR_PROFILE_CONFIG_FLAGS = $flags
+            DownloadSharedFolders         = $CACHE_DELEGATE_PIM
+            PR_PROFILE_CONFIG_FLAGS       = $flags
         }
 
         $profile.Close()
@@ -3119,15 +3118,15 @@ function Remove-CachedAutodiscover {
 }
 
 function Start-LdapTrace {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
-        [Parameter(Mandatory=$true, Position=0, HelpMessage = "Directory for output file")]
+        [Parameter(Mandatory = $true, Position = 0, HelpMessage = "Directory for output file")]
         [string]$Path,
-        [Parameter(Mandatory=$true, HelpMessage = "Process name to trace. e.g. Outlook.exe")]
+        [Parameter(Mandatory = $true, HelpMessage = "Process name to trace. e.g. Outlook.exe")]
         [string]$TargetProcess,
         [string]$FileName = 'ldap.etl',
         [string]$SessionName = 'LdapTrace',
-        [ValidateSet('NewFile','Circular')]
+        [ValidateSet('NewFile', 'Circular')]
         [string]$LogFileMode = 'NewFile',
         [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxFileSizeMB = 256
@@ -3140,7 +3139,7 @@ function Start-LdapTrace {
     $Path = Resolve-Path $Path
 
     # Process name must contain the extension such as "Outlook.exe", instead of "Outlook"
-    if ([IO.Path]::GetExtension($TargetProcess)  -ne 'exe') {
+    if ([IO.Path]::GetExtension($TargetProcess) -ne 'exe') {
         $TargetProcess = [IO.Path]::GetFileNameWithoutExtension($TargetProcess) + ".exe"
     }
 
@@ -3171,7 +3170,7 @@ function Start-LdapTrace {
         }
 
         'Circular' {
-            $mode =  @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+            $mode = @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
 
             if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
                 $MaxFileSizeMB = 2048
@@ -3185,9 +3184,9 @@ function Start-LdapTrace {
     # Start ETW session
     Write-Log "Starting a LDAP trace"
     $err = $($stdout = Invoke-Command {
-        $ErrorActionPreference = 'Continue'
-        & logman.exe create trace $SessionName -ow -o $traceFile -p Microsoft-Windows-LDAP-Client 0x1a59afa3 0xff -bs 1024 -mode $mode -max $MaxFileSizeMB -ets
-    }) 2>&1
+            $ErrorActionPreference = 'Continue'
+            & logman.exe create trace $SessionName -ow -o $traceFile -p Microsoft-Windows-LDAP-Client 0x1a59afa3 0xff -bs 1024 -mode $mode -max $MaxFileSizeMB -ets
+        }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
         Write-Error "Failed to start LDAP trace. exit code:$LASTEXITCODE; stdout:`"$stdout`"; error:`"$err`""
@@ -3227,7 +3226,7 @@ function Save-OfficeModuleInfo {
         [Threading.CancellationToken]$CancellationToken
     )
 
-    if (-not (Test-Path $Path)){
+    if (-not (Test-Path $Path)) {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
@@ -3267,7 +3266,8 @@ function Save-OfficeModuleInfo {
     Write-Log "Listing $($items.Count) items took $($listingFinished.TotalMilliseconds) ms."
 
     # Apply filters
-    if ($Filters.Count) { # This is for PowerShell v2. PSv2 iterates a null collection.
+    if ($Filters.Count) {
+        # This is for PowerShell v2. PSv2 iterates a null collection.
         $items = $items | Where-Object {
             foreach ($filter in $Filters) {
                 if ($_.Name -match $filter) {
@@ -3282,27 +3282,27 @@ function Save-OfficeModuleInfo {
     $name = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
 
     @(
-    foreach ($item in $items) {
-        if ($item.VersionInfo.FileVersionRaw) {
-            $fileVersion = $item.VersionInfo.FileVersionRaw
-        }
-        else {
-            $fileVersion = $item.VersionInfo.FileVersion
-        }
+        foreach ($item in $items) {
+            if ($item.VersionInfo.FileVersionRaw) {
+                $fileVersion = $item.VersionInfo.FileVersionRaw
+            }
+            else {
+                $fileVersion = $item.VersionInfo.FileVersion
+            }
 
-        [PSCustomObject]@{
-            Name = $item.Name
-            FullName = $item.FullName
-            #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
-            FileVersion = $fileVersion
-        }
+            [PSCustomObject]@{
+                Name        = $item.Name
+                FullName    = $item.FullName
+                #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
+                FileVersion = $fileVersion
+            }
 
-        if ($CancellationToken.IsCancellationRequested) {
-            Write-Log "Cancel request acknowledged."
-            break
-        }
+            if ($CancellationToken.IsCancellationRequested) {
+                Write-Log "Cancel request acknowledged."
+                break
+            }
 
-    }) | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml") #-Encoding UTF8
+        }) | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml") #-Encoding UTF8
 
     $sw.Stop()
     Write-Log "Enumerating items took $(($sw.Elapsed - $listingFinished).TotalMilliseconds) ms."
@@ -3322,7 +3322,7 @@ function Start-SavingOfficeModuleInfo_PSJob {
         [string[]]$Filters
     )
 
-    if (-not (Test-Path $Path)){
+    if (-not (Test-Path $Path)) {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
@@ -3373,7 +3373,8 @@ function Start-SavingOfficeModuleInfo_PSJob {
         )
 
         # Apply filters
-        if ($Filters.Count) { # This is for PowerShell v2. PSv2 iterates a null collection.
+        if ($Filters.Count) {
+            # This is for PowerShell v2. PSv2 iterates a null collection.
             $items = $items | Where-Object {
                 foreach ($filter in $Filters) {
                     if ($_.Name -match $filter) {
@@ -3385,33 +3386,33 @@ function Start-SavingOfficeModuleInfo_PSJob {
         }
 
         @(
-        foreach ($item in $items) {
-            if ($item.VersionInfo.FileVersionRaw) {
-                $fileVersion = $item.VersionInfo.FileVersionRaw
-            }
-            else {
-                $fileVersion = $item.VersionInfo.FileVersion
-            }
+            foreach ($item in $items) {
+                if ($item.VersionInfo.FileVersionRaw) {
+                    $fileVersion = $item.VersionInfo.FileVersionRaw
+                }
+                else {
+                    $fileVersion = $item.VersionInfo.FileVersion
+                }
 
-            [PSCustomObject]@{
-                Name = $item.Name
-                FullName = $item.FullName
-                #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
-                FileVersion = $fileVersion
-            }
+                [PSCustomObject]@{
+                    Name        = $item.Name
+                    FullName    = $item.FullName
+                    #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
+                    FileVersion = $fileVersion
+                }
 
-            #  If event is signaled, finish
-            if ($namedEvent.WaitOne(0)) {
-                break
-            }
-        }) | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$OutputFileName.xml") -Encoding UTF8
+                #  If event is signaled, finish
+                if ($namedEvent.WaitOne(0)) {
+                    break
+                }
+            }) | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$OutputFileName.xml") -Encoding UTF8
 
         $namedEvent.Close()
 
     } -ArgumentList $Path, $officeInfo, $Filters, 'OfficeModuleInfo', $eventName
 
     [PSCustomObject]@{
-        Job = $job
+        Job   = $job
         Event = $namedEvent # To be closed by Stop-SavingOfficeModuleInfo_PSJob
     }
 
@@ -3426,7 +3427,7 @@ function Stop-SavingOfficeModuleInfo_PSJob {
     [CmdletBinding()]
     param(
         # Returned from Start-SavingOfficeModuleInfo_PSJob
-        [Parameter(Mandatory = $true, ValueFromPipeline=$true)]
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
         $JobDescriptor,
 
         # Number of seconds to wait for the job.
@@ -3475,7 +3476,7 @@ function Save-MSInfo32 {
         $Path
     )
 
-    if (-not (Test-Path $Path -ErrorAction Stop)){
+    if (-not (Test-Path $Path -ErrorAction Stop)) {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
@@ -3501,13 +3502,13 @@ function Save-MSInfo32 {
 }
 
 function Start-CapiTrace {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
-        [Parameter(Mandatory=$true, Position=0)]
+        [Parameter(Mandatory = $true, Position = 0)]
         [string]$Path,
         [string]$FileName = 'capi.etl',
         [string]$SessionName = 'CapiTrace',
-        [ValidateSet('NewFile','Circular')]
+        [ValidateSet('NewFile', 'Circular')]
         [string]$LogFileMode = 'NewFile',
         [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxFileSizeMB = 256
@@ -3530,7 +3531,7 @@ function Start-CapiTrace {
         }
 
         'Circular' {
-            $mode =  @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
+            $mode = @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_CIRCULAR) -join ','
 
             if (-not $PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
                 $MaxFileSizeMB = 2048
@@ -3623,9 +3624,9 @@ function Start-FiddlerCap {
             # To redirect & capture error even when this cmdlet is called with ErrorAction:SilentlyContinue, need "Continue" error action.
             # Usually you can simply specify ErrorAction:Continue to the cmdlet. However, Start-Process does not respect that. So, I need to manually set $ErrorActionPreference here.
             $err = $($process = Invoke-Command {
-                $ErrorActionPreference = "Continue"
-                Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru
-            }) 2>&1
+                    $ErrorActionPreference = "Continue"
+                    Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru
+                }) 2>&1
 
             if ($process.ExitCode -ne 0) {
                 Write-Error "Failed to extract $fiddlerExe. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
@@ -3645,14 +3646,14 @@ function Start-FiddlerCap {
     try {
         Write-Log "Starting FiddlerCap"
         $err = $($process = Invoke-Command {
-            $ErrorActionPreference = "Continue"
-            try {
-                Start-Process $fiddlerExe -PassThru
-            }
-            catch {
-                Write-Error -ErrorRecord $_
-            }
-        }) 2>&1
+                $ErrorActionPreference = "Continue"
+                try {
+                    Start-Process $fiddlerExe -PassThru
+                }
+                catch {
+                    Write-Error -ErrorRecord $_
+                }
+            }) 2>&1
 
         if (-not $process -or $process.HasExited) {
             Write-Error "FiddlerCap failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
@@ -3698,7 +3699,7 @@ function Start-Procmon {
         if ($findResult.Count -ge 1) {
             $procmonFile = $findResult[0].FullName
             if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
-                $procmon64 = $findResult | Where-Object {$_.Name -eq 'procmon64.exe'} | Select-Object -First 1
+                $procmon64 = $findResult | Where-Object { $_.Name -eq 'procmon64.exe' } | Select-Object -First 1
                 if ($procmon64) {
                     $procmonFile = $procmon64.FullName
                 }
@@ -3785,14 +3786,14 @@ function Start-Procmon {
     Write-Log "Starting procmon"
     $process = $null
     $err = $($process = Invoke-Command {
-        $ErrorActionPreference = "Continue"
-        try {
-            Start-Process $procmonFile -ArgumentList "/AcceptEula /Minimized /Quiet /NoFilter /BackingFile `"$pmlFile`"" -PassThru
-        }
-        catch {
-            Write-Error -ErrorRecord $_
-        }
-    }) 2>&1
+            $ErrorActionPreference = "Continue"
+            try {
+                Start-Process $procmonFile -ArgumentList "/AcceptEula /Minimized /Quiet /NoFilter /BackingFile `"$pmlFile`"" -PassThru
+            }
+            catch {
+                Write-Error -ErrorRecord $_
+            }
+        }) 2>&1
 
     try {
         if (-not $process -or $process.HasExited) {
@@ -3808,11 +3809,11 @@ function Start-Procmon {
 
     Write-Log "Procmon successfully started"
     [PSCustomObject]@{
-        ProcmonPath = $procmonFile
-        ProcmonProcessId = $process.Id
-        PMLFile = $pmlFile
+        ProcmonPath          = $procmonFile
+        ProcmonProcessId     = $process.Id
+        PMLFile              = $pmlFile
         ProcmonZipDownloaded = $procmonZipDownloaded
-        ProcmonFolderPath = $procmonFolderPath
+        ProcmonFolderPath    = $procmonFolderPath
     }
 }
 
@@ -3837,14 +3838,14 @@ function Stop-Procmon {
     $process = $null
     try {
         $err = $($process = Invoke-Command {
-            $ErrorActionPreference = "Continue"
-            try {
-                Start-Process $procmonFile -ArgumentList "/Terminate" -Wait -PassThru
-            }
-            catch {
-                Write-Error -ErrorRecord $_
-            }
-        }) 2>&1
+                $ErrorActionPreference = "Continue"
+                try {
+                    Start-Process $procmonFile -ArgumentList "/Terminate" -Wait -PassThru
+                }
+                catch {
+                    Write-Error -ErrorRecord $_
+                }
+            }) 2>&1
 
         if ($process.ExitCode -ne 0) {
             Write-Error "procmon failed to stop. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
@@ -3942,10 +3943,10 @@ function Start-TTD {
     [CmdletBinding()]
     param(
         # Folder to save to.
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         $Path,
         # Executable path (e.g. C:\Windows\System32\notepad.exe)
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         $Executable,
         [switch]$OnLaunch
     )
@@ -3994,7 +3995,7 @@ function Start-TTD {
         # The new process starts as a child process of tttracer.exe.
         $maxRetry = 3
         foreach ($i in 1..$maxRetry) {
-            if ($newProcess = Get-WmiObject Win32_Process -Filter "Name='$targetName.exe' AND ParentProcessId='$($process.Id)'")  {
+            if ($newProcess = Get-WmiObject Win32_Process -Filter "Name='$targetName.exe' AND ParentProcessId='$($process.Id)'") {
                 $targetProcess = Get-Process -Id $newProcess.ProcessId
                 break
             }
@@ -4016,12 +4017,12 @@ function Start-TTD {
     # Return a descriptor object with Dispose method.
     [PSCustomObject]@{
         TTTracerProcess = $process
-        TargetProcess = $targetProcess
-        OutputFile = $outPath
-        OnLaunch = $OnLaunch.IsPresent
+        TargetProcess   = $targetProcess
+        OutputFile      = $outPath
+        OnLaunch        = $OnLaunch.IsPresent
     } | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
         if ($this.TTTracerProcess) { $this.TTTracerProcess.Dispose() }
-        if ($this.TargetProcess) { $this.TargetProcess.Dispose()}
+        if ($this.TargetProcess) { $this.TargetProcess.Dispose() }
     } -PassThru
 }
 
@@ -4029,7 +4030,7 @@ function Stop-TTD {
     [CmdletBinding()]
     param(
         # The returned object of Start-TTD
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         $Descriptor,
         [switch]$AutoRemove
     )
@@ -4087,7 +4088,7 @@ function Stop-TTD {
 
     [PSCustomObject]@{
         ExitCode = $exitCode  # This is the exit code of "tttracer -stop"
-        Message = $message # message of "tttracer -stop"
+        Message  = $message # message of "tttracer -stop"
     }
 
     if ($AutoRemove) {
@@ -4099,10 +4100,10 @@ function Attach-TTD {
     [CmdletBinding()]
     param(
         # Folder to save to.
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         $Path,
         # ProcessID of the process to attach to.
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         $ProcessID
     )
 
@@ -4137,9 +4138,9 @@ function Attach-TTD {
     $stderr = Join-Path $Path 'stderr.txt'
 
     $err = $($process = Invoke-Command {
-        $ErrorActionPreference = 'Continue'
-        Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "-attach $ProcessID" -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-    }) 2>&1
+            $ErrorActionPreference = 'Continue'
+            Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "-attach $ProcessID" -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+        }) 2>&1
 
     # Must wait for a little to see if tttracer succeeded.
     # Wait-Process writes a non-terminating error when timeout occurs. Note that timeout here is a good thing; tttracer is still running.
@@ -4151,12 +4152,12 @@ function Attach-TTD {
 
         [PSCustomObject]@{
             TTTracerProcess = $process
-            TargetProcess = $targetProcess
-            OutputFile = $outPath
-            OnLaunch = $false
+            TargetProcess   = $targetProcess
+            OutputFile      = $outPath
+            OnLaunch        = $false
         } | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
             if ($this.TTTracerProcess) { $this.TTTracerProcess.Dispose() }
-            if ($this.TargetProcess) { $this.TargetProcess.Dispose()}
+            if ($this.TargetProcess) { $this.TargetProcess.Dispose() }
         } -PassThru
     }
     else {
@@ -4192,7 +4193,7 @@ function Get-OfficeInfo {
             elseif (-not $env:PROCESSOR_ARCHITEW6432) {
                 # RegistryView is not available, but it's OK because no WOW64.
                 Write-Log "Using OpenRemoteBaseKey"
-                $hklm = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine,[string]::Empty);
+                $hklm = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [string]::Empty);
             }
             else {
                 # This is the case where registry rediction takes place (32bit PowerShell on 64bit OS). Bail.
@@ -4221,14 +4222,14 @@ function Get-OfficeInfo {
                     $subKey = $uninstallKey.OpenSubKey($subKeyName)
                     $displayName = $subKey.GetValue('DisplayName')
                     $displayIcon = $subKey.GetValue('DisplayIcon')
-                    $modifyPath =  $subKey.GetValue('ModifyPath')
+                    $modifyPath = $subKey.GetValue('ModifyPath')
 
-                    if (($displayName -like "Microsoft Office*" -or $displayName  -like "Microsoft 365 Apps*") -and $displayIcon -and $modifyPath -notlike "*MUI*") {
+                    if (($displayName -like "Microsoft Office*" -or $displayName -like "Microsoft 365 Apps*") -and $displayIcon -and $modifyPath -notlike "*MUI*") {
                         [PSCustomObject]@{
-                            Version = $subKey.GetValue('DisplayVersion')
-                            Location = $subKey.GetValue('InstallLocation')
+                            Version     = $subKey.GetValue('DisplayVersion')
+                            Location    = $subKey.GetValue('InstallLocation')
                             DisplayName = $displayName
-                            ModifyPath = $modifyPath
+                            ModifyPath  = $modifyPath
                             DisplayIcon = $displayIcon
                         }
                     }
@@ -4250,20 +4251,20 @@ function Get-OfficeInfo {
     if ($officeInstallations.Count -gt 0) {
         # There might be more than one version of Office installed.
         # Use the latest
-        $latestOffice = $officeInstallations | Sort-Object -Property {[System.Version]$_.Version} -Descending | Select-Object -First 1
+        $latestOffice = $officeInstallations | Sort-Object -Property { [System.Version]$_.Version } -Descending | Select-Object -First 1
         $displayName = $latestOffice.DisplayName
         $version = $latestOffice.Version
         $installPath = $latestOffice.Location
     }
     else {
         Write-Log "Cannot find the Office installation from HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall. Fall back to HKLM:\SOFTWARE\Microsoft\Office"
-        $keys =  @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Office\ | Where-Object {[RegEx]::IsMatch($_.PSChildName,'\d\d\.0') -or $_.PSChildName -eq 'ClickToRun' })
+        $keys = @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Office\ | Where-Object { [RegEx]::IsMatch($_.PSChildName, '\d\d\.0') -or $_.PSChildName -eq 'ClickToRun' })
 
         # If 'ClickToRun' exists, use its "InstallPath" & "VersionToReport".
-        $clickToRun = $keys | Where-Object {$_.PSChildName -eq 'ClickToRun'}
+        $clickToRun = $keys | Where-Object { $_.PSChildName -eq 'ClickToRun' }
         if ($clickToRun) {
             $installPath = Get-ItemProperty $clickToRun.PSPath | Select-Object -ExpandProperty 'InstallPath'
-            $version = Get-ItemProperty (Join-Path $clickToRun.PSPath 'Configuration')| Select-Object -ExpandProperty 'VersionToReport'
+            $version = Get-ItemProperty (Join-Path $clickToRun.PSPath 'Configuration') | Select-Object -ExpandProperty 'VersionToReport'
         }
         else {
             # Otherwise, check "Common\InstallRoot" key's "Path"
@@ -4277,7 +4278,7 @@ function Get-OfficeInfo {
         }
     }
 
-    if (-not $installPath){
+    if (-not $installPath) {
         Write-Error "Microsoft Office is not installed"
         return
     }
@@ -4289,9 +4290,9 @@ function Get-OfficeInfo {
 
     $Script:OfficeInfoCache =
     [PSCustomObject]@{
-        DisplayName = $displayName
-        Version = $version
-        InstallPath = $installPath
+        DisplayName     = $displayName
+        Version         = $version
+        InstallPath     = $installPath
         MapiDllFileInfo = $mapiDll
     }
 
@@ -4301,9 +4302,9 @@ function Get-OfficeInfo {
 function Add-WerDumpKey {
     [CmdletBinding()]
     param (
-        [parameter(Mandatory=$true)]
+        [parameter(Mandatory = $true)]
         [string]$TargetProcess, # Target Process (e.g. Outlook.exe)
-        [parameter(Mandatory=$true)]
+        [parameter(Mandatory = $true)]
         $Path # Folder to save dump files
     )
 
@@ -4362,7 +4363,7 @@ function Add-WerDumpKey {
 function Remove-WerDumpKey {
     [CmdletBinding()]
     param (
-        [parameter(Mandatory=$true)]
+        [parameter(Mandatory = $true)]
         [string]$TargetProcess # Target Process (e.g. Outlook.exe)
     )
 
@@ -4406,11 +4407,11 @@ function Remove-WerDumpKey {
 function Start-WfpTrace {
     [CmdletBinding()]
     param(
-    [Parameter(Mandatory = $true)]
-    $Path,
-    [Parameter(Mandatory = $true)]
-    [int]$IntervalSeconds,
-    [TimeSpan]$MaxDuration = [TimeSpan]::FromHours(1)  # Just for safety, make sure to stop after a period
+        [Parameter(Mandatory = $true)]
+        $Path,
+        [Parameter(Mandatory = $true)]
+        [int]$IntervalSeconds,
+        [TimeSpan]$MaxDuration = [TimeSpan]::FromHours(1)  # Just for safety, make sure to stop after a period
     )
 
     if (-not (Test-Path $Path)) {
@@ -4449,7 +4450,7 @@ function Stop-WfpTrace {
     [CmdletBinding()]
     [Parameter(Mandatory = $true)]
     param (
-    $WfpJob
+        $WfpJob
     )
 
     Write-Log "Stopping a WFP job"
@@ -4464,7 +4465,7 @@ function Stop-WfpTrace {
     To get a 64bit dump with WOW6432 layer, use SkipWow64Check switch parameter.
 #>
 function Save-Dump {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
         # Folder to save a dump file
         [parameter(Mandatory = $true)]
@@ -4488,8 +4489,8 @@ function Save-Dump {
         return
     }
     elseif (-not $process.Handle) {
-         # This scenario is possible for a system process.
-         Write-Error "Cannot obtain the process handle of $($process.Name)."
+        # This scenario is possible for a system process.
+        Write-Error "Cannot obtain the process handle of $($process.Name)."
         return
     }
 
@@ -4515,9 +4516,9 @@ function Save-Dump {
 
         if ([Win32.DbgHelp]::MiniDumpWriteDump($process.SafeHandle, $ProcessId, $dumpFileStream.SafeFileHandle, $dumpType, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)) {
             [PSCustomObject]@{
-                ProcessID = $ProcessId
+                ProcessID   = $ProcessId
                 ProcessName = $process.Name
-                DumpFile = $dumpFile
+                DumpFile    = $dumpFile
             }
             $writeDumpSuccess = $true
         }
@@ -4540,13 +4541,13 @@ function Save-Dump {
 }
 
 function Save-HungDump {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
         # Folder to save dump files
-        [Parameter(Mandatory=$true, Position=0)]
+        [Parameter(Mandatory = $true, Position = 0)]
         [string]$Path,
         # Target process (either Name or PID)
-        [Parameter(Mandatory=$true, Position=1)]
+        [Parameter(Mandatory = $true, Position = 1)]
         [int]$ProcessId,
         [int]$TimeoutSecond = 5,
         [int]$DumpCount = 1,
@@ -4614,7 +4615,7 @@ function Save-HungDump {
 function Save-MSIPC {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         $Path,
         $User
     )
@@ -4632,7 +4633,7 @@ function Save-MSIPC {
         return
     }
 
-    if (-not (Test-Path $Path -ErrorAction Stop)){
+    if (-not (Test-Path $Path -ErrorAction Stop)) {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
@@ -4652,13 +4653,13 @@ This function returns an instance of Microsoft.Identity.Client.LogCallback deleg
 function New-LogCallback {
     [CmdletBinding()]
     param (
-    # Scriptblock to be called when MSAL invokes LogCallback
-    [Parameter(Mandatory=$true)]
-    [scriptblock]$Callback,
+        # Scriptblock to be called when MSAL invokes LogCallback
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Callback,
 
-    # Remaining arguments to be passd to Callback scriptblock via $Event.MessageData
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [object[]]$ArgumentList
+        # Remaining arguments to be passd to Callback scriptblock via $Event.MessageData
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [object[]]$ArgumentList
     )
 
     # Class that exposes an event of type Microsoft.Identity.Client.LogCallback that Register-ObjectEvent can register to.
@@ -4734,25 +4735,25 @@ Thus, in order to use a consistent proxy, it's best to configure the user's defa
 function Get-Token {
     [CmdletBinding()]
     param(
-    # Client ID (Application ID) of the registered application.
-    [Parameter(Mandatory=$true)]
-    [string]$ClientId,
+        # Client ID (Application ID) of the registered application.
+        [Parameter(Mandatory = $true)]
+        [string]$ClientId,
 
-    # Tenant ID. By default, it uses '/common' endpoint for multi-tenant app. For a single-tenant app, specify the tenant name or GUID (e.g. "contoso.com", "contoso.onmicrosoft.com", "333b3ed5-0ac4-4e75-a1cd-db9e8f593ff3")
-    [string]$TenantId = 'common',
+        # Tenant ID. By default, it uses '/common' endpoint for multi-tenant app. For a single-tenant app, specify the tenant name or GUID (e.g. "contoso.com", "contoso.onmicrosoft.com", "333b3ed5-0ac4-4e75-a1cd-db9e8f593ff3")
+        [string]$TenantId = 'common',
 
-    # Array of scopes to request.  By default, "openid", "profile", and "offline_access" are included.
-    [string[]]$Scopes,
+        # Array of scopes to request.  By default, "openid", "profile", and "offline_access" are included.
+        [string[]]$Scopes,
 
-    # Refirect URI for the application. When this is not given, "https://login.microsoftonline.com/common/oauth2/nativeclient" will be used.
-    # Make sure to use the same URI as the one registered for the application.
-    [string]$RedirectUri,
+        # Refirect URI for the application. When this is not given, "https://login.microsoftonline.com/common/oauth2/nativeclient" will be used.
+        # Make sure to use the same URI as the one registered for the application.
+        [string]$RedirectUri,
 
-    # Clear the cached token and force to get a new token.
-    [switch]$ClearCache,
+        # Clear the cached token and force to get a new token.
+        [switch]$ClearCache,
 
-    # Enable MSAL logging. Log file will be msal.log under the script folder.
-    [switch]$EnableLogging
+        # Enable MSAL logging. Log file will be msal.log under the script folder.
+        [switch]$EnableLogging
     )
 
     # Need MSAL.NET DLL under modules
@@ -4804,12 +4805,12 @@ function Get-Token {
         $builder.WithLogging(
             # Microsoft.Identity.Client.LogCallback
             (New-LogCallback {
-                param([Microsoft.Identity.Client.LogLevel]$level, [string]$message, [bool]$containsPii)
+                    param([Microsoft.Identity.Client.LogLevel]$level, [string]$message, [bool]$containsPii)
 
-                $writer = $Event.MessageData[0]
-                $writer.WriteLine("$((Get-Date).ToString('o')),$level,$containsPii,`"$message`"")
+                    $writer = $Event.MessageData[0]
+                    $writer.WriteLine("$((Get-Date).ToString('o')),$level,$containsPii,`"$message`"")
 
-            } -ArgumentList $writer),
+                } -ArgumentList $writer),
 
             [Microsoft.Identity.Client.LogLevel]::Verbose,
             # enablePiiLogging
@@ -4852,7 +4853,7 @@ function Get-Token {
         Write-Error -ErrorRecord $_
     }
     finally {
-        if ($writer){
+        if ($writer) {
             $writer.Dispose()
         }
     }
@@ -4865,34 +4866,34 @@ This function makes an Autodiscover request.
 function Test-Autodiscover {
     [CmdletBinding()]
     param(
-    # Server to send an Autodiscover request. For Exchange Online, use 'outlook.office365.com'
-    # When not specified, "autodiscover.{SMTP domain}" will be tried.
-    [string]$Server,
+        # Server to send an Autodiscover request. For Exchange Online, use 'outlook.office365.com'
+        # When not specified, "autodiscover.{SMTP domain}" will be tried.
+        [string]$Server,
 
-    # Target Email address for Autodiscover
-    [Parameter(Mandatory=$true)]
-    [string]$EmailAddress,
+        # Target Email address for Autodiscover
+        [Parameter(Mandatory = $true)]
+        [string]$EmailAddress,
 
-    # Legacy auth credential.
-    [Parameter(ParameterSetName='LegacyAuth', Mandatory=$true)]
-    [System.Management.Automation.PSCredential]
-    $Credential,
+        # Legacy auth credential.
+        [Parameter(ParameterSetName = 'LegacyAuth', Mandatory = $true)]
+        [System.Management.Automation.PSCredential]
+        $Credential,
 
-    # Modern auth access token.
-    # To mock an Office client, use ClientId 'd3590ed6-52b3-4102-aeff-aad2292ab01c' and Scope 'https://outlook.office.com/.default'
-    # e.g. Get-Token -ClientId 'd3590ed6-52b3-4102-aeff-aad2292ab01c' -Scopes 'https://outlook.office.com/.default' -RedirectUri 'urn:ietf:wg:oauth:2.0:oob'
-    [Parameter(ParameterSetName='ModernAuth', Mandatory=$true)]
-    [string]$Token,
+        # Modern auth access token.
+        # To mock an Office client, use ClientId 'd3590ed6-52b3-4102-aeff-aad2292ab01c' and Scope 'https://outlook.office.com/.default'
+        # e.g. Get-Token -ClientId 'd3590ed6-52b3-4102-aeff-aad2292ab01c' -Scopes 'https://outlook.office.com/.default' -RedirectUri 'urn:ietf:wg:oauth:2.0:oob'
+        [Parameter(ParameterSetName = 'ModernAuth', Mandatory = $true)]
+        [string]$Token,
 
-    # Proxy Server
-    # e.g. "http://myproxy:8080"
-    [string]$Proxy,
+        # Proxy Server
+        # e.g. "http://myproxy:8080"
+        [string]$Proxy,
 
-    # Skip adding "X-MapiHttpCapability: 1" to the header
-    [switch]$SkipMapiHttpCapability,
+        # Skip adding "X-MapiHttpCapability: 1" to the header
+        [switch]$SkipMapiHttpCapability,
 
-    # Force Basic auth
-    [switch]$ForceBasicAuth
+        # Force Basic auth
+        [switch]$ForceBasicAuth
     )
 
     $body = @"
@@ -4909,11 +4910,11 @@ function Test-Autodiscover {
 
     # These are the URL to try (+ redirect URLs).
     # Note that the urls are tried in the reverse order because this is a stack.
-    $urls = New-Object System.Collections.Generic.Stack[string](,[string[]]@(
-        "http://autodiscover.$mailDomain/autodiscover/autodiscover.xml"
-        "https://autodiscover.$mailDomain/autodiscover/autodiscover.xml"
-        "https://$Server/autodiscover/autodiscover.xml"
-    ))
+    $urls = New-Object System.Collections.Generic.Stack[string](, [string[]]@(
+            "http://autodiscover.$mailDomain/autodiscover/autodiscover.xml"
+            "https://autodiscover.$mailDomain/autodiscover/autodiscover.xml"
+            "https://$Server/autodiscover/autodiscover.xml"
+        ))
 
     $step = 1
 
@@ -4930,10 +4931,10 @@ function Test-Autodiscover {
         # Arguments for Invoke-WebRequest paramters
         if ($uri.Scheme -eq 'https') {
             $arguments = @{
-                Method = 'POST'
-                Uri = $uri
-                Headers =  @{'Content-Type'='text/xml'}
-                Body = $body
+                Method          = 'POST'
+                Uri             = $uri
+                Headers         = @{'Content-Type' = 'text/xml' }
+                Body            = $body
                 UseBasicParsing = $true
             }
 
@@ -4943,7 +4944,7 @@ function Test-Autodiscover {
 
                     if ($ForceBasicAuth) {
                         $base64Cred = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("$($Credential.UserName):$($Credential.GetNetworkCredential().Password)"))
-                        $arguments['Headers'].Add('Authorization',"Basic $base64Cred")
+                        $arguments['Headers'].Add('Authorization', "Basic $base64Cred")
                     }
                     else {
                         $arguments['Credential'] = $Credential
@@ -4953,21 +4954,21 @@ function Test-Autodiscover {
 
                 'ModernAuth' {
                     Write-Verbose "Token is provided. Use it for modern auth"
-                    $arguments['Headers'].Add('Authorization',"Bearer $Token")
+                    $arguments['Headers'].Add('Authorization', "Bearer $Token")
                     break
                 }
             }
 
             if (-not $SkipMapiHttpCapability) {
-                $arguments['Headers'].Add('X-MapiHttpCapability','1')
+                $arguments['Headers'].Add('X-MapiHttpCapability', '1')
             }
         }
         else {
             $arguments = @{
-                Method = 'GET'
-                Uri = $uri
+                Method             = 'GET'
+                Uri                = $uri
                 MaximumRedirection = 0 # Just get 302 and don't follow the redirect.
-                UseBasicParsing = $true
+                UseBasicParsing    = $true
             }
         }
 
@@ -4983,10 +4984,10 @@ function Test-Autodiscover {
         # Check result
         if ($result.StatusCode -eq 200) {
             [PSCustomObject]@{
-                Step = $step++
-                URI = $uri
+                Step    = $step++
+                URI     = $uri
                 Success = $true
-                Result = $result
+                Result  = $result
             }
             return
         }
@@ -4998,12 +4999,12 @@ function Test-Autodiscover {
             }
 
             if ($redirectUrl) {
-                $result | Add-Member -MemberType ScriptMethod -Name 'ToString' -Force -Value {"Received a redirect URL $($this.Headers['Location'])"}
+                $result | Add-Member -MemberType ScriptMethod -Name 'ToString' -Force -Value { "Received a redirect URL $($this.Headers['Location'])" }
                 [PSCustomObject]@{
-                    Step = $step++
-                    URI = $uri
+                    Step    = $step++
+                    URI     = $uri
                     Success = $true
-                    Result = $result
+                    Result  = $result
                 }
 
                 # Try the given redirect uri next
@@ -5012,19 +5013,19 @@ function Test-Autodiscover {
             }
             else {
                 [PSCustomObject]@{
-                    Step = $step++
-                    URI = $uri
+                    Step    = $step++
+                    URI     = $uri
                     Success = $false
-                    Result = $err
+                    Result  = $err
                 }
             }
         }
         else {
             [PSCustomObject]@{
-                Step = $step++
-                URI = $uri
+                Step    = $step++
+                URI     = $uri
                 Success = $false
-                Result = $err
+                Result  = $err
             }
         }
     }
@@ -5037,7 +5038,7 @@ Convert a ProgID to CLSID
 function ConvertTo-CLSID {
     [CmdletBinding()]
     param(
-        [parameter(Mandatory=$true)]
+        [parameter(Mandatory = $true)]
         [string]$ProgID,
         [string]$User
     )
@@ -5090,7 +5091,7 @@ function ConvertTo-CLSID {
     }
 
     [PSCustomObject]@{
-        GUID = $CLSID
+        GUID   = $CLSID
         String = $CLSIDString
     }
 }
@@ -5123,21 +5124,21 @@ function Get-OutlookAddin {
         ForEach-Object {
             Get-ChildItem $_ -ErrorAction SilentlyContinue
         }
-     )
+    )
 
-     $LoadBehavior = @{
-        0 = 'None'
-        1 = 'NoneLoaded'
-        2 = 'StartupUnloaded'
-        3 = 'Startup'
-        8 = 'LoadOnDemandUnloaded'
-        9 = 'LoadOnDemand'
+    $LoadBehavior = @{
+        0  = 'None'
+        1  = 'NoneLoaded'
+        2  = 'StartupUnloaded'
+        3  = 'Startup'
+        8  = 'LoadOnDemandUnloaded'
+        9  = 'LoadOnDemand'
         16 = 'LoadAtNextStartupOnly'
     }
 
-     $cache = @{}
+    $cache = @{}
 
-     foreach ($addin in $addinKeys) {
+    foreach ($addin in $addinKeys) {
         $props = @{}
         $props['Path'] = $addin.Name
         $props['ProgID'] = $addin.PSChildName
@@ -5205,10 +5206,10 @@ function Get-OutlookAddin {
         $props['FriendlyName'] = $addin.GetValue('FriendlyName')
 
         [PSCustomObject]$props
-     }
+    }
 
     # Close all the keys
-    $addinKeys | ForEach-Object {$_.Close()}
+    $addinKeys | ForEach-Object { $_.Close() }
 }
 
 function Get-ClickToRunConfiguration {
@@ -5219,14 +5220,14 @@ function Get-ClickToRunConfiguration {
 }
 
 function Get-WebView2 {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param (
     )
 
     @(
         'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
         'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-    ) | ForEach-Object {Get-ItemProperty $_ -ErrorAction SilentlyContinue}
+    ) | ForEach-Object { Get-ItemProperty $_ -ErrorAction SilentlyContinue }
 }
 
 function Get-DeviceJoinStatus {
@@ -5288,16 +5289,16 @@ function Stop-GatherNetworkInfo {
 }
 
 function Start-PerfTrace {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [string]$Path,
         [string]$FileName = 'perf',
         [ValidateRange(1, [int]::MaxValue)]
         [int]$IntervalSecond = 1,
         [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxFileSizeMB = 1024,
-        [ValidateSet('NewFile','Circular')]
+        [ValidateSet('NewFile', 'Circular')]
         [string]$LogFileMode = 'NewFile'
     )
 
@@ -5350,7 +5351,7 @@ function Start-PerfTrace {
 }
 
 function Stop-PerfTrace {
-    [CmdletBinding(PositionalBinding=$false)]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
         [string]$DataCollectorSetName = 'PerfCounter'
     )
@@ -5378,7 +5379,7 @@ PowerShell 4's Get-Process has -IncludeUserName, but I'm using WMI here for now.
 function Save-Process {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         $Path
     )
 
@@ -5472,20 +5473,20 @@ function Invoke-AutoUpdate {
 
 #>
 function Collect-OutlookInfo {
-    [CmdletBinding(SupportsShouldProcess=$true, PositionalBinding=$false)]
+    [CmdletBinding(SupportsShouldProcess = $true, PositionalBinding = $false)]
     param (
         # Folder to place collected data
-        [Parameter(Mandatory=$true, Position=0)]
+        [Parameter(Mandatory = $true, Position = 0)]
         $Path,
         # What to collect
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'HungDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance')]
         [array]$Component,
         # This controls the level of netsh trace report
         [ValidateSet('None', 'Mini', 'Full')]
         $NetshReportMode = 'None',
         # ETW trace file mode.
-        [ValidateSet('NewFile','Circular')]
+        [ValidateSet('NewFile', 'Circular')]
         [string]$LogFileMode = 'NewFile',
         # Max file size for ETW trace files. By default, 256 MB when NewFile and 2048 MB when Circular.
         [ValidateRange(1, [int]::MaxValue)]
@@ -5550,7 +5551,7 @@ function Collect-OutlookInfo {
         $targetUser = Get-LogonUser
     }
 
-    if (-not (Test-Path $Path -ErrorAction Stop)){
+    if (-not (Test-Path $Path -ErrorAction Stop)) {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
@@ -5561,7 +5562,7 @@ function Collect-OutlookInfo {
 
             # Get the list of current parameters that's also available in the updated cmdlet
             $params = @{}
-            $PSBoundParameters.Keys | ForEach-Object {if ($updatedSelf.Parameters.ContainsKey($_)) {$params.Add($_, $PSBoundParameters[$_])}}
+            $PSBoundParameters.Keys | ForEach-Object { if ($updatedSelf.Parameters.ContainsKey($_)) { $params.Add($_, $PSBoundParameters[$_]) } }
 
             if ($updatedSelf.Parameters.ContainsKey('SkipAutoUpdate')) {
                 $params.Add('SkipAutoUpdate', $true)
@@ -5625,7 +5626,7 @@ function Collect-OutlookInfo {
             # Sub directories
             $ConfigDir = Join-Path $tempPath 'Configuration'
             $OSDir = Join-Path $ConfigDir 'OS'
-            $OfficeDir =  Join-Path $ConfigDir 'Office'
+            $OfficeDir = Join-Path $ConfigDir 'Office'
             $RegistryDir = Join-Path $ConfigDir 'Registry'
             $NetworkDir = Join-Path $ConfigDir 'Network'
             $MSIPCDir = Join-Path $ConfigDir 'MSIPC'
@@ -5641,32 +5642,32 @@ function Collect-OutlookInfo {
 
             Write-Log "Starting officeModuleInfoTask."
             $cts = New-Object System.Threading.CancellationTokenSource
-            $officeModuleInfoTask = Start-Task {param($path, $token) Save-OfficeModuleInfo -Path $path -CancellationToken $token} -ArgumentList $OfficeDir, $cts.Token
+            $officeModuleInfoTask = Start-Task { param($path, $token) Save-OfficeModuleInfo -Path $path -CancellationToken $token } -ArgumentList $OfficeDir, $cts.Token
 
             Write-Log "Starting networkInfoTask."
-            $networkInfoTask = Start-Task {param($path) Save-NetworkInfo -Path $path} -ArgumentList $NetworkDir
+            $networkInfoTask = Start-Task { param($path) Save-NetworkInfo -Path $path } -ArgumentList $NetworkDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
 
             Write-Log "Starting officeRegistryTask."
-            $officeRegistryTask = Start-Task {param($path, $user) Save-OfficeRegistry -Path $path -User $user} -ArgumentList $RegistryDir, $targetUser
+            $officeRegistryTask = Start-Task { param($path, $user) Save-OfficeRegistry -Path $path -User $user } -ArgumentList $RegistryDir, $targetUser
 
             Write-Log "Starting oSConfigurationTask."
-            $oSConfigurationTask = Start-Task {param($path) Save-OSConfiguration -Path $path} -ArgumentList $OSDir
-            Run-Command {param($user) Get-WinInetProxy -User $user} -ArgumentList $targetUser -Path $OSDir
-            Run-Command {param($user) Get-ProxyAutoConfig -User $user} -ArgumentList $targetUser -Path $OSDir
+            $oSConfigurationTask = Start-Task { param($path) Save-OSConfiguration -Path $path } -ArgumentList $OSDir
+            Run-Command { param($user) Get-WinInetProxy -User $user } -ArgumentList $targetUser -Path $OSDir
+            Run-Command { param($user) Get-ProxyAutoConfig -User $user } -ArgumentList $targetUser -Path $OSDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
-            Run-Command {Get-OfficeInfo} -Path $OfficeDir
-            Run-Command {param($user) Get-OutlookProfile -User $user} -ArgumentList $targetUser -Path $OfficeDir
-            Run-Command {param($user) Get-OutlookAddin -User $user} -ArgumentList $targetUser -Path $OfficeDir
-            Run-Command {Get-ClickToRunConfiguration} -Path $OfficeDir
+            Run-Command { Get-OfficeInfo } -Path $OfficeDir
+            Run-Command { param($user) Get-OutlookProfile -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Run-Command { param($user) Get-OutlookAddin -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Run-Command { Get-ClickToRunConfiguration } -Path $OfficeDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
-            Run-Command {param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover')} -ArgumentList $targetUser, $OfficeDir
+            Run-Command { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
-            Run-Command {param($OSDir) Save-Process -Path $OSDir} -ArgumentList $OSDir
+            Run-Command { param($OSDir) Save-Process -Path $OSDir } -ArgumentList $OSDir
 
             if ($targetUser) {
                 $targetUser | Export-Clixml -Path (Join-Path $OSDir 'User.xml')
@@ -5750,7 +5751,7 @@ function Collect-OutlookInfo {
                     if ($circular) {
                         $removedCount = 0
                         $cutoff = [datetime]::Now.AddHours(-1)
-                        Get-ChildItem $path -Filter '*.mht' | Where-Object {$_.LastWriteTime -lt $cutoff} | ForEach-Object { Remove-Item $_.FullName; $removedCount++ }
+                        Get-ChildItem $path -Filter '*.mht' | Where-Object { $_.LastWriteTime -lt $cutoff } | ForEach-Object { Remove-Item $_.FullName; $removedCount++ }
                         if ($removedCount) {
                             Write-Log "$removedCount mht files were removed because they were older than 1 hour"
                         }
@@ -5876,7 +5877,7 @@ function Collect-OutlookInfo {
                     # For ClickToRun, there might be more than one Outlook.exe; downloaded Outlook.exe under the Office installation path.
                     # e.g. C:\Program Files\Microsoft Office\Updates\Download\PackageFiles\7ABA93E3-58C2-4BEE-AB49-3438C9F29D70\root\Office16\Outlook.exe
                     # Pick the one without 'PackageFiles' in the path.
-                    $outlookExe = $executables | Where-Object {$_.FullName -notlike '*PackageFiles*'} | Select-Object -First 1
+                    $outlookExe = $executables | Where-Object { $_.FullName -notlike '*PackageFiles*' } | Select-Object -First 1
                 }
 
                 # Start monitoring launch of Outlook
@@ -6016,7 +6017,7 @@ function Collect-OutlookInfo {
 
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
-            Run-Command {param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user} -ArgumentList $targetUser, $MSIPCDir
+            Run-Command { param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user } -ArgumentList $targetUser, $MSIPCDir
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
 
             if ($oSConfigurationTask) {
@@ -6044,7 +6045,7 @@ function Collect-OutlookInfo {
                 [TimeSpan]$timeout = [TimeSpan]::FromSeconds(30)
                 Write-Progress -Activity 'Saving Office module info' -Status "Please wait up to $timeout" -PercentComplete -1
 
-                if (Wait-Task $officeModuleInfoTask -Timeout $timeout)  {
+                if (Wait-Task $officeModuleInfoTask -Timeout $timeout) {
                     Write-Log "officeModuleInfoTask is complete before timeout."
                 }
                 else {
@@ -6065,7 +6066,7 @@ function Collect-OutlookInfo {
 
             # Save process list again after traces
             if ($Component.Count -gt 1) {
-                Run-Command {param($OSDir) Save-Process -Path $OSDir} -ArgumentList $OSDir
+                Run-Command { param($OSDir) Save-Process -Path $OSDir } -ArgumentList $OSDir
             }
         }
 
@@ -6109,4 +6110,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
     Add-Type -TypeDefinition $Win32Interop
 }
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate,  Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Collect-OutlookInfo
