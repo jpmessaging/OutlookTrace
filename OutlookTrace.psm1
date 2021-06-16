@@ -4505,7 +4505,9 @@ function Save-Dump {
         $ps32 = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
         $command = "& {Import-Module '$Script:MyModulePath' -DisableNameChecking; Save-Dump -Path '$Path' -ProcessId $ProcessId -SkipWow64Check}"
         Write-Log "Invoking $ps32 -c `"$command`""
-        & $ps32 -NoProfile -WindowStyle Hidden -OutputFormat XML -c $command
+        $errs = $($result = & $ps32 -NoProfile -WindowStyle Hidden -OutputFormat XML -c $command) 2>&1
+        $result
+        $errs | ForEach-Object { Write-Error -ErrorRecord $_ }
     }
     else {
         $dumpFile = Join-Path $Path "$($process.Name)_$(Get-Date -Format 'yyyy-MM-dd-HHmmss').dmp"
