@@ -5048,7 +5048,7 @@ function ConvertTo-CLSID {
     [uint32]$S_OK = 0
 
     [Guid]$CLSID = [Guid]::Empty
-    [uint32]$hr = [Win32.OLE]::CLSIDFromProgID($ProgID, [ref]$CLSID)
+    [uint32]$hr = [Win32.Ole32]::CLSIDFromProgID($ProgID, [ref]$CLSID)
 
     if ($hr -ne $S_OK) {
         Write-Verbose -Message $("CLSIDFromProgID for `"$ProgID`" failed with 0x{0:x}. Trying ClickToRun registry." -f $hr)
@@ -5084,7 +5084,7 @@ function ConvertTo-CLSID {
     }
 
     [IntPtr]$pClsIdString = [IntPtr]::Zero
-    $hr = [Win32.OLE]::StringFromCLSID($CLSID, [ref]$pCLSIDString)
+    $hr = [Win32.Ole32]::StringFromCLSID($CLSID, [ref]$pCLSIDString)
 
     if ($hr -eq $S_OK -and $pCLSIDString) {
         $CLSIDString = [System.Runtime.InteropServices.Marshal]::PtrToStringUni($pCLSIDString)
