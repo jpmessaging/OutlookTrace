@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-06-12'
+$Version = 'v2021-06-15'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -4468,18 +4468,14 @@ function Save-Dump {
     [CmdletBinding(PositionalBinding = $false)]
     param(
         # Folder to save a dump file
-        [parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true)]
         $Path,
-        [parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(1, [int]::MaxValue)]
         [int]$ProcessId,
         # Skip WOW64 check.
         [switch]$SkipWow64Check
     )
-
-    if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
-    }
-    $Path = Resolve-Path $Path
 
     # Get the target process.
     $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
@@ -4494,6 +4490,11 @@ function Save-Dump {
         return
     }
 
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+    $Path = Resolve-Path $Path
+
     $wow64 = $false
     if (-not $SkipWow64Check) {
         # Check if the target process is WOW6432 (i.e. 32bit on 64bit OS)
@@ -4502,8 +4503,7 @@ function Save-Dump {
 
     if ($wow64) {
         $ps32 = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
-        # BUGBUG: ryusukef $PSCommandPath does not work when this function is running in a worker runspace.
-        $command = "& {Import-Module '$PSComman$Script:MyModulePath' -DisableNameChecking; Save-Dump -Path '$Path' -ProcessId $ProcessId -SkipWow64Check}"
+        $command = "& {Import-Module '$Script:MyModulePath' -DisableNameChecking; Save-Dump -Path '$Path' -ProcessId $ProcessId -SkipWow64Check}"
         Write-Log "Invoking $ps32 -c `"$command`""
         & $ps32 -NoProfile -WindowStyle Hidden -OutputFormat XML -c $command
     }
@@ -4604,7 +4604,7 @@ function Save-HungDump {
             }
         }
         else {
-            Write-Verbose "SendMessageTimeoutW succeeded"
+            # Write-Verbose "SendMessageTimeoutW succeeded"
             Start-Sleep -Seconds 1
         }
     }
@@ -5596,10 +5596,6 @@ function Collect-OutlookInfo {
     }
     Write-Log "Parameters $($sb.ToString())"
 
-    # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
-    # Open-TaskRunspace defines all the script variables in runspaces
-    $Script:MyModulePath = $PSCommandPath
-
     # To use Start-Task, make sure to open runspaces first and close it when finished.
     # Currently MaxRunspaces is 7 or more because there are 7 tasks at most. 3 of them, outlookMonitorTask, psrTask, and hungMonitorTask are long running.
     Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(7, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
@@ -6109,5 +6105,8 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
 if (-not ('Win32.Kernel32' -as [type])) {
     Add-Type -TypeDefinition $Win32Interop
 }
+
+# Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
+$Script:MyModulePath = $PSCommandPath
 
 Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Collect-OutlookInfo
