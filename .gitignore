@@ -1,4 +1,5 @@
 .vscode
 modules
+test
 msalcache.bin
 msal.log
