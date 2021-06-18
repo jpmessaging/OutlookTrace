@@ -5194,6 +5194,7 @@ function Get-OutlookAddin {
                 if ($comSpec) {
                     $props['Location'] = $comSpec.'(default)'
                     $props['ThreadingModel'] = $comSpec.ThreadingModel
+                    $props['CodeBase'] = $comSpec.CodeBase
                     break
                 }
             }
@@ -5201,7 +5202,7 @@ function Get-OutlookAddin {
         elseif ($manifest = $addin.GetValue('Manifest')) {
             # A managed addin does not have CLSID. Check "Manifest" instead.
             $props['Location'] = $manifest
-            Write-Log "Manifest is found. This is a managed addin."
+            Write-Log "Manifest is found. This is a VSTO addin."
         }
         else {
             # If both CLSID & Manifest are missing, ignore this entry.
