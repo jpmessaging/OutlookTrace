@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-06-15'
+$Version = 'v2021-06-18'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -2231,7 +2231,11 @@ function Save-OfficeRegistry {
         "HKLM\Software\Microsoft\Office"
         "HKLM\Software\Policies\Microsoft\Office"
         "HKLM\Software\WOW6432Node\Microsoft\Office"
-        "HKLM\Software\WOW6432Node\Policies\Microsoft\Office")
+        "HKLM\Software\WOW6432Node\Policies\Microsoft\Office"
+
+        # This is WinInet proxy settings and maybe out of place, but I wanted to collect for now.
+        'HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections'
+    )
 
     $userRegRoot = Get-UserRegistryRoot $User -SkipRegistryPrefix
     if ($userRegRoot) {
@@ -2449,6 +2453,7 @@ function Run-Command {
                 $Command = $sb
             }
 
+            $Command = $Command.Trim()
             if ($Command.IndexOf(' ') -ge 0) {
                 $commandName = $Command.SubString(0, $Command.IndexOf(' '))
             }
