@@ -2906,7 +2906,7 @@ function Get-JoinInformation {
     [IntPtr]$pName = [IntPtr]::Zero
     [Win32.Netapi32+NETSETUP_JOIN_STATUS]$status = 'NetSetupUnknownStatus'
 
-    $sc = [Win32.Netapi32]::NetGetJoinInformation($null, [ref]$pName, [ref]$status)
+    $sc = [Win32.Netapi32]::NetGetJoinInformation([NullString]::Value, [ref]$pName, [ref]$status)
 
     if ($sc -ne 0) {
         Write-Error "NetGetJoinInformation failed with $sc." -Exception (New-Object ComponentModel.Win32Exception($sc))
