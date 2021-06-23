@@ -80,34 +80,39 @@ $Outlook2010Providers =
 
 $WamProviders =
 @'
-{077b8c4a-e425-578d-f1ac-6fdf1220ff68}
-{5836994d-a677-53e7-1389-588ad1420cc5}
-{05f02597-fe85-4e67-8542-69567ab8fd4f}
-{d0034f5e-3686-5a74-dc48-5a22dd4f3d5b}
-{4DE9BC9C-B27A-43C9-8994-0915F1A5E24F}
-{556045FD-58C5-4A97-9881-B121F68B79C5}
-{EC3CA551-21E9-47D0-9742-1195429831BB}
-{63b6c2d2-0440-44de-a674-aa51a251b123}
-{4180c4f7-e238-5519-338f-ec214f0b49aa}
-{EB65A492-86C0-406A-BACE-9912D595BD69}
-{d49918cf-9489-4bf1-9d7b-014d864cf71f}
-{7acf487e-104b-533e-f68a-a7e9b0431edb}
-{4E749B6A-667D-4C72-80EF-373EE3246B08}
-{bfed9100-35d7-45d4-bfea-6c1d341d4c6b}
-{ac01ece8-0b79-5cdb-9615-1b6a4c5fc871}
-{1941f2b9-0939-5d15-d529-cd333c8fed83}
-{0001376b-930d-50cd-2b29-491ca938cd54}
-{072665fb-8953-5a85-931d-d06aeab3d109}
-{f6a774e5-2fc7-5151-6220-e514f1f387b6}
-{a48e7274-bb8f-520d-7e6f-1737e9d68491}
-{88cd9180-4491-4640-b571-e3bee2527943}
-{833e7812-d1e2-5172-66fd-4dd4b255a3bb}
-{30ad9f59-ec19-54b2-4bdf-76dbfc7404a6}
-{d229987f-edc3-5274-26bf-82be01d6d97e}
-{8cde46fc-ca33-50ff-42b3-c64c1c731037}
-{25756703-e23b-4647-a3cb-cb24d473c193}
-{569cf830-214c-5629-79a8-4e9b58ea24bc}
-{8BFE6B98-510E-478D-B868-142CD4DEDC1A}
+{2A3C6602-411E-4DC6-B138-EA19D64F5BBA} 0xFFFF 0xff
+{EF98103D-8D3A-4BEF-9DF2-2156563E64FA} 0xFFFF 0xff
+{FB6A424F-B5D6-4329-B9B5-A975B3A93EAD} 0x000003FF
+{D93FE84A-795E-4608-80EC-CE29A96C8658} 0x7FFFFFFF 0xff
+{3F8B9EF5-BBD2-4C81-B6C9-DA3CDB72D3C5} 0x7 0xff
+{B1108F75-3252-4b66-9239-80FD47E06494} 0x2FF 0xff
+{C10B942D-AE1B-4786-BC66-052E5B4BE40E} 0x3FF 0xff
+{82c7d3df-434d-44fc-a7cc-453a8075144e} 0x2FF 0xff
+{05f02597-fe85-4e67-8542-69567ab8fd4f} 0xFFFFFFFF 0xff
+{3C49678C-14AE-47FD-9D3A-4FEF5D796DB9} 0xFFFFFFFF 0xff
+{077b8c4a-e425-578d-f1ac-6fdf1220ff68} 0xFFFFFFFF 0xff
+{7acf487e-104b-533e-f68a-a7e9b0431edb} 0xFFFFFFFF 0xff
+{5836994d-a677-53e7-1389-588ad1420cc5} 0xFFFFFFFF 0xff
+{4DE9BC9C-B27A-43C9-8994-0915F1A5E24F} 0xFFFFFFFF 0xff
+{bfed9100-35d7-45d4-bfea-6c1d341d4c6b} 0xFFFFFFFF 0xff
+{9EBB3B15-B094-41B1-A3B8-0F141B06BADD} 0xFFF 0xff
+{6ae51639-98eb-4c04-9b88-9b313abe700f} 0xFFFFFFFF 0xff
+{7B79E9B1-DB01-465C-AC8E-97BA9714BDA2} 0xFFFFFFFF 0xff
+{86510A0A-FDF4-44FC-B42F-50DD7D77D10D} 0xFFFFFFFF 0xff
+{08B15CE7-C9FF-5E64-0D16-66589573C50F} 0xFFFFFF7F 0xff
+{63b6c2d2-0440-44de-a674-aa51a251b123} 0xFFFFFFFF 0xff
+{4180c4f7-e238-5519-338f-ec214f0b49aa} 0xFFFFFFFF 0xff
+{EB65A492-86C0-406A-BACE-9912D595BD69} 0xFFFFFFFF 0xff
+{d49918cf-9489-4bf1-9d7b-014d864cf71f} 0xFFFFFFFF 0xff
+{5AF52B0D-E633-4ead-828A-4B85B8DAAC2B} 0xFFFF 0xff
+{2A6FAF47-5449-4805-89A3-A504F3E221A6} 0xFFFF 0xff
+{EC3CA551-21E9-47D0-9742-1195429831BB} 0xFFFFFFFF 0xff
+{bb8dd8e5-3650-5ca7-4fea-46f75f152414} 0xFFFFFFFF 0xff
+{7fad10b2-2f44-5bb2-1fd5-65d92f9c7290} 0xFFFFFFFF 0xff
+{74D91EC4-4680-40D2-A213-45E2D2B95F50} 0xFFFFFFFF 0xff
+{556045FD-58C5-4A97-9881-B121F68B79C5} 0xFFFFFFFF 0xff
+{5A9ED43F-5126-4596-9034-1DCFEF15CD11} 0xFFFFFFFF 0xff
+{F7C77B8D-3E3D-4AA5-A7C5-1DB8B20BD7F0} 0xFFFFFFFF 0xff
 '@
 
 $Win32Interop = @'
@@ -1415,6 +1420,51 @@ function Compress-Folder {
     & $compressCmd @params
 }
 
+function Enable-EventLog {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$EventName
+    )
+
+    wevtutil.exe set-log $EventName /enabled:true /retention:false /quiet:true
+}
+
+function Disable-EventLog {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [Parameter(Mandatory = $true, Position = 0)]
+        [string]$EventName
+    )
+
+    wevtutil.exe set-log $EventName /enabled:false /retention:false /quiet:true
+}
+
+<#
+.SYNOPSIS
+    Enable WAM related event logss
+#>
+function Enable-WamEventLog {
+    [CmdletBinding(PositionalBinding = $false)]
+    param()
+
+    Enable-EventLog 'Microsoft-Windows-WebAuth/Operational'
+    Enable-EventLog 'Microsoft-Windows-WebAuthN/Operational'
+    Enable-EventLog 'Microsoft-Windows-AAD/Operational'
+    Enable-EventLog 'Microsoft-Windows-AAD/Analytic'
+}
+
+function Disable-WamEventLog {
+    [CmdletBinding(PositionalBinding = $false)]
+    param()
+
+    Disable-EventLog 'Microsoft-Windows-WebAuth/Operational'
+    Disable-EventLog 'Microsoft-Windows-WebAuthN/Operational'
+    Disable-EventLog 'Microsoft-Windows-AAD/Analytic'
+    Disable-EventLog 'Microsoft-Windows-AAD/Operational'
+}
+
+
 function Start-WamTrace {
     [CmdletBinding(PositionalBinding = $false)]
     param(
@@ -1838,7 +1888,7 @@ function Save-EventLog {
     $logs = @(
         'Application'
         'System'
-        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client"
+        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client|WebAuth"
     )
 
     $tasks = @(
@@ -5783,6 +5833,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'WAM') {
+            Enable-WamEventLog
             Stop-WamTrace -ErrorAction SilentlyContinue
             Start-WamTrace -Path (Join-Path $tempPath 'WAM')
             $wamTraceStarted = $true
@@ -5973,6 +6024,7 @@ function Collect-OutlookInfo {
         }
 
         if ($wamTraceStarted) {
+            Disable-WamEventLog
             Stop-WamTrace
         }
 
