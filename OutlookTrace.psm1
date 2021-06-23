@@ -2042,6 +2042,10 @@ function Get-InstalledUpdate {
         $items = $appUpdates.Items()
 
         foreach ($item in $items) {
+            # Raw installedOn includes 0x0e20 (0x200E Left-to-Right char). Remove them.
+            $installedOnRaw = $appUpdates.GetDetailsOf($item, 12)
+            $installedOn = New-Object string -ArgumentList (, $($installedOnRaw.ToCharArray() | Where-Object { $_ -lt 128 }))
+            
             # https://docs.microsoft.com/en-us/windows/win32/shell/folder-getdetailsof
             [PSCustomObject]@{
                 Name        = $item.Name
@@ -2049,7 +2053,7 @@ function Get-InstalledUpdate {
                 Version     = $appUpdates.GetDetailsOf($item, 3)
                 Publisher   = $appUpdates.GetDetailsOf($item, 4)
                 URL         = $appUpdates.GetDetailsOf($item, 7)
-                InstalledOn = $appUpdates.GetDetailsOf($item, 12)
+                InstalledOn = $installedOn
             }
             [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($item) | Out-Null
         }
