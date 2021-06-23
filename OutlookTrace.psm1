@@ -1427,7 +1427,10 @@ function Enable-EventLog {
         [string]$EventName
     )
 
-    wevtutil.exe set-log $EventName /enabled:true /retention:false /quiet:true
+    $err = $(wevtutil.exe set-log $EventName /enabled:true /retention:false /quiet:true | Out-Null) 2>&1
+    if ($err) {
+        Write-Error -ErrorRecord $err
+    }
 }
 
 function Disable-EventLog {
@@ -1437,13 +1440,12 @@ function Disable-EventLog {
         [string]$EventName
     )
 
-    wevtutil.exe set-log $EventName /enabled:false /retention:false /quiet:true
+    $err = (wevtutil.exe set-log $EventName /enabled:false /retention:false /quiet:true | Out-Null) 2>&1
+    if ($err) {
+        Write-Error -ErrorRecord $err
+    }
 }
 
-<#
-.SYNOPSIS
-    Enable WAM related event logss
-#>
 function Enable-WamEventLog {
     [CmdletBinding(PositionalBinding = $false)]
     param()
@@ -5837,7 +5839,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'WAM') {
-            Enable-WamEventLog
+            Enable-WamEventLog -ErrorAction SilentlyContinue
             Stop-WamTrace -ErrorAction SilentlyContinue
             Start-WamTrace -Path (Join-Path $tempPath 'WAM')
             $wamTraceStarted = $true
@@ -6028,7 +6030,7 @@ function Collect-OutlookInfo {
         }
 
         if ($wamTraceStarted) {
-            Disable-WamEventLog
+            Disable-WamEventLog -ErrorAction SilentlyContinue
             Stop-WamTrace
         }
 
