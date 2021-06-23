@@ -2047,7 +2047,7 @@ function Get-InstalledUpdate {
             # Raw installedOn includes 0x0e20 (0x200E Left-to-Right char). Remove them.
             $installedOnRaw = $appUpdates.GetDetailsOf($item, 12)
             $installedOn = New-Object string -ArgumentList (, $($installedOnRaw.ToCharArray() | Where-Object { $_ -lt 128 }))
-            
+
             # https://docs.microsoft.com/en-us/windows/win32/shell/folder-getdetailsof
             [PSCustomObject]@{
                 Name        = $item.Name
@@ -3647,7 +3647,7 @@ function Start-FiddlerCap {
         $fiddlerCapUrl = "https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe"
         $fiddlerSetupFile = Join-Path $Path -ChildPath 'FiddlerCapSetup.exe'
 
-        # Check if FiddlerCapSetup.exe is already available locally; Otherwize download the setup file and extract it.
+        # Check if FiddlerCapSetup.exe is already available locally; Otherwise download the setup file and extract it.
         if (-not (Test-Path $fiddlerSetupFile)) {
             # If it's not connected to internet, bail.
             $connectivity = Get-NLMConnectivity
@@ -3681,6 +3681,8 @@ function Start-FiddlerCap {
         try {
             Write-Log "Extracting from FiddlerCapSetup"
             Write-Progress -Activity "Extracting from FiddlerCapSetup" -Status "This may take a while. Please wait" -PercentComplete -1
+
+            Unblock-File $fiddlerSetupFile -ErrorAction SilentlyContinue
 
             # To redirect & capture error even when this cmdlet is called with ErrorAction:SilentlyContinue, need "Continue" error action.
             # Usually you can simply specify ErrorAction:Continue to the cmdlet. However, Start-Process does not respect that. So, I need to manually set $ErrorActionPreference here.
