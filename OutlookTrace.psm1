@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-06-22'
+$Version = 'v2021-07-10'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -2426,7 +2426,7 @@ function Save-NetworkInfo {
         # @{ScriptBlock = {Test-NetConnection 'bing.com' -InformationLevel Detailed}}
         # @{ScriptBlock = {Test-NetConnection 'bing.com' -InformationLevel Detailed -CommonTCPPort HTTP}}
         @{ScriptBlock = { Get-NetRoute } }
-        @{ScriptBlock = { Get-NetIPaddress } }
+        @{ScriptBlock = { Get-NetIPAddress } }
         # @{ScriptBlock = {Get-NetLbfoTeam}}
         # @{ScriptBlock = {Get-Service -Name:VMMS}}
         # @{ScriptBlock = {Get-VMSwitch}}
@@ -2770,20 +2770,60 @@ function Get-ProxyAutoConfig {
     )
 
     # Helper function to download a PAC file.
+    # Not using Invoke-RestMethod to avoid garbled text, for a pac file sometimes contains DBCS without correct charset spec.
     function Get-PAC {
         [CmdletBinding()]
         param($Url)
-        $pac = $null
-        if (-not $SkipDownload) {
-            try {
-                $pac = Invoke-RestMethod -Uri $url
-            }
-            catch {
-                Write-Error "Failed to downloading PAC file from $url. $_"
-            }
+
+        $result = @{ Url = $Url }
+
+        if ($SkipDownload) {
+            $result
+            return
         }
 
-        [ordered]@{ Url = $url; Pac = $pac }
+        [System.Net.HttpWebRequest]$request = [System.Net.WebRequest]::Create($Url)
+        $request.UserAgent = 'Mozilla/5.0 (Windows NT; Windows NT 10.0)'
+        $request.Timeout = 10000
+        $response = $copied = $null
+
+        try {
+            [System.Net.HttpWebResponse]$response = $request.GetResponse()
+            $body = $response.GetResponseStream()
+            $copied = New-Object System.IO.MemoryStream
+            $body.CopyTo($copied)
+            $rawBody = $copied.ToArray()
+
+            # Try decoding the data
+            if ($response.ContentType -match 'charset=(?<charset>[\w-]+)') {
+                $charset = $Matches['charset']
+            }
+            else {
+                $charset = 'utf-8'
+            }
+
+            $bodyString = $null
+            try {
+                [System.Text.Encoding]$encoding = [System.Text.Encoding]::GetEncoding($charset)
+                $bodyString = $encoding.GetString($rawBody)
+            }
+            catch {
+                Write-Error $_
+            }
+
+            $result.Add('Headers', $response.Headers)
+            $result.Add('RawBody', $rawBody)
+            $result.Add('Pac', $bodyString)
+        }
+        catch {
+            Write-Error -Message "Downloading a PAC file failed from $Url. $_" -Exception $_.Exception
+        }
+        finally {
+            if ($response) { $response.Dispose() }
+            if ($copied) { $copied.Dispose() }
+        }
+
+        $result
     }
 
     foreach ($proxy in @(Get-WinInetProxy -User $User)) {
@@ -2801,7 +2841,7 @@ function Get-ProxyAutoConfig {
                     Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $winhttpEc ($($winhttpEc.value__))"
                 }
                 else {
-                    Write-Error ("WinHttpDetectAutoProxyConfigUrl failed with 0x{0:x8}" -f $ec)
+                    Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $ec"
                 }
 
                 return
@@ -4664,7 +4704,7 @@ function Save-HungDump {
                 return
             }
             else {
-                Write-Error ("SendMessageTimeoutW failed with 0x{0:x8}" -f [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+                Write-Error ("SendMessageTimeoutW failed with 0x{0:x8}" -f $ec)
                 return
             }
         }
@@ -5718,6 +5758,8 @@ function Collect-OutlookInfo {
             $oSConfigurationTask = Start-Task { param($path) Save-OSConfiguration -Path $path } -ArgumentList $OSDir
             Run-Command { param($user) Get-WinInetProxy -User $user } -ArgumentList $targetUser -Path $OSDir
             Run-Command { param($user) Get-ProxyAutoConfig -User $user } -ArgumentList $targetUser -Path $OSDir
+            # This is just for troubleshooring.
+            Run-Command { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' } -FileName 'Users.xml' -Path $OSDir
 
             Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
             Run-Command { Get-OfficeInfo } -Path $OfficeDir
