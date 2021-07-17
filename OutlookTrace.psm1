@@ -2191,6 +2191,8 @@ function Get-UserRegistryRoot {
         if (-not ($userRegRoot -and (Test-Path "Registry::$userRegRoot"))) {
             Write-Error "Cannot find $userRegRoot."
             return
+            # Write-Log "Cannot find $userRegRoot. Falling back to HKCU"
+            # $userRegRoot = 'HKCU'
         }
     }
     else {
@@ -2369,6 +2371,9 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-JoinInformation } }
         @{ScriptBlock = { Get-DeviceJoinStatus }; FileName = 'DeviceJoinStatus.txt' }
         @{ScriptBlock = { Get-WebView2 } }
+        # this is just for troubleshooting.
+        @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
+        @{ScriptBlock = { whoami.exe /USER }; FileName = 'whoami.txt' }
     )
 
     foreach ($command in $commands) {
@@ -5734,7 +5739,9 @@ function Collect-OutlookInfo {
             $MSIPCDir = Join-Path $ConfigDir 'MSIPC'
             $EventDir = Join-Path $ConfigDir 'EventLog'
 
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 0
+            $activity = "Saving configuration"
+            $status = "Please wait"
+            Write-Progress -Activity $activity -Status $status -PercentComplete 0
             New-Item -Path $ConfigDir -ItemType directory | Out-Null
 
             # First start tasks that might take a while.
@@ -5749,7 +5756,7 @@ function Collect-OutlookInfo {
             Write-Log "Starting networkInfoTask."
             $networkInfoTask = Start-Task { param($path) Save-NetworkInfo -Path $path } -ArgumentList $NetworkDir
 
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 20
+            Write-Progress -Activity $activity -Status $status -PercentComplete 20
 
             Write-Log "Starting officeRegistryTask."
             $officeRegistryTask = Start-Task { param($path, $user) Save-OfficeRegistry -Path $path -User $user } -ArgumentList $RegistryDir, $targetUser
@@ -5758,19 +5765,17 @@ function Collect-OutlookInfo {
             $oSConfigurationTask = Start-Task { param($path) Save-OSConfiguration -Path $path } -ArgumentList $OSDir
             Run-Command { param($user) Get-WinInetProxy -User $user } -ArgumentList $targetUser -Path $OSDir
             Run-Command { param($user) Get-ProxyAutoConfig -User $user } -ArgumentList $targetUser -Path $OSDir
-            # This is just for troubleshooring.
-            Run-Command { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' } -FileName 'Users.xml' -Path $OSDir
 
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 40
+            Write-Progress -Activity $activity -Status $status -PercentComplete 40
             Run-Command { Get-OfficeInfo } -Path $OfficeDir
             Run-Command { param($user) Get-OutlookProfile -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { param($user) Get-OutlookAddin -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { Get-ClickToRunConfiguration } -Path $OfficeDir
 
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 60
+            Write-Progress -Activity $activity -Status $status -PercentComplete 60
             Run-Command { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
 
-            Write-Progress -Activity "Saving configuration" -Status "Please wait" -PercentComplete 80
+            Write-Progress -Activity $activity -Status $status -PercentComplete 80
             Run-Command { param($OSDir) Save-Process -Path $OSDir } -ArgumentList $OSDir
 
             if ($targetUser) {
@@ -5794,7 +5799,7 @@ function Collect-OutlookInfo {
                 }
             } -ArgumentList $OSDir
 
-            Write-Progress -Activity "Saving configuration" -Status "Done" -Completed
+            Write-Progress -Activity $activity -Status 'Done' -Completed
         }
 
         if ($Component -contains 'Fiddler') {
