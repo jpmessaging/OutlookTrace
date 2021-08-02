@@ -5659,7 +5659,12 @@ function Collect-OutlookInfo {
         }
     }
     else {
-        $targetUser = Get-LogonUser
+        # Get logon user & save the error (cannot use Write-Log yet).
+        $logonUserError = $($targetUser = Get-LogonUser) 2>&1
+        # If Get-LogonUser fails for some reason (e.g. Access Denied), fall back to current user
+        if (-not $targetUser) {
+            $targetUser = Resolve-User ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
+        }
     }
 
     if (-not (Test-Path $Path -ErrorAction Stop)) {
@@ -5697,6 +5702,7 @@ function Collect-OutlookInfo {
     Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
     Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) {'Skipped due to SkipAutoUpdate switch'} else {$autoUpdate.Message})"
     Write-Log "Target user: $($targetUser.Name) ($($targetUser.SID))"
+    Write-Log $logonUserError
 
     $sb = New-Object System.Text.StringBuilder
     foreach ($paramName in $PSBoundParameters.Keys) {
