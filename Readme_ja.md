@@ -1,44 +1,47 @@
 ﻿## 概要
+
 OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
 [ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2021-07-20/OutlookTrace.psm1)
 
 ## 利用方法
 
-1. Outlook を実行している場合には終了します。
-2. OutlookTrace.psm1 をダウンロードして対象のマシン上にコピーします。
-3. 管理者権限で cmd を起動します。
-4. PowerShell を以下のように起動します。
+1.  Outlook を実行している場合には終了します。
+2.  OutlookTrace.psm1 をダウンロードして対象のマシン上にコピーします。
+3.  管理者権限で cmd を起動します。
+4.  PowerShell を以下のように起動します。
 
     ```
     powershell -ExecutionPolicy Bypass
     ```
 
-5. OutlookTrace.psm1 をインポートします。
+5.  OutlookTrace.psm1 をインポートします。
 
     ```
     Import-Module <OutlookTrace.psm1 へのパス> -DisableNameChecking
     ```
 
     例:
+
     ```
     Import-Module C:\temp\OutlookTrace.psm1 -DisableNameChecking
     ```
 
-6. Collect-OutlookInfo を実行します
+6.  Collect-OutlookInfo を実行します
 
-    ※ 採取するコンポーネントについてはエンジニアからの案内をご確認くださvい。
+    ※ 採取するコンポーネントについてはエンジニアからの案内をご確認ください。
 
     ```
     Collect-OutlookInfo -Path <出力先フォルダ> -Component <採取するコンポーネント>
     ```
 
     例:
+
     ```
     Collect-OutlookInfo -Path C:\temp -Component Configuration, Outlook, Netsh, PSR, WAM
     ```
 
-7. 正常にトレースが開始されると、"Hit enter to stop" と表示されます。
+7.  正常にトレースが開始されると、"Hit enter to stop" と表示されます。
 
     ※ 採取するコンポーネントに Dump を含めた場合、`Hit enter to save a process dump of Outlook. To quit, enter q:` とプロンプトされます。ダンプ ファイルを取得したいタイミングで Enter を入力してください。ハング事象の場合、およそ 30 秒間隔で 3 回程度採取ください。ダンプ ファイルの採取が終了したら `q` を入力します。
 
@@ -46,38 +49,39 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 
     <details>
         <summary>Fiddler 開始方法</summary>
-    
+
     1. [HTTPS 通信を解読] にチェックを入れます。
     2. 以下の説明が表示されたら、内容を確認して [OK] をクリックします。
 
-        ```
-        HTTPS の解読は、HTTPS プロトコル経由で送られる Raw トラフィックを見るためにデバッグしやすくしてくれます。
-        この機能は SSL トラフィックを解読し、ローカルに生成された証明書を用いて再度暗号化します。よって、この機能を使うと、不明な発行元からの証明書を使っているリモートサイトであること表示する、赤い警告ページが Web ブラウザーに表示されることを意味します。
-        このトラフィックをキャプチャすることに限定して、このブラウザーに表示される警告を無視してください。
-        ```
+       ```
+       HTTPS の解読は、HTTPS プロトコル経由で送られる Raw トラフィックを見るためにデバッグしやすくしてくれます。
+       この機能は SSL トラフィックを解読し、ローカルに生成された証明書を用いて再度暗号化します。よって、この機能を使うと、不明な発行元からの証明書を使っているリモートサイトであること表示する、赤い警告ページが Web ブラウザーに表示されることを意味します。
+       このトラフィックをキャプチャすることに限定して、このブラウザーに表示される警告を無視してください。
+       ```
 
     3. 以下の内容のセキュリティ警告が表示されたら、[はい] をクリックします。
 
-        ```
-        発行者が次であると主張する証明機関 (CA) から証明書をインストールしようとしています:
+       ```
+       発行者が次であると主張する証明機関 (CA) から証明書をインストールしようとしています:
 
-        DO_NOT_TRUST_FiddlerRoot
+       DO_NOT_TRUST_FiddlerRoot
 
-        証明書が実際に "DO_NOT_TRUST_FiddlerRoot" からのものであるかどうかを検証できません。"DO_NOT_TRUST_FiddlerRoot" に連絡して発行者を確認する必要があります。 次の番号はこの過程で役立ちます:
+       証明書が実際に "DO_NOT_TRUST_FiddlerRoot" からのものであるかどうかを検証できません。"DO_NOT_TRUST_FiddlerRoot" に連絡して発行者を確認する必要があります。 次の番号はこの過程で役立ちます:
 
-        拇印 (sha1): ***
+       拇印 (sha1): ***
 
-        警告:
-        このルート証明書をインストールすると、この CA によって発行された証明書は自動的に信頼されます。確認されていない拇印付きの証明書をインストールすることは、セキュリティ上、危険です。 [はい] をクリックすると、この危険を認識したことになります。
+       警告:
+       このルート証明書をインストールすると、この CA によって発行された証明書は自動的に信頼されます。確認されていない拇印付きの証明書をインストールすることは、セキュリティ上、危険です。 [はい] をクリックすると、この危険を認識したことになります。
 
-        この証明書をインストールしますか?
-        ```
+       この証明書をインストールしますか?
+       ```
 
     4. [1. キャプチャ開始] をクリックします。
-        自動的にブラウザが起動されたら、そのブラウザはクローズいただいて結構です。
+    自動的にブラウザが起動されたら、そのブラウザはクローズいただいて結構です。
     </details>
-8. Outlook を起動して、現象を再現させます。
-9. 採取するコンポーネントに Fiddler を含めた場合、以下の手順で停止して保存します。
+
+8.  Outlook を起動して、現象を再現させます。
+9.  採取するコンポーネントに Fiddler を含めた場合、以下の手順で停止して保存します。
 
     <details>
         <summary>Fiddler 停止方法</summary>
@@ -99,13 +103,16 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
         拇印 (sha1): ***
         拇印 (md5):
         ```
+
     </details>
+
 10. コンソールに Enter キーを入力しトレースを停止します。
 
 手順 6 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。
 Fiddler トレースを採取した場合には、手順 8 で指定したパスワードも併せてお寄せください。
 
 # ライセンス
+
 Copyright (c) 2021 Ryusuke Fujita
 
 This software is released under the MIT License.  
