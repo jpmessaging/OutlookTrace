@@ -79,15 +79,15 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
     4.  Click [1. Start capture].
 
-            If a web browser starts automatically, you can close the browser.
+        If a web browser starts automatically, you can close the browser.
 
-        </details>
+    </details>
 
 8.  Start Outlook and reproduce the issue.
 9.  When "Fiddler" is included, stop and save the capture.
 
     <details>
-        <summary>How to stop Fiddler capture</summary>
+    <summary>How to stop Fiddler capture</summary>
 
     1.  Click [2. Stop Capture].
     2.  Click [3. Save Capture].
@@ -95,20 +95,20 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
     4.  Save the capture in the folder with GUID name created under "Path" parameter you specified in Collect-OutloookInfo.
     5.  Close the [FiddlerCap Web Recorder] dialog box.
 
-            If the following dialog appears, click [Yes].
+        If the following dialog appears, click [Yes].
 
-            ```
-            Do you want to DELETE the following certificate from the Root Store?
+        ```
+        Do you want to DELETE the following certificate from the Root Store?
 
-            Subject : DO_NOT_TRUST_FiddlerRoot, DO_NOT_TRUST, Created by http://www.fiddler2.com
-            Issuer : Self Issued
-            Time Validity : ***
-            Serial Number : ***
-            Thumbprint (sha1) : ***
-            Thumbprint (md5) : ***
-            ```
+        Subject : DO_NOT_TRUST_FiddlerRoot, DO_NOT_TRUST, Created by http://www.fiddler2.com
+        Issuer : Self Issued
+        Time Validity : ***
+        Serial Number : ***
+        Thumbprint (sha1) : ***
+        Thumbprint (md5) : ***
+        ```
 
-        </details>
+    </details>
 
 10. Hit enter key in the console to stop.
 
