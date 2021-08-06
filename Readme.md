@@ -1,30 +1,33 @@
 ﻿## Overview
+
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2021-07-20/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2021-08-06/OutlookTrace.psm1)
 
 ## How to use
-1. Shutdown Outlook if it's running.
-2. Download OutlookTrace.psm1 and place it on the target machine.
-3. Start cmd as administrator.
-4. Start PowerShell as follow.
+
+1.  Shutdown Outlook if it's running.
+2.  Download OutlookTrace.psm1 and place it on the target machine.
+3.  Start cmd as administrator.
+4.  Start PowerShell as follow.
 
     ```PowerShell
     powershell -ExecutionPolicy Bypass
     ```
 
-5. Import OutlookTrace.psm1
+5.  Import OutlookTrace.psm1
 
     ```
     Import-Module <path to OutlookTrace.psm1> -DisableNameChecking
     ```
 
     e.g.
+
     ```
     Import-Module C:\temp\OutlookTrace.psm1 -DisableNameChecking
     ```
 
-6. Run Collect-OutlookInfo
+6.  Run Collect-OutlookInfo
 
     Note: Follow Microsoft engineer's instruction regarding which components to trace.
 
@@ -33,11 +36,12 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
     ```
 
     e.g.
+
     ```
     Collect-OutlookInfo -Path C:\temp -Component Configuration, Outlook, Netsh, PSR, WAM
     ```
 
-7. When traces have started successfully, it shows "Hit enter to stop".
+7.  When traces have started successfully, it shows "Hit enter to stop".
 
     Note: When "Dump" is included in Component parameter, you will be prompted with `Hit enter to save a process dump of Outlook. To quit, enter q:`. Hit enter key to save a dump file. For a hang issue, repeat the process to collect 3 dump files, with interval of about 30 seconds between saves. When finished, hit `q`.
 
@@ -56,7 +60,7 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
         You may choose to temporarily install this certificate in the Trusted store to avoid warnings from your browser or client application.
         ```
 
-    3. Click [Yes] on the following security warning.
+    3.  Click [Yes] on the following security warning.
 
         ```
         You are about to install a certificate from a certification authority (CA) claiming to represent:
@@ -73,42 +77,46 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
         Do you want to install this certificate?
         ```
 
-    4. Click [1. Start capture].
+    4.  Click [1. Start capture].
 
-        If a web browser starts automatically, you can close the browser.
-    </details>
+            If a web browser starts automatically, you can close the browser.
 
-8. Start Outlook and reproduce the issue.
-9. When "Fiddler" is included, stop and save the capture.
+        </details>
+
+8.  Start Outlook and reproduce the issue.
+9.  When "Fiddler" is included, stop and save the capture.
 
     <details>
         <summary>How to stop Fiddler capture</summary>
 
-    1. Click [2. Stop Capture].
-    2. Click [3. Save Capture].
-    3. In [Save as type], select `Password-Protected Capture (*.saz)`.
-    4. Save the capture in the folder with GUID name created under "Path" parameter you specified in Collect-OutloookInfo.
-    5. Close the [FiddlerCap Web Recorder] dialog box.
+    1.  Click [2. Stop Capture].
+    2.  Click [3. Save Capture].
+    3.  In [Save as type], select `Password-Protected Capture (*.saz)`.
+    4.  Save the capture in the folder with GUID name created under "Path" parameter you specified in Collect-OutloookInfo.
+    5.  Close the [FiddlerCap Web Recorder] dialog box.
 
-        If the following dialog appears, click [Yes].
+            If the following dialog appears, click [Yes].
 
-        ```
-        Do you want to DELETE the following certificate from the Root Store?
+            ```
+            Do you want to DELETE the following certificate from the Root Store?
 
-        Subject : DO_NOT_TRUST_FiddlerRoot, DO_NOT_TRUST, Created by http://www.fiddler2.com
-        Issuer : Self Issued
-        Time Validity : ***
-        Serial Number : ***
-        Thumbprint (sha1) : ***
-        Thumbprint (md5) : ***
-        ```
-    </details>
+            Subject : DO_NOT_TRUST_FiddlerRoot, DO_NOT_TRUST, Created by http://www.fiddler2.com
+            Issuer : Self Issued
+            Time Validity : ***
+            Serial Number : ***
+            Thumbprint (sha1) : ***
+            Thumbprint (md5) : ***
+            ```
+
+        </details>
+
 10. Hit enter key in the console to stop.
 
 Send the zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 6.
 If you captured a Fiddler trace, send the password used in step 8 too.
 
 ## License
+
 Copyright (c) 2021 Ryusuke Fujita
 
 This software is released under the MIT License.  
@@ -119,4 +127,3 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
