@@ -1427,9 +1427,8 @@ function Enable-EventLog {
         [string]$EventName
     )
 
-    $err = $(wevtutil.exe set-log $EventName /enabled:true /retention:false /quiet:true | Out-Null) 2>&1
-    if ($err) {
-        Write-Error -ErrorRecord $err
+    $(wevtutil.exe set-log $EventName /enabled:true /retention:false /quiet:true | Out-Null) 2>&1 | ForEach-Object {
+        Write-Error -ErrorRecord $_
     }
 }
 
@@ -1440,9 +1439,8 @@ function Disable-EventLog {
         [string]$EventName
     )
 
-    $err = (wevtutil.exe set-log $EventName /enabled:false /retention:false /quiet:true | Out-Null) 2>&1
-    if ($err) {
-        Write-Error -ErrorRecord $err
+    $(wevtutil.exe set-log $EventName /enabled:false /retention:false /quiet:true | Out-Null) 2>&1 | ForEach-Object {
+        Write-Error -ErrorRecord $_
     }
 }
 
@@ -1890,7 +1888,7 @@ function Save-EventLog {
     $logs = @(
         'Application'
         'System'
-        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client|WebAuth"
+        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client|WebAuth|CAPI2"
     )
 
     $tasks = @(
@@ -5884,6 +5882,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'CAPI') {
+            Enable-EventLog 'Microsoft-Windows-CAPI2/Operational'
             Start-CAPITrace -Path (Join-Path $tempPath 'CAPI')
             $capiTraceStarted = $true
         }
@@ -6077,6 +6076,7 @@ function Collect-OutlookInfo {
         }
 
         if ($capiTraceStarted) {
+            Disable-EventLog 'Microsoft-Windows-CAPI2/Operational'
             Stop-CAPITrace
         }
 
