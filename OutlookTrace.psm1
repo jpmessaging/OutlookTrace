@@ -2809,6 +2809,11 @@ function Get-ProxyAutoConfig {
             try {
                 [System.Text.Encoding]$encoding = [System.Text.Encoding]::GetEncoding($charset)
                 $bodyString = $encoding.GetString($rawBody)
+
+                if ($bodyString.Contains([char]::ConvertFromUtf32(0x0000FFFD))) {
+                    # might be a Shift-JIS string.
+                    $bodyString = [System.Text.Encoding]::GetEncoding('shift-jis').GetString($rawBody)
+                }
             }
             catch {
                 Write-Error $_
@@ -5569,6 +5574,73 @@ function Invoke-AutoUpdate {
     }
 }
 
+function Start-Wpr {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        # Path to store temporary trace files
+        [string]$Path
+    )
+
+    # wpr is available on Win10 and above
+    if (-not (Get-Command 'wpr.exe' -ErrorAction SilentlyContinue)) {
+        Write-Error "WPR is not available on this machine."
+        return
+    }
+
+    if ($PSBoundParameters.ContainsKey('Path')) {
+        if (-not (Test-Path $Path)) {
+            New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        }
+        $Path = Resolve-Path $Path
+    }
+
+    if ($Path) {
+        # For some reason, if the path contains a space & is double-quoted & ends with a backslash, wpr fails with "Invalid temporary trace directory. Error code: 0xc5586004"
+        # Make sure to remove the last backslash.
+        if ($Path.EndsWith('\')) {
+            $Path = $Path.Remove($Path.Length - 1)
+        }
+
+        $errs = $(wpr.exe -start GeneralProfile -start CPU -start Network -filemode -RecordTempTo $Path | Out-Null) 2>&1
+    }
+    else { 
+        $errs = $(wpr.exe -start GeneralProfile -start CPU -start Network -filemode | Out-Null) 2>&1
+    }
+
+    $errorMsg = $errs | ForEach-Object { $msg = $_.Exception.Message.Trim(); if ($msg) { $msg } }
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "wpr failed to start. LASTEXITCODE: 0x$('{0:x}' -f $LASTEXITCODE).`n$errorMsg"
+    }
+}
+
+function Stop-Wpr {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [string]$FileName = 'wpr.etl'
+    )
+
+    # wpr is available on Win10 and above
+    if (-not (Get-Command 'wpr.exe' -ErrorAction SilentlyContinue)) {
+        Write-Error "WPR is not available on this machine."
+        return
+    }
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+    $Path = Resolve-Path $Path
+
+    $filePath = Join-Path $Path $FileName
+    $(wpr.exe -stop $filePath -skipPdbGen) 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "wpr failed to stop. LASTEXITCODE: 0x$('{ 0:x }' -f $LASTEXITCODE)."
+    }
+}
+
+
 <#
 .SYNOPSIS
     Collect Microsoft Office Outlook related configuration & traces
@@ -5589,7 +5661,7 @@ function Collect-OutlookInfo {
         $Path,
         # What to collect
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'HungDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance')]
+        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'HungDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance', 'WPR')]
         [array]$Component,
         # This controls the level of netsh trace report
         [ValidateSet('None', 'Mini', 'Full')]
@@ -5621,7 +5693,7 @@ function Collect-OutlookInfo {
     )
 
     # Explicitly check admin rights depending on the request.
-    if ($Component -contains 'Outlook' -or $Component -contains 'Netsh' -or $Component -contains 'CAPI' -or $Component -contains 'LDAP' -or $Component -contains 'WAM') {
+    if ($Component -contains 'Outlook' -or $Component -contains 'Netsh' -or $Component -contains 'CAPI' -or $Component -contains 'LDAP' -or $Component -contains 'WAM' -or $Component -contains 'WPR') {
         if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
             Write-Warning "Please run as administrator."
             return
@@ -5698,7 +5770,7 @@ function Collect-OutlookInfo {
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
     Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
-    Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) {'Skipped due to SkipAutoUpdate switch'} else {$autoUpdate.Message})"
+    Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
     Write-Log "Target user: $($targetUser.Name) ($($targetUser.SID))"
     Write-Log $logonUserError
 
@@ -5916,6 +5988,11 @@ function Collect-OutlookInfo {
             $perfStarted = $true
         }
 
+        if ($Component -contains 'WPR') {
+            Start-Wpr -Path (Join-Path $tempPath 'WPR') -ErrorAction Stop
+            $wprStarted = $true
+        }
+
         if ($Component -contains 'CrashDump') {
             Add-WerDumpKey -Path (Join-Path $tempPath 'WerDump') -TargetProcess 'Outlook.exe'
             $crashDumpStarted = $true
@@ -6013,7 +6090,7 @@ function Collect-OutlookInfo {
             $ttdStarted = $true
         }
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted) {
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted) {
             Write-Log "Waiting for the user to stop"
             Write-Host "Hit enter to stop:"
 
@@ -6103,6 +6180,12 @@ function Collect-OutlookInfo {
 
         if ($perfStarted) {
             Stop-PerfTrace
+        }
+
+        if ($wprStarted) {
+            Write-Progress -Activity 'Stopping WPR' -Status "Please wait." -PercentComplete -1
+            Stop-Wpr -Path (Join-Path $tempPath 'WPR')
+            Write-Progress -Activity 'Stopping WPR' -Completed
         }
 
         if ($hungDumpStarted) {
@@ -6206,7 +6289,7 @@ function Collect-OutlookInfo {
         $job = Start-Job -ScriptBlock {
             Remove-Item $using:tempPath -Recurse -Force
         }
-        Write-Host "Temporary folder `"$tempPath`" will be removed by a background job (Job ID: $($job.Id))"
+        Write-Verbose "Temporary folder `"$tempPath`" will be removed by a background job (Job ID: $($job.Id))"
     }
 
     Write-Host "The collected data is `"$(Join-Path $Path "$archiveName$([IO.Path]::GetExtension($archive.ArchivePath))")`"" -ForegroundColor Green
@@ -6230,4 +6313,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Collect-OutlookInfo

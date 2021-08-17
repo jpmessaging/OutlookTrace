@@ -50,12 +50,10 @@ function Publish-MyModule {
     try {
         # Files to be excluded (Need relative path (relative to Module root, not current dir))
         $exclude = @(
-            # This script
-            $PSCommandPath
+            $PSCommandPath # This script
             Get-ChildItem $PSScriptRoot -Filter '*.md' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-            # Anything under .vscode
             Get-ChildItem (Join-Path $PSScriptRoot '.vscode') -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
-
+            Get-ChildItem (Join-Path $PSScriptRoot 'test') -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
         ) | ForEach-Object { $_.SubString($PSScriptRoot.Length + 1) }
 
         Write-Verbose "Exclude: $($exclude -join ',')"
@@ -72,7 +70,7 @@ function Publish-MyModule {
     }
     finally {
         # Restore PSModulePath
-        $env:PSModulePath = $savedPSModulePath 
+        $env:PSModulePath = $savedPSModulePath
     }
 }
 
