@@ -5603,7 +5603,7 @@ function Start-Wpr {
 
         $errs = $(wpr.exe -start GeneralProfile -start CPU -start Network -filemode -RecordTempTo $Path | Out-Null) 2>&1
     }
-    else { 
+    else {
         $errs = $(wpr.exe -start GeneralProfile -start CPU -start Network -filemode | Out-Null) 2>&1
     }
 
@@ -5890,8 +5890,8 @@ function Collect-OutlookInfo {
             # When netsh trace is run for the first time, it does not capture packets (even with "capture=yes").
             # To workaround, netsh is started and stopped immediately.
             $tempNetshName = 'netsh_test'
-            Start-NetshTrace -Path (Join-Path $tempPath $tempNetshName) -FileName "$tempNetshName.etl" -RerpotMode 'None'
-            Stop-NetshTrace
+            Start-NetshTrace -Path (Join-Path $tempPath $tempNetshName) -FileName "$tempNetshName.etl" -RerpotMode 'None' -ErrorAction SilentlyContinue
+            Stop-NetshTrace -ErrorAction SilentlyContinue
             Remove-Item (Join-Path $tempPath $tempNetshName) -Recurse -Force -ErrorAction SilentlyContinue
 
             Start-NetshTrace -Path (Join-Path $tempPath 'Netsh') -RerpotMode $NetshReportMode
