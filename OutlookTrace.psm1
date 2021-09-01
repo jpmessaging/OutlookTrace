@@ -3708,6 +3708,7 @@ function Start-FiddlerCap {
             $webClient = $null
             try {
                 $webClient = New-Object System.Net.WebClient
+                $webClient.UseDefaultCredentials = $true
                 Write-Progress -Activity "Downloading FiddlerCap" -Status "Please wait" -PercentComplete -1
                 $webClient.DownloadFile($fiddlerCapUrl, $fiddlerSetupFile)
             }
@@ -3850,6 +3851,7 @@ function Start-Procmon {
             $webClient = $null
             try {
                 $webClient = New-Object System.Net.WebClient
+                $webClient.UseDefaultCredentials = $true
                 $webClient.DownloadFile($procmonDownloadUrl, $procmonZipFile)
                 $procmonZipDownloaded = $true
             }
@@ -5533,7 +5535,7 @@ function Invoke-AutoUpdate {
     else {
         try {
             Write-Progress -Activity "AutoUpdate" -Status 'Checking if a newer version is available. Please wait' -PercentComplete -1
-            $release = Invoke-RestMethod -Uri $GitHubUri -ErrorAction Stop
+            $release = Invoke-RestMethod -Uri $GitHubUri -UseDefaultCredentials -ErrorAction Stop
 
             if ($Version -ge $release.name) {
                 $message = "Skipped because the current script ($Version) is newer than GitHub's latest release ($($release.name))."
@@ -5543,7 +5545,7 @@ function Invoke-AutoUpdate {
                 $response = Invoke-Command {
                     # Suppress progress on Invoke-WebRequest.
                     $ProgressPreference = "SilentlyContinue"
-                    Invoke-WebRequest -Uri $release.assets.browser_download_url -UseBasicParsing
+                    Invoke-WebRequest -Uri $release.assets.browser_download_url -UseDefaultCredentials -UseBasicParsing
                 }
 
                 # Rename the current script and replace with the latest one.
