@@ -45,7 +45,7 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
     Note: When "Dump" is included in Component parameter, you will be prompted with `Hit enter to save a process dump of Outlook. To quit, enter q:`. Hit enter key to save a dump file. For a hang issue, repeat the process to collect 3 dump files, with interval of about 30 seconds between saves. When finished, hit `q`.
 
-    Note: When "Fiddler" is included in Component parameter, a dialog box [FiddlerCap Web Recorder] appears. Use the following instructions to start capture, and then reproduce the issue.
+    Note: When "Fiddler" is included in Component parameter, a dialog box [FiddlerCap Web Recorder] will appear. Use the following instructions to start capture, and then reproduce the issue.
 
     <details>
         <summary>How to start Fiddler capture</summary>
@@ -114,6 +114,55 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
 Send the zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 6.
 If you captured a Fiddler trace, send the password used in step 8 too.
+
+## Parameters
+
+### Mandatory parameters
+
+| Name      | Description                                                                             |
+| --------- | --------------------------------------------------------------------------------------- |
+| Path      | Folder path where gathered data will be placed. It will be created if it does not exist |
+| Component | Diagnostics data to collect (see below)                                                 |
+
+### Optional parameters
+
+| Name                  | Description                                                                                                                                         |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NetshReportMode       | Netsh trace's report mode. Valid values:`None`, `Mini`, `Full` (Default: `None`)                                                                    |
+| LogFileMode           | ETW trace's mode. Valid values: `NewFile`, `Circular` (Default: `NewFile`)                                                                          |
+| MaxFileSizeMB         | Max file size for ETW trace files. By default, 256 MB when `NewFile` and 2048 MB when `Circular`                                                    |
+| ArchiveType           | Valid values: `Zip` or `Cab`. Zip is faster, but Cab is smaller (Default: `Zip`)                                                                    |
+| SkipArchive           | Switch to skip archiving (zip or cab)                                                                                                               |
+| SkipAutoUpdate        | Switch to skip auto update                                                                                                                          |
+| AutoFlush             | Switch to flush log data every time it's written (This is just for troubleshooting the script)                                                      |
+| PsrRecycleIntervalMin | PSR recycle interval in minutes (Default: `10` min). A new instance of PSR is created after this interval                                           |
+| User                  | Target user whose configuration data will be collected. By default, it's the logon user (Note: Not necessarily the current user running the script) |
+| HungTimeoutSecond     | Number of seconds used to detect a hung window when `HungDump` is requested in Component.                                                           |
+| HungMonitorTarget     | Name of the target process to monitor a hung window (Default: `Outlook`)                                                                            |
+
+### Possible values for `Component` parameter
+
+| Name          | Description                                                                                                    |
+| ------------- | -------------------------------------------------------------------------------------------------------------- |
+| Configuration | OS config, Registry, Event logs, Proxy settings, etc.                                                          |
+| Outlook       | Outlook's ETW                                                                                                  |
+| Netsh         | Netsh ETW                                                                                                      |
+| PSR           | Probelem Steps Recorder                                                                                        |
+| WAM           | WAM (Web Account Manager) ETW                                                                                  |
+| Fiddler       | [Fiddler](https://www.telerik.com/fiddler/fiddlercap) trace (Fiddler trace must be manually started & stopped) |
+| Procmon       | [Process monitor](https://docs.microsoft.com/en-us/sysinternals/downloads/procmon)                             |
+| LDAP          | LDAP ETW                                                                                                       |
+| CAPI          | CAPI (Crypt API) ETW                                                                                           |
+| TCO           | TCO trace                                                                                                      |
+| Dump          | Outlook's process dump                                                                                         |
+| CrashDump     | Outlook's crash dump                                                                                           |
+| HungDump      | Outlook's hung dump (When a windows hung is detected, it generate a dump file)                                 |
+| WPR           | WPR (Windows Performance Recorder) ETW (OS must be Windows 10 or above)                                        |
+| WFP           | Windows Firewall diagnostic log                                                                                |
+| Performance   | Performance counter log (Process, Memory, LogicalDisk etc.)                                                    |
+| TTD           | Time Travel Debugging trace (OS must be Windows 10 or above)                                                   |
+
+**Note**: `Collect-OutlookInfo` tries to download FiddlerCap & Procmon when requested in `Component` parameter. If Internet access is not available, please download [FiddlerCap](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe) and/or [Procmon](https://download.sysinternals.com/files/ProcessMonitor.zip) and place them in `Path` folder before running the command.
 
 ## License
 
