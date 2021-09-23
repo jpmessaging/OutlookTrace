@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-09-08'
+$Version = 'v2021-09-23'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -2788,6 +2788,7 @@ function Get-ProxyAutoConfig {
         [System.Net.HttpWebRequest]$request = [System.Net.WebRequest]::Create($Url)
         $request.UserAgent = 'Mozilla/5.0 (Windows NT; Windows NT 10.0)'
         $request.Timeout = 10000
+        $request.UseDefaultCredentials = $true
         $response = $copied = $null
 
         try {
@@ -2973,7 +2974,7 @@ function Get-NLMConnectivity {
     [Win32.Netlistmgr+NLM_CONNECTIVITY]$connectivity = $nlm.GetConnectivity()
     Write-Log ("INetworkListManager::GetConnectivity: $connectivity (0x$("{0:x8}" -f $connectivity.value__))")
 
-    $refCount = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($nlm);
+    $refCount = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($nlm)
     Write-Log "NetworkListManager COM object's remaining ref count: $refCount"
     $nlm = $null
 
@@ -4920,18 +4921,13 @@ function Get-Token {
         $builder.WithLogging(
             # Microsoft.Identity.Client.LogCallback
             (New-LogCallback {
-                    param([Microsoft.Identity.Client.LogLevel]$level, [string]$message, [bool]$containsPii)
-
-                    $writer = $Event.MessageData[0]
-                    $writer.WriteLine("$((Get-Date).ToString('o')),$level,$containsPii,`"$message`"")
-
-                } -ArgumentList $writer),
-
+                param([Microsoft.Identity.Client.LogLevel]$level, [string]$message, [bool]$containsPii)
+                $writer = $Event.MessageData[0]
+                $writer.WriteLine("$((Get-Date).ToString('o')),$level,$containsPii,`"$message`"")
+            } -ArgumentList $writer),
             [Microsoft.Identity.Client.LogLevel]::Verbose,
-            # enablePiiLogging
-            $true,
-            # enableDefaultPlatformLogging
-            $false
+            $true, # enablePiiLogging
+            $false # enableDefaultPla`tformLogging
         ) | Out-Null
     }
 
@@ -5642,6 +5638,94 @@ function Stop-Wpr {
     }
 }
 
+function Get-IMProvider {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        $User
+    )
+
+    $root = Get-UserRegistryRoot $User
+    $defaultIMApp = Get-ItemProperty (Join-Path $root 'SOFTWARE\IM Providers') -Name 'DefaultIMApp' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultIMApp'
+    if (-not $defaultIMApp) {
+        Write-Error "Failed to get DefaultIMApp."
+        return
+    }
+
+    [Guid]$clsid = [Guid]::Empty
+
+    switch ($defaultIMApp) {
+        'Teams' { $clsid = '00425F68-FFC1-445F-8EDF-EF78B84BA1C7'; break }
+        'Lync' { $clsid = 'A0651028-BA7A-4D71-877F-12E0175A5806'; break }
+    }
+
+    if ($clsid -eq [Guid]::Empty) {
+        Write-Error "Failed to get CLSID of DefaultIMApp $defaultIMApp."
+        return
+    }
+
+    $isRunning = $false
+    $process = Get-Process -Name $defaultIMApp -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($process) {
+        $isRunning = $true
+        $process.Dispose()
+    }
+
+    $imProvider = $null
+    $punk = $pIUCOfficeIntegration = [IntPtr]::Zero
+
+    try {
+        # Create a COM instance
+        $createInstance = $false
+        $type = [Type]::GetTypeFromCLSID($clsid)
+        $imProvider = [Activator]::CreateInstance($type)
+        $createInstance = $true
+
+        # Retrieve IUnknown
+        $punk = [Runtime.InteropServices.Marshal]::GetIUnknownForObject($imProvider)
+
+        # Get IUCOfficeIntegration
+        [Guid]$IID_IUCOfficeIntegration = '6a222195-f65e-467f-8f77-eb180bd85288'
+        $hr = [Runtime.InteropServices.Marshal]::QueryInterface($punk, [ref]$IID_IUCOfficeIntegration, [ref]$pIUCOfficeIntegration)
+        if ($hr -ne 0) {
+            Write-Error $("QueryInterface for IID $IID_IUCOfficeIntegration failed with 0x{0:x}" -f $hr)
+        }
+
+        # Call IUCOfficeIntegration->GetAuthenticationInfo()
+        $authInfo = $imProvider.GetAuthenticationInfo('15.0.0.0')
+    }
+    catch {
+        if (-not $imProvider) {
+            Write-Error -Message "Failed to create an instance of $defaultIMApp (CLSID: {$clsid}).`n$($_.Exception.Message)" -Exception $_.Exception
+        }
+        elseif ($pIUCOfficeIntegration -eq [IntPtr]::Zero) {
+            Write-Error -Message "Failed to obtain IUCOfficeIntegration interface.`n$($_.Exception.Message)" -Exception $_.Exception
+        }
+        else {
+            Write-Error -ErrorRecord $_
+        }
+    }
+    finally {
+        if ($punk -ne [IntPtr]::Zero) {
+            [System.Runtime.InteropServices.Marshal]::Release($punk) | Out-Null
+        }
+
+        if ($pIUCOfficeIntegration -ne [IntPtr]::Zero) {
+            [System.Runtime.InteropServices.Marshal]::Release($pIUCOfficeIntegration) | Out-Null
+        }
+
+        if ($imProvider) {
+            [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($imProvider) | Out-Null
+        }
+    }
+
+    [PSCustomObject]@{
+        DefaultIMApp         = $defaultIMApp
+        IsRunning            = $isRunning
+        CreateInstance       = $createInstance
+        IUCOfficeIntegration = $createInstance -and $pIUCOfficeIntegration -ne [IntPtr]::Zero
+        AuthenticationInfo   = $authInfo
+    }
+}
 
 <#
 .SYNOPSIS
@@ -5849,6 +5933,7 @@ function Collect-OutlookInfo {
             Run-Command { param($user) Get-OutlookProfile -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { param($user) Get-OutlookAddin -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { Get-ClickToRunConfiguration } -Path $OfficeDir
+            Run-Command { param($user) Get-IMProvider -User $user } -ArgumentList $targetUser -Path $OfficeDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 60
             Run-Command { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
@@ -6315,4 +6400,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Collect-OutlookInfo
