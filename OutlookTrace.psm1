@@ -373,12 +373,12 @@ namespace Win32
             NLM_CONNECTIVITY_DISCONNECTED      = 0,
             NLM_CONNECTIVITY_IPV4_NOTRAFFIC    = 1,
             NLM_CONNECTIVITY_IPV6_NOTRAFFIC    = 2,
-            NLM_CONNECTIVITY_IPV4_SUBNET	   = 0x10,
+            NLM_CONNECTIVITY_IPV4_SUBNET       = 0x10,
             NLM_CONNECTIVITY_IPV4_LOCALNETWORK = 0x20,
-            NLM_CONNECTIVITY_IPV4_INTERNET	   = 0x40,
-            NLM_CONNECTIVITY_IPV6_SUBNET	   = 0x100,
+            NLM_CONNECTIVITY_IPV4_INTERNET     = 0x40,
+            NLM_CONNECTIVITY_IPV6_SUBNET       = 0x100,
             NLM_CONNECTIVITY_IPV6_LOCALNETWORK = 0x200,
-            NLM_CONNECTIVITY_IPV6_INTERNET	   = 0x400
+            NLM_CONNECTIVITY_IPV6_INTERNET     = 0x400
         }
     }
 
@@ -1898,8 +1898,10 @@ function Save-EventLog {
             Write-Log "Saving $log to $filePath"
             Start-Task -ScriptBlock {
                 param ($log, $filePath)
-                wevtutil epl $log $filePath /ow
-                wevtutil al $filePath
+                wevtutil export-log $log $filePath /ow
+                wevtutil archive-log $filePath
+                # wevtutil archive-log $filePath /locale:en-US
+                # wevtutil archive-log $filePath /locale:ja-JP
             } -ArgumentList $log, $filePath
         }
     )
@@ -2284,6 +2286,7 @@ function Save-OfficeRegistry {
         "HKCU\SOFTWARE\Classes\Local Settings\Software\Microsoft\MSIPC"
         "HKCU\Software\Policies"
         "HKCU\Software\IM Providers"
+        "HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\"
         "HKLM\Software\Microsoft\Office"
         "HKLM\Software\Policies\Microsoft\Office"
         "HKLM\Software\WOW6432Node\Microsoft\Office"
@@ -2784,6 +2787,8 @@ function Get-ProxyAutoConfig {
             $result
             return
         }
+
+        Write-Log "Running Get-PAC with $Url"
 
         [System.Net.HttpWebRequest]$request = [System.Net.WebRequest]::Create($Url)
         $request.UserAgent = 'Mozilla/5.0 (Windows NT; Windows NT 10.0)'
@@ -6108,11 +6113,14 @@ function Collect-OutlookInfo {
 
         if ($Component -contains 'HungDump') {
             $hungDumpCts = New-Object System.Threading.CancellationTokenSource
+            $monitorStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
             Write-Log "Starting hungMonitorTask. HungTimeoutSecond: $HungTimeoutSecond."
 
             # Save at most 10 dump files for now.
             $hungMonitorTask = Start-Task -ScriptBlock {
-                param($path, $timeout, $dumpCount, $cancelToken, $name)
+                param($path, $timeout, $dumpCount, $cancelToken, $name, $monitorStartedEvent)
+
+                $monitorStartedEvent.Set() | Out-Null
 
                 # Wait for Outlook to come live.
                 while ($true) {
@@ -6133,8 +6141,9 @@ function Collect-OutlookInfo {
 
                 Write-Log "hungMonitorTask has found $name (PID $id). Starting hung window monitoring."
                 Save-HungDump -Path $path -ProcessId $id -DumpCount $dumpCount -CancellationToken $cancelToken
-            } -ArgumentList (Join-Path $tempPath 'HungDump'), $HungTimeoutSecond, 10, $hungDumpCts.Token, $HungMonitorTarget
+            } -ArgumentList (Join-Path $tempPath 'HungDump'), $HungTimeoutSecond, 10, $hungDumpCts.Token, $HungMonitorTarget, $monitorStartedEvent
 
+            $monitorStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan) | Out-Null
             $hungDumpStarted = $true
         }
 
