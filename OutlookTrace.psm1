@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-09-23'
+$Version = 'v2021-10-20'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -379,6 +379,47 @@ namespace Win32
             NLM_CONNECTIVITY_IPV6_SUBNET       = 0x100,
             NLM_CONNECTIVITY_IPV6_LOCALNETWORK = 0x200,
             NLM_CONNECTIVITY_IPV6_INTERNET     = 0x400
+        }
+
+        // # NLM_CONNECTION_COST enumeration
+        // # https://docs.microsoft.com/en-us/windows/win32/api/netlistmgr/ne-netlistmgr-nlm_connection_cost
+        [Flags]
+        public enum NLM_CONNECTION_COST
+        {
+            NLM_CONNECTION_COST_UNKNOWN              = 0,
+            NLM_CONNECTION_COST_UNRESTRICTED         = 0x1,
+            NLM_CONNECTION_COST_FIXED                = 0x2,
+            NLM_CONNECTION_COST_VARIABLE             = 0x4,
+            NLM_CONNECTION_COST_OVERDATALIMIT        = 0x10000,
+            NLM_CONNECTION_COST_CONGESTED            = 0x20000,
+            NLM_CONNECTION_COST_ROAMING              = 0x40000,
+            NLM_CONNECTION_COST_APPROACHINGDATALIMIT = 0x80000
+        }
+
+        [ComImport, Guid("DCB00008-570F-4A9B-8D69-199FDBA5723B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        public interface INetworkCostManager
+        {
+            int GetCost(out NLM_CONNECTION_COST pCost, IntPtr DestIPAddr);
+            int GetDataPlanStatus(IntPtr pDataPlanStatus, IntPtr pDestIPAddr);
+            int SetDestinationAddresses(uint length, IntPtr pDestIPAddrList, bool bAppend);
+        }
+
+        public static NLM_CONNECTION_COST GetMeteredNetworkCost()
+        {
+            Type nlmType = Type.GetTypeFromCLSID(new Guid(CLSID_NetworkListManager));
+            INetworkCostManager ncm = Activator.CreateInstance(nlmType) as INetworkCostManager;
+
+            try
+            {
+                NLM_CONNECTION_COST cost = NLM_CONNECTION_COST.NLM_CONNECTION_COST_UNKNOWN;
+                int hr = ncm.GetCost(out cost, IntPtr.Zero);
+                Marshal.ThrowExceptionForHR(hr);
+                return cost;
+            }
+            finally
+            {
+                Marshal.FinalReleaseComObject(ncm);
+            }
         }
     }
 
@@ -2367,6 +2408,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-WmiObject -Class Win32_OperatingSystem }; FileName = 'Win32_OperatingSystem.xml' }
         @{ScriptBlock = { Get-WinHttpDefaultProxy } }
         @{ScriptBlock = { Get-NLMConnectivity } }
+        @{ScriptBlock = { Get-MeteredNetworkCost } }
         @{ScriptBlock = { Get-WSCAntivirus } }
         @{ScriptBlock = { Get-InstalledUpdate } }
         @{ScriptBlock = { Get-JoinInformation } }
@@ -2986,6 +3028,58 @@ function Get-NLMConnectivity {
     [PSCustomObject]@{
         IsConnectedToInternet = $isConnectedToInternet
         Connectivity          = $connectivity
+    }
+}
+
+function Get-MeteredNetworkCost {
+    [CmdletBinding()]
+    param()
+
+    try {
+        $cost = [Win32.Netlistmgr]::GetMeteredNetworkCost()
+    }
+    catch {
+        Write-Error -Message "GetMeteredNetworkCost failed. $($_.Exception)" -Exception $_.Exception
+        return
+    }
+
+    $highCost = $false
+    $conservative = $false
+    $approachingHighCost = $false
+
+    if ($cost -band [Win32.Netlistmgr+NLM_CONNECTION_COST]::NLM_CONNECTION_COST_ROAMING) {
+        $highCost = $true
+    }
+
+    if ($cost -band [Win32.Netlistmgr+NLM_CONNECTION_COST]::NLM_CONNECTION_COST_FIXED `
+            -or $cost -band [Win32.Netlistmgr+NLM_CONNECTION_COST]::NLM_CONNECTION_COST_VARIABLE) {
+        $conservative = $true
+
+        if ($cost -band [Win32.Netlistmgr+NLM_CONNECTION_COST]::NLM_CONNECTION_COST_OVERDATALIMIT) {
+            $highCost = $true
+        }
+
+        if ($cost -band [Win32.Netlistmgr+NLM_CONNECTION_COST]::NLM_CONNECTION_COST_APPROACHINGDATALIMIT) {
+            $approachingHighCost = $true
+        }
+    }
+
+    if ($highCost) {
+        $meteredState = 'HIGH_COST'
+    }
+    elseif ($approachingHighCost) {
+        $meteredState = 'APPROACHING_HIGH_COST'
+    }
+    elseif ($conservative) {
+        $meteredState = 'CONSERVATIVE'
+    }
+    else {
+        $meteredState = 'UNRESTRICTED'
+    }
+
+    [PSCustomObject]@{
+        Cost         = $cost
+        MeteredState = $meteredState
     }
 }
 
@@ -5457,13 +5551,13 @@ function Start-PerfTrace {
     }
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "logman failed with 0x$('{0:x}'-f $LASTEXITCODE). $stdout"
+        Write-Error "logman failed with 0x$('{0:x}' -f $LASTEXITCODE). $stdout"
     }
 
     $stdout = & logman.exe start 'PerfCounter'
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "logman failed with 0x$('{0:x}'-f $LASTEXITCODE). $stdout"
+        Write-Error "logman failed with 0x$('{0:x}' -f $LASTEXITCODE). $stdout"
     }
 }
 
@@ -5638,8 +5732,14 @@ function Stop-Wpr {
 
     $filePath = Join-Path $Path $FileName
     $(wpr.exe -stop $filePath -skipPdbGen) 2>&1 | Out-Null
+
+    # If "Invalid command syntax", retry without -skipPdbGen because the option might not be avaiable (e.g. W2019)
+    if ($LASTEXITCODE -eq 0xc5600602) {
+        $(wpr.exe -stop $filePath) 2>&1 | Out-Null
+    }
+
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "wpr failed to stop. LASTEXITCODE: 0x$('{ 0:x }' -f $LASTEXITCODE)."
+        Write-Error "wpr failed to stop. LASTEXITCODE: 0x$('{0:x}' -f $LASTEXITCODE)."
     }
 }
 
@@ -6409,4 +6509,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Collect-OutlookInfo
