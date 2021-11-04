@@ -4632,6 +4632,19 @@ function Start-WfpTrace {
     }
     $Path = Resolve-Path $Path
 
+    # Start WFP trace
+    # TODO: This does not return the control sometimes. Figure out why.
+    if ($env:PROCESSOR_ARCHITEW6432) {
+        $netshexe = Join-Path $env:SystemRoot 'SysNative\netsh.exe'
+    }
+    else {
+        $netshexe = Join-Path $env:SystemRoot 'System32\netsh.exe'
+    }
+
+    $filePath = Join-Path $Path 'wfp'
+    Write-Log "Starting WFP trace"
+    Start-Process $netshexe -ArgumentList "wfp capture start cab=OFF file=`"$filePath`"" -WindowStyle Hidden
+
     Write-Log "Starting a WFP job"
     $job = Start-Job -ScriptBlock {
         param($Path, $IntervalSeconds, $MaxDuration)
@@ -4652,7 +4665,6 @@ function Start-WfpTrace {
             $eventFilePath = Join-Path $Path "netevents_$(Get-Date -Format 'yyyyMMdd_HHmmss').xml"
             netsh wfp show netevents file="$eventFilePath" <#timewindow=$IntervalSeconds#> | Out-Null
             Start-Sleep -Seconds $IntervalSeconds
-
         }
     } -ArgumentList $Path, $IntervalSeconds, $MaxDuration
 
@@ -4665,6 +4677,16 @@ function Stop-WfpTrace {
     param (
         $WfpJob
     )
+
+    # Stop WFP trace
+    if ($env:PROCESSOR_ARCHITEW6432) {
+        $netshexe = Join-Path $env:SystemRoot 'SysNative\netsh.exe'
+    }
+    else {
+        $netshexe = Join-Path $env:SystemRoot 'System32\netsh.exe'
+    }
+
+    & $netshexe wfp capture stop | Out-Null
 
     Write-Log "Stopping a WFP job"
     Stop-Job -Job $WfpJob
@@ -4794,7 +4816,7 @@ function Save-HungDump {
 
             # if error code is 0 or ERROR_TIMEOUT, timeout occurred.
             if ($ec -eq 0 -or $ec -eq $ERROR_TIMEOUT) {
-                Write-Host "Hung window detected with $name (PID $ProcessId). $($savedDumpCount+1)/$DumpCount" -ForegroundColor Green
+                # Write-Host "Hung window detected with $name (PID $ProcessId). $($savedDumpCount+1)/$DumpCount" -ForegroundColor Green
                 Write-Log "Hung window detected with $name (PID $ProcessId). $($savedDumpCount+1)/$DumpCount"
                 $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId
                 $savedDumpCount++
