@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-11-03'
+$Version = 'v2021-11-24'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -3905,7 +3905,7 @@ function Start-Procmon {
     $Path = Resolve-Path $Path
     $procmonFile = $null
 
-    # Search procmon.exe or procmon64.exe under $Path (including subfolders).
+    # Search procmon.exe or procmon64.exe under $ProcmonSearchPath (including subfolders).
     if ($ProcmonSearchPath -and (Test-Path $ProcmonSearchPath)) {
         $findResult = @(Get-ChildItem -Path $ProcmonSearchPath -Filter 'procmon*.exe' -Recurse)
         if ($findResult.Count -ge 1) {
@@ -3921,18 +3921,13 @@ function Start-Procmon {
 
     $procmonZipDownloaded = $false
 
-    if (-not ($procmonFile -and (Test-Path $procmonFile))) {
-        # If 'ProcessMonitor.zip' isn't there, download.
+    if ($procmonFile -and (Test-Path $procmonFile)) {
+        Write-Log "$procmonFile is found. Skip searching & downloading ProcessMonitor.zip."
+    }
+    else {
         $procmonDownloadUrl = 'https://download.sysinternals.com/files/ProcessMonitor.zip'
-        $procmonFolderPath = Join-Path $Path -ChildPath 'procmon_temp'
-        $procmonZipFile = Join-Path $procmonFolderPath -ChildPath 'ProcessMonitor.zip'
-
-        # If it's not connected to internet, bail.
-        $connectivity = Get-NLMConnectivity
-        if (-not $connectivity.IsConnectedToInternet) {
-            Write-Error "It seems there is no connectivity to Internet. Please download the ProcessMonitor from `"$procmonDownloadUrl`""
-            return
-        }
+        $procmonFolderPath = Join-Path $ProcmonSearchPath -ChildPath 'ProcessMonitor'
+        $procmonZipFile = Join-Path $ProcmonSearchPath -ChildPath 'ProcessMonitor.zip'
 
         if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
             $procmonFile = Join-Path $procmonFolderPath -ChildPath 'Procmon64.exe'
@@ -3945,7 +3940,18 @@ function Start-Procmon {
             New-Item $procmonFolderPath -ItemType Directory -ErrorAction Stop | Out-Null
         }
 
-        if (-not (Test-Path $procmonZipFile)) {
+        if (Test-Path $procmonZipFile) {
+            Write-Log "$procmonZipFile is found. Skip downloading."
+        }
+        else {
+            # If 'ProcessMonitor.zip' isn't there, download it.
+            # If it's not connected to internet, bail.
+            $connectivity = Get-NLMConnectivity
+            if (-not $connectivity.IsConnectedToInternet) {
+                Write-Error "It seems there is no connectivity to Internet. Please download the ProcessMonitor from `"$procmonDownloadUrl`""
+                return
+            }
+
             Write-Log "Downloading procmon"
             Write-Progress -Activity "Downloading procmon from $procmonDownloadUrl" -Status "Please wait" -PercentComplete -1
             $webClient = $null
@@ -3987,6 +3993,11 @@ function Start-Procmon {
             $shell = New-Object -ComObject Shell.Application
             $shell.NameSpace($procmonFolderPath).CopyHere($shell.NameSpace($procmonZipFile).Items(), 4)
         }
+    }
+
+    if (-not ($procmonFile -and (Test-Path $procmonFile))) {
+        Write-Error "Failed to find $procmonFile."
+        return
     }
 
     if (-not $PmlFileName.EndsWith('.pml')) {
@@ -6387,9 +6398,9 @@ function Collect-OutlookInfo {
         if ($procmonStared) {
             Stop-Procmon
             # Remove procmon
-            if ($procmonResult -and $procmonResult.ProcmonZipDownloaded) {
-                Remove-Item $procmonResult.ProcmonFolderPath -Force -Recurse
-            }
+            # if ($procmonResult -and $procmonResult.ProcmonZipDownloaded) {
+            #     Remove-Item $procmonResult.ProcmonFolderPath -Force -Recurse
+            # }
         }
 
         if ($wfpStarted) {
