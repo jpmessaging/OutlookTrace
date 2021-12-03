@@ -4895,6 +4895,46 @@ function Save-MSIPC {
 }
 
 <#
+Save DLP policy files
+#>
+function Save-DLP {
+    [CmdletBinding(PositionalBinding = $false)]
+    param (
+        [Parameter(Mandatory = $true)]
+        # Destination folder path to save to
+        $Path,
+        [string]
+        $User
+    )
+
+    # Get the path to %LOCALAPPDATA%\Microsoft\Outlook.
+    $sourcePath = $null
+
+    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
+        $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
+    }
+
+    $files = @(Get-ChildItem $sourcePath -Filter 'PolicyNudge*')
+
+    if ($files.Count -eq 0) {
+        return
+    }
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+
+    $Path = Resolve-Path $Path
+
+    try {
+        Get-ChildItem $sourcePath -Filter 'PolicyNudge*' | Copy-Item -Destination $Path
+    }
+    catch {
+        Write-Error -ErrorRecord $_
+    }
+}
+
+<#
 .SYNOPSIS
 This function returns an instance of Microsoft.Identity.Client.LogCallback delegate which calls the given scriptblock when LogCallback is invoked.
 #>
@@ -6075,6 +6115,7 @@ function Collect-OutlookInfo {
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 60
             Run-Command { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
+            Run-Command { param($user, $OfficeDir) Save-DLP -User $user -Path $(Join-Path $OfficeDir 'DLP') } -ArgumentList $targetUser, $OfficeDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 80
             Run-Command { param($OSDir) Save-Process -Path $OSDir } -ArgumentList $OSDir
@@ -6542,4 +6583,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Collect-OutlookInfo
