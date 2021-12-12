@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-12-03'
+$Version = 'v2021-12-11'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -2576,6 +2576,10 @@ function Run-Command {
             }
         }
 
+        if (-not (Test-Path $Path)) {
+            New-Item $Path -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
+        }
+
         if ($exportAsXml) {
             $result | Export-Clixml -Path (Join-Path $Path $FileName)
         }
@@ -2979,7 +2983,7 @@ function Get-ProxySetting {
     }
 
     # Get User's WinInet proxy
-    # If User is not specified or the given user is the current user, then just use WinHttpGetIEProxyConfigForCurrentUser; otherwise use Get-WinInetProxy for th user
+    # If User is not specified or the given user is the current user, then just use WinHttpGetIEProxyConfigForCurrentUser; otherwise use Get-WinInetProxy for the user
     $currentUserName = $currentUser.Split('\') | Select-Object -Last 1
     if (-not $User -or $User -match $currentUserName) {
         Write-Log "Invoking WinHttpGetIEProxyConfigForCurrentUser"
@@ -6082,7 +6086,6 @@ function Collect-OutlookInfo {
             $activity = "Saving configuration"
             $status = "Please wait"
             Write-Progress -Activity $activity -Status $status -PercentComplete 0
-            New-Item -Path $ConfigDir -ItemType directory | Out-Null
 
             # First start tasks that might take a while.
 
