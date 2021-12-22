@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-12-11'
+$Version = 'v2021-12-21'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -2334,7 +2334,7 @@ function Save-OfficeRegistry {
         "HKLM\Software\WOW6432Node\Policies\Microsoft\Office"
 
         # This is WinInet proxy settings and maybe out of place, but I wanted to collect for now.
-        'HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections'
+        'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings\'
     )
 
     $userRegRoot = Get-UserRegistryRoot $User -SkipRegistryPrefix
