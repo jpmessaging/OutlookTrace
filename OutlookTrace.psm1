@@ -6365,12 +6365,13 @@ function Collect-OutlookInfo {
 
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted) {
             Write-Log "Waiting for the user to stop"
-            Write-Host "Hit enter to stop:"
+            Read-Host 'Hit enter to stop'
 
             # To allow Write-Host from another runspace, don't block the host by Read-Host here.
-            while (-not $Host.UI.RawUI.KeyAvailable -or $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown").VirtualKeyCode -ne 13) {
-                Start-Sleep 1
-            }
+            # Write-Host "Hit enter to stop:"
+            # while (-not $Host.UI.RawUI.KeyAvailable -or $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown").VirtualKeyCode -ne 13) {
+            #     Start-Sleep 1
+            # }
         }
     }
     catch {
