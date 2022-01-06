@@ -139,6 +139,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | User                  | Target user whose configuration data will be collected. By default, it's the logon user (Note: Not necessarily the current user running the script) |
 | HungTimeoutSecond     | Number of seconds used to detect a hung window when `HungDump` is requested in Component.                                                           |
 | HungMonitorTarget     | Name of the target process to monitor a hung window (Default: `Outlook`)                                                                            |
+| WamSignOut            | Switch to sign out all WAM (Web Account Manager) accounts                                                                                           |
 
 ### Possible values for `Component` parameter
 

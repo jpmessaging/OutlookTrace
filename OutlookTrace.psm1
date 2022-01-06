@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2021-12-21'
+$Version = 'v2022-01-05'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -5911,6 +5911,103 @@ function Get-IMProvider {
 
 <#
 .SYNOPSIS
+Sign out of accounts persisted in WAM (Web Account Manager).
+.DESCRIPTION
+This command invokes WebAuthenticationCoreManager's SignOutAsync() method to sign out of accounts that persist in WAM.
+When it finds account(s), it asks the user if s/he wants to sign out of each account, unless Force switch is specified in which case it automatically sign out of all accounts.
+.EXAMPLE
+Invoke-WamSignOut
+By default, sign out of account associated with MS Office Client ID (d3590ed6-52b3-4102-aeff-aad2292ab01c).
+.EXAMPLE
+Invoke-WamSignOut -Force
+Sign out of all the accounts found without user interaction.
+.NOTES
+WinRT interop (AwaitAction, Await) is borrowed from:
+
+    https://fleexlab.blogspot.com/2018/02/using-winrts-iasyncoperation-in.html
+.LINK
+WebAccount.SignOutAsync Method
+https://docs.microsoft.com/en-us/uwp/api/windows.security.credentials.webaccount.signoutasync
+
+#>
+function Invoke-WamSignOut {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        # ClientId
+        [string]$ClientId,
+        # Sign out of all the accounts without user interaction.
+        [switch]$Force
+    )
+
+    if (-not ('Windows.Foundation.Metadata.ApiInformation' -as [type]) -or -not [Windows.Foundation.Metadata.ApiInformation, Windows, ContentType = WindowsRuntime]::IsMethodPresent('Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager', 'FindAllAccountsAsync')) {
+        Write-Error "This script is not supported on this Windows version. You can use https://github.com/jpazureid/WPJ-cleanup-tool/blob/master/CleanupTool.zip"
+        return
+    }
+
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    $MS_OFFICE_CLIENTID = 'd3590ed6-52b3-4102-aeff-aad2292ab01c'
+
+    # By default use MS Office Client ID.
+    if (-not $ClientId) {
+        $ClientId = $MS_OFFICE_CLIENTID
+    }
+
+    function AwaitAction($WinRtAction) {
+        # WindowsRuntimeSystemExtensions.AsTask() creates a Task from WinRT future.
+        # https://devblogs.microsoft.com/dotnet/asynchronous-programming-for-windows-store-apps-net-is-up-to-the-task/
+        $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and !$_.IsGenericMethod })[0]
+        $netTask = $asTask.Invoke($null, @($WinRtAction))
+        $netTask.Wait(-1) | Out-Null
+    }
+
+    function Await($WinRtTask, $ResultType) {
+        # https://fleexlab.blogspot.com/2018/02/using-winrts-iasyncoperation-in.html
+        $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
+        $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
+        $netTask = $asTask.Invoke($null, @($WinRtTask))
+        $netTask.Wait(-1) | Out-Null
+        $netTask.Result
+    }
+
+    # https://docs.microsoft.com/en-us/uwp/api/windows.security.authentication.web.core.webauthenticationcoremanager.findaccountproviderasync?view=winrt-20348#Windows_Security_Authentication_Web_Core_WebAuthenticationCoreManager_FindAccountProviderAsync_System_String_
+    $provider = Await ([Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::FindAccountProviderAsync('https://login.microsoft.com', 'organizations')) ([Windows.Security.Credentials.WebAccountProvider, Windows, ContentType = WindowsRuntime])
+
+    # https://docs.microsoft.com/en-us/uwp/api/windows.security.authentication.web.core.webauthenticationcoremanager.findallaccountsasync?view=winrt-20348
+    $accounts = Await ([Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::FindAllAccountsAsync($provider, $ClientId)) ([Windows.Security.Authentication.Web.Core.FindAllAccountsResult, Windows, ContentType = WindowsRuntime])
+
+    $count = 0
+    $accounts.Accounts | ForEach-Object { $count++ }
+
+    if ($count -eq 0) {
+        Write-Log "No account found."
+        return
+    }
+
+    Write-Log "$count account$(if ($count -gt 1) {'s'}) found."
+
+    foreach ($account in $accounts.Accounts) {
+        $accountId = "UserName: $($account.UserName), Id: $($account.Id)"
+        $signOutMsg = "Signing out an account; $accountId"
+
+        # If Force is not specified, ask the user
+        if (-not $Force) {
+            $ans = Read-Host "Do you want to sign out the following account? (Y|N)`n  $accountId"
+            if ($ans -like 'Y*') {
+                Write-Host $signOutMsg -ForegroundColor Green
+            }
+            else {
+                # Skip this account
+                continue
+            }
+        }
+
+        Write-Log $signOutMsg
+        AwaitAction ($account.SignOutAsync($ClientId))
+    }
+}
+
+<#
+.SYNOPSIS
     Collect Microsoft Office Outlook related configuration & traces
 .DESCRIPTION
     This will collect different kinds of traces & log files depending on the value specified in the "Component" parameter.
@@ -5957,7 +6054,8 @@ function Collect-OutlookInfo {
         # Number of seconds used to detect a hung window when "HungDump" is requested in Component.
         [ValidateRange(1, [int]::MaxValue)]
         [int]$HungTimeoutSecond = 5,
-        [string]$HungMonitorTarget = 'Outlook' # This is just for testing.
+        [string]$HungMonitorTarget = 'Outlook', # This is just for testing.
+        [switch]$WamSignOut
     )
 
     # Explicitly check admin rights depending on the request.
@@ -6069,6 +6167,11 @@ function Collect-OutlookInfo {
         else {
             $PSDefaultParameterValues['Start-*Trace:MaxFileSizeMB'] = 2048
         }
+    }
+
+    # Sign out of all WAM accounts.
+    if ($WamSignOut) {
+        Invoke-WamSignOut -Force 2>&1 | Write-Log
     }
 
     Write-Log "Starting traces"
@@ -6587,4 +6690,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-MicrosoftUpdate, Save-MicrosoftUpdate, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Start-SavingOfficeModuleInfo, Stop-SavingOfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Collect-OutlookInfo
