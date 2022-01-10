@@ -148,7 +148,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | Configuration | OS config, Registry, Event logs, Proxy settings, etc.                                                          |
 | Outlook       | Outlook's ETW                                                                                                  |
 | Netsh         | Netsh ETW                                                                                                      |
-| PSR           | Probelem Steps Recorder                                                                                        |
+| PSR           | Problem Steps Recorder                                                                                         |
 | WAM           | WAM (Web Account Manager) ETW                                                                                  |
 | Fiddler       | [Fiddler](https://www.telerik.com/fiddler/fiddlercap) trace (Fiddler trace must be manually started & stopped) |
 | Procmon       | [Process monitor](https://docs.microsoft.com/en-us/sysinternals/downloads/procmon)                             |
@@ -157,7 +157,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | TCO           | TCO trace                                                                                                      |
 | Dump          | Outlook's process dump                                                                                         |
 | CrashDump     | Outlook's crash dump                                                                                           |
-| HungDump      | Outlook's hung dump (When a windows hung is detected, it generate a dump file)                                 |
+| HungDump      | Outlook's hung dump (When a window hung is detected, it generate a dump file)                                  |
 | WPR           | WPR (Windows Performance Recorder) ETW (OS must be Windows 10 or above)                                        |
 | WFP           | Windows Firewall diagnostic log                                                                                |
 | Performance   | Performance counter log (Process, Memory, LogicalDisk etc.)                                                    |
