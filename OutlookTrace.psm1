@@ -990,6 +990,13 @@ function Stop-Task {
     }
 }
 
+function Test-RunAsAdministrator {
+    [CmdletBinding()]
+    param()
+
+    ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]'Administrator')
+}
+
 function Compress-Folder {
     [CmdletBinding()]
     param(
@@ -1921,6 +1928,18 @@ function Save-EventLog {
         $Path
     )
 
+    # Need admin rights to archive event logs.
+    if (-not (Test-RunAsAdministrator)) {
+        Write-Error "Please run as administrator."
+        return
+    }
+
+    # If this command is run by itself (not from Collect-OutlookInfo), need to create a runspace pool.
+    if (-not $Script:runspacePool) {
+        Open-TaskRunspace
+        $runspaceOpened = $true
+    }
+
     if (-not (Test-Path $Path -ErrorAction Stop)) {
         New-Item -ItemType directory $Path | Out-Null
     }
@@ -1929,7 +1948,7 @@ function Save-EventLog {
     $logs = @(
         'Application'
         'System'
-        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client|WebAuth|CAPI2"
+        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client|WebAuth|CAPI2|AppLocker"
     )
 
     $tasks = @(
@@ -1948,6 +1967,10 @@ function Save-EventLog {
     )
 
     $tasks | Receive-Task -AutoRemoveTask
+
+    if ($local:runspaceOpened) {
+        Close-TaskRunspace
+    }
 }
 
 <#
@@ -3912,7 +3935,7 @@ function Start-Procmon {
     )
 
     # Explicitly check admin rights
-    if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    if (-not (Test-RunAsAdministrator)) {
         Write-Warning "Please run as administrator."
         return
     }
@@ -6075,7 +6098,7 @@ function Collect-OutlookInfo {
 
     # Explicitly check admin rights depending on the request.
     if ($Component -contains 'Outlook' -or $Component -contains 'Netsh' -or $Component -contains 'CAPI' -or $Component -contains 'LDAP' -or $Component -contains 'WAM' -or $Component -contains 'WPR') {
-        if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+        if (-not (Test-RunAsAdministrator)) {
             Write-Warning "Please run as administrator."
             return
         }
