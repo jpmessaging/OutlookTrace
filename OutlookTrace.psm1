@@ -2938,8 +2938,6 @@ function Get-ProxyAutoConfig {
                 else {
                     Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $ec"
                 }
-
-                return
             }
         }
 
