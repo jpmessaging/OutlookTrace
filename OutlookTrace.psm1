@@ -2353,23 +2353,26 @@ function Save-OfficeRegistry {
     }
 
     $registryKeys = @(
-        "HKCU\Software\Microsoft\Exchange"
-        "HKCU\Software\Policies\Microsoft\Exchange"
-        "HKCU\Software\Microsoft\Office"
-        "HKCU\Software\Policies\Microsoft\Office"
-        "HKCU\Software\Wow6432Node\Microsoft\Office"
-        "HKCU\Software\Wow6432Node\Policies\Microsoft\Office"
-        "HKCU\SOFTWARE\Classes\Local Settings\Software\Microsoft\MSIPC"
-        "HKCU\Software\Policies"
-        "HKCU\Software\IM Providers"
-        "HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications"
-        "HKLM\Software\Microsoft\Office"
-        "HKLM\Software\Policies\Microsoft\Office"
-        "HKLM\Software\WOW6432Node\Microsoft\Office"
-        "HKLM\Software\WOW6432Node\Policies\Microsoft\Office"
+        # HKCU
+        'HKCU\Software\Microsoft\Exchange'
+        'HKCU\Software\Microsoft\Office'
+        'HKCU\Software\Wow6432Node\Microsoft\Office'
 
-        # This is WinInet proxy settings and maybe out of place, but I wanted to collect for now.
         'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+        'HKCU\SOFTWARE\Classes\Local Settings\Software\Microsoft\MSIPC'
+        'HKCU\Software\IM Providers'
+        'HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications'
+
+        # HKLM
+        'HKLM\Software\Microsoft\Office'
+        'HKLM\Software\WOW6432Node\Microsoft\Office'
+        'HKLM\Software\WOW6432Node\Policies\Microsoft\Office'
+
+        # Policies
+        'HKCU\Software\Policies'
+        'HKCU\Software\Wow6432Node\Policies'
+        'HKLM\Software\Policies'
+        'HKLM\Software\WOW6432Node\Policies'
     )
 
     $userRegRoot = Get-UserRegistryRoot $User -SkipRegistryPrefix
