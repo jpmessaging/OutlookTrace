@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-01-13'
+$Version = 'v2022-01-18'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -5700,7 +5700,7 @@ function Stop-PerfTrace {
 }
 
 <#
-Get processes and its user (only for Outlook.exe).
+Get processes and its user (only for Outlook.exe & Fiddler*).
 PowerShell 4's Get-Process has -IncludeUserName, but I'm using WMI here for now.
 #>
 function Save-Process {
@@ -5716,7 +5716,7 @@ function Save-Process {
 
     Write-Log "Saving Win32_Process"
     Get-WmiObject -Class Win32_Process | ForEach-Object {
-        if ($_.ProcessName -eq 'Outlook.exe') {
+        if ($_.ProcessName -eq 'Outlook.exe' -or $_.ProcessName -like 'Fiddler*.exe') {
             $owner = $_.GetOwner()
             $_ | Add-Member -MemberType NoteProperty -Name 'User' -Value "$($owner.Domain)\$($owner.User)"
         }
