@@ -2195,12 +2195,17 @@ function Resolve-User {
 
     $resolved = [PSCustomObject]@{
         Name = $account.ToString()
-        SID  = $sid.ToString()
+        Sid  = $sid.ToString()
     } | Add-Member -MemberType ScriptMethod -Name 'ToString' -Value { $this.Name } -Force -PassThru
 
     # Add to cache
-    $Script:ResolveCache.Add($resolved.Name, $resolved)
-    $Script:ResolveCache.Add($resolved.SID, $resolved)
+    if (-not $Script:ResolveCache.ContainsKey($resolved.Name)) {
+        $Script:ResolveCache.Add($resolved.Name, $resolved)
+    }
+
+    if (-not $Script:ResolveCache.ContainsKey($resolved.Sid)) {
+        $Script:ResolveCache.Add($resolved.Sid, $resolved)
+    }
 
     $resolved
 }
@@ -2262,7 +2267,7 @@ function Get-UserRegistryRoot {
 
     if ($User) {
         $resolvedUser = Resolve-User $User
-        $userRegRoot = "HKEY_USERS\$($resolvedUser.SID)"
+        $userRegRoot = "HKEY_USERS\$($resolvedUser.Sid)"
 
         if (-not ($userRegRoot -and (Test-Path "Registry::$userRegRoot"))) {
             Write-Error "Cannot find $userRegRoot."
@@ -2304,7 +2309,7 @@ function Get-UserProfilePath {
     }
 
     # Get the value of ProfileImagePath
-    $userProfile = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($resolvedUser.SID)\"
+    $userProfile = Get-ItemProperty "Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$($resolvedUser.Sid)\"
     $userProfile.ProfileImagePath
 }
 
@@ -3821,8 +3826,10 @@ function Stop-CapiTrace {
 function Start-FiddlerCap {
     [CmdletBinding()]
     param(
-        [parameter(Mandatory = $true)]
-        $Path
+        [Parameter(Mandatory = $true)]
+        $Path,
+        # Do not start FiddlerCap.exe, but ensure it's avaiable (download it if necessary).
+        [Switch]$CheckAvailabilityOnly
     )
 
     if (-not (Test-Path $Path -ErrorAction Stop)) {
@@ -3830,12 +3837,12 @@ function Start-FiddlerCap {
     }
 
     $Path = Resolve-Path $Path
-    $fiddlerPath = Join-Path $Path -ChildPath "FiddlerCap"
+    $fiddlerPath = Join-Path $Path -ChildPath 'FiddlerCap'
     $fiddlerExe = Join-Path $fiddlerPath -ChildPath 'FiddlerCap.exe'
 
     #  FiddlerCap is not available.
     if (-not (Test-Path $fiddlerExe)) {
-        $fiddlerCapUrl = "https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe"
+        $fiddlerCapUrl = 'https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe'
         $fiddlerSetupFile = Join-Path $Path -ChildPath 'FiddlerCapSetup.exe'
 
         # Check if FiddlerCapSetup.exe is already available locally; Otherwise download the setup file and extract it.
@@ -3894,6 +3901,11 @@ function Start-FiddlerCap {
                 $process.Dispose()
             }
         }
+    }
+
+    if ($CheckAvailabilityOnly) {
+        [PSCustomObject]@{ FiddlerPath = $fiddlerPath }
+        return
     }
 
     # Start FiddlerCap.exe
@@ -6126,6 +6138,8 @@ function Collect-OutlookInfo {
         return
     }
 
+    $currentUser = Resolve-User ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
+
     # If User is given, use it as the target user; Otherwise, use the logon user.
     if ($PSBoundParameters.ContainsKey('User')) {
         $targetUser = Resolve-User $User
@@ -6138,7 +6152,7 @@ function Collect-OutlookInfo {
         $logonUserError = $($targetUser = Get-LogonUser) 2>&1
         # If Get-LogonUser fails for some reason (e.g. Access Denied), fall back to current user
         if (-not $targetUser) {
-            $targetUser = Resolve-User ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
+            $targetUser = $currentUser
         }
     }
 
@@ -6174,10 +6188,10 @@ function Collect-OutlookInfo {
     Write-Log "Script Version: $Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString()))"
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
-    Write-Log "Running as $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
-    Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
-    Write-Log "Target user: $($targetUser.Name) ($($targetUser.SID))"
+    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)))"
+    Write-Log "Target user: $($targetUser.Name) ($($targetUser.Sid))"
     Write-Log $logonUserError
+    Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
 
     $sb = New-Object System.Text.StringBuilder
     foreach ($paramName in $PSBoundParameters.Keys) {
@@ -6290,10 +6304,17 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Fiddler') {
-            Start-FiddlerCap -Path $Path -ErrorAction Stop | Out-Null
-            $fiddlerCapStarted = $true
+            if ($targetUser.Sid -eq $currentUser.Sid) {
+                Start-FiddlerCap -Path $Path -ErrorAction Stop | Out-Null
+                Write-Warning "FiddlerCap has started. Please manually configure and start capture."
+            }
+            else {
+                # If target user is different from current user, don't start FiddlerCap because it won't be able to capture (WinInet proxy needs to be configured for the target user).
+                $fiddler = Start-FiddlerCap -Path $Path -ErrorAction Stop -CheckAvailabilityOnly
+                Write-Warning "Let the user ($($targetUser.Name)) start $($fiddler.FiddlerPath)." 
+            }
 
-            Write-Warning "FiddlerCap has started. Please manually configure and start capture."
+            $fiddlerCapStarted = $true
         }
 
         if ($Component -contains 'Netsh') {
