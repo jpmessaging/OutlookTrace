@@ -2767,7 +2767,13 @@ function Get-WinInetProxy {
         }
 
         $raw = $null
-        $raw = Get-ItemProperty $connectionsKey -Name $connection -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $connection
+        try {
+            # This line could throw a terminating error.
+            $raw = Get-ItemProperty $connectionsKey -Name $connection -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $connection
+        }
+        catch {
+            Write-Error "Get-ItemProperty failed for a connection, $connection. $_" -Exception $_.Exception
+        }
 
         if (-not $raw) {
             continue
