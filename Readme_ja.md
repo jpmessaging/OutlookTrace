@@ -54,6 +54,8 @@ Fiddler トレースや Process Monitor ログも含めて採取する場合に�
 
     ※ 採取するコンポーネントに Fiddler を含めた場合、[FiddlerCap Web Recorder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
 
+    \* スクリプト実行ユーザーと、情報採取対象ユーザーが異なる場合には FiddlerCap は自動的に開始されません。情報採取対象ユーザーが FiddlerCap.exe を開始する必要があります。
+
     <details>
         <summary>Fiddler 開始方法</summary>
 
