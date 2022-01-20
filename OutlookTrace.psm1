@@ -2371,7 +2371,6 @@ function Save-OfficeRegistry {
         # HKLM
         'HKLM\Software\Microsoft\Office'
         'HKLM\Software\WOW6432Node\Microsoft\Office'
-        'HKLM\Software\WOW6432Node\Policies\Microsoft\Office'
 
         # Policies
         'HKCU\Software\Policies'
