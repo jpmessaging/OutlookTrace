@@ -4694,6 +4694,57 @@ function Remove-WerDumpKey {
     }
 }
 
+function Enable-PageHeap {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProcessName
+    )
+
+    if (-not (Test-RunAsAdministrator)) {
+        Write-Error "Please run as administrator"
+        return
+    }
+
+    Disable-PageHeap -ProcessName $ProcessName
+
+    $IFEO = 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
+    $imageKeyPath = Join-Path $IFEO $ProcessName
+    
+    if (-not (Test-Path $imageKeyPath)) {
+        New-Item $IFEO -Name $ProcessName | Out-Null
+    }
+
+    foreach ($kvp in @(@{Name = 'GlobalFlag'; Value = 0x2000000 }, @{Name = 'PageHeapFlags'; Value = 3 })) {
+        New-ItemProperty $imageKeyPath -Name $kvp.Name -Value $kvp.Value | Out-Null
+    }
+}
+
+function Disable-PageHeap {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ProcessName
+    )
+
+    if (-not (Test-RunAsAdministrator)) {
+        Write-Error "Please run as administrator"
+        return
+    }
+
+    $IFEO = 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
+    $imageKeyPath = Join-Path $IFEO $ProcessName
+    
+    if (-not (Test-Path $imageKeyPath)) {
+        # There's nothing to do.
+        return
+    }
+
+    foreach ($name in @('GlobalFlag', 'PageHeapFlags')) {
+        Remove-ItemProperty $imageKeyPath -Name $name -ErrorAction SilentlyContinue
+    }
+}
+
 function Start-WfpTrace {
     [CmdletBinding()]
     param(
@@ -6117,7 +6168,8 @@ function Collect-OutlookInfo {
         [ValidateRange(1, [int]::MaxValue)]
         [int]$HungTimeoutSecond = 5,
         [string]$HungMonitorTarget = 'Outlook', # This is just for testing.
-        [switch]$WamSignOut
+        [switch]$WamSignOut,
+        [switch]$EnablePageHeap
     )
 
     $runAsAdmin = $false
@@ -6126,7 +6178,7 @@ function Collect-OutlookInfo {
     }
 
     # Explicitly check admin rights depending on the request.
-    if ($Component -contains 'Outlook' -or $Component -contains 'Netsh' -or $Component -contains 'CAPI' -or $Component -contains 'LDAP' -or $Component -contains 'WAM' -or $Component -contains 'WPR' -or $Component -contains 'CrashDump') {
+    if ($Component -contains 'Outlook' -or $Component -contains 'Netsh' -or $Component -contains 'CAPI' -or $Component -contains 'LDAP' -or $Component -contains 'WAM' -or $Component -contains 'WPR' -or $Component -contains 'CrashDump' -or $EnablePageHeap) {
         if (-not $runAsAdmin) {
             Write-Warning "Please run as administrator."
             return
@@ -6241,6 +6293,12 @@ function Collect-OutlookInfo {
     # Sign out of all WAM accounts.
     if ($WamSignOut) {
         Invoke-WamSignOut -Force 2>&1 | Write-Log
+    }
+
+    # Enable PageHeap for outlook.exe
+    if ($EnablePageHeap) {
+        Enable-PageHeap -ProcessName 'outlook.exe' 2>&1 | Write-Log
+        Write-Log "Page Heap is enabled for outlook.exe."
     }
 
     Write-Log "Starting traces"
@@ -6723,6 +6781,11 @@ function Collect-OutlookInfo {
             }
         }
 
+        if ($EnablePageHeap) {
+            Disable-PageHeap -ProcessName 'outlook.exe'
+            Write-Log "Page Heap disabled."
+        }
+
         Close-TaskRunspace
         Close-Log
     }
@@ -6766,4 +6829,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Collect-OutlookInfo
