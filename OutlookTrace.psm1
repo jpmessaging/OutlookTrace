@@ -1899,7 +1899,7 @@ function Stop-PSR {
     Write-Log 'Stopping PSR'
     $stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru
 
-    Wait-Process -InputObject $currentInstance
+    $(Wait-Process -InputObject $currentInstance) 2>&1 | Write-Log
 
     # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hung.
     # The existing instance is supposed to signal an event and 'psr /stop' instance is waiting for this event to be signaled. But it seems this does not happen when there were no clicks.
@@ -4592,6 +4592,12 @@ function Add-WerDumpKey {
         $Path # Folder to save dump files
     )
 
+    # Need admin rights to modify HKLM registry values.
+    if (-not (Test-RunAsAdministrator)) {
+        Write-Error "Please run as administrator"
+        return
+    }
+
     if (-not (Test-Path $Path)) {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
@@ -6114,9 +6120,14 @@ function Collect-OutlookInfo {
         [switch]$WamSignOut
     )
 
+    $runAsAdmin = $false
+    if (Test-RunAsAdministrator) {
+        $runAsAdmin = $true
+    }
+
     # Explicitly check admin rights depending on the request.
-    if ($Component -contains 'Outlook' -or $Component -contains 'Netsh' -or $Component -contains 'CAPI' -or $Component -contains 'LDAP' -or $Component -contains 'WAM' -or $Component -contains 'WPR') {
-        if (-not (Test-RunAsAdministrator)) {
+    if ($Component -contains 'Outlook' -or $Component -contains 'Netsh' -or $Component -contains 'CAPI' -or $Component -contains 'LDAP' -or $Component -contains 'WAM' -or $Component -contains 'WPR' -or $Component -contains 'CrashDump') {
+        if (-not $runAsAdmin) {
             Write-Warning "Please run as administrator."
             return
         }
@@ -6193,7 +6204,7 @@ function Collect-OutlookInfo {
     Write-Log "Script Version: $Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString()))"
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
-    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)))"
+    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid))); RunningAsAdmin: $runAsAdmin"
     Write-Log "Target user: $($targetUser.Name) ($($targetUser.Sid))"
     Write-Log $logonUserError
     Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
