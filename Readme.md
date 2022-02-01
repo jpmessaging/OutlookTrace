@@ -2,7 +2,7 @@
 
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2022-01-19/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2022-02-01/OutlookTrace.psm1)
 
 ## How to use
 
@@ -142,6 +142,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | HungTimeoutSecond     | Number of seconds used to detect a hung window when `HungDump` is requested in Component.                                                           |
 | HungMonitorTarget     | Name of the target process to monitor a hung window (Default: `Outlook`)                                                                            |
 | WamSignOut            | Switch to sign out all WAM (Web Account Manager) accounts                                                                                           |
+| EnablePageHeap        | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                                |
 
 ### Possible values for `Component` parameter
 
