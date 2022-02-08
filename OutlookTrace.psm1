@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-02-01'
+$Version = 'v2022-02-07'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -4648,6 +4648,9 @@ function Add-WerDumpKey {
             Rename-Item $installedKey -NewName '_Installed'
         }
     }
+
+    Write-Log "Temporarily disabling dwwin."
+    Disable-DWWin 2>&1 | Write-Log
 }
 
 function Remove-WerDumpKey {
@@ -4692,6 +4695,38 @@ function Remove-WerDumpKey {
             Rename-Item $installedKey -NewName 'Installed'
         }
     }
+
+    Write-Log "Re-enabling dwwin"
+    Enable-DWWin 2>&1 | Write-Log
+}
+
+<#
+Prevent dwwin.exe from lauching by adding a fake Debugger key in Image File Execution Options.
+#>
+function Disable-DWWin {
+    [CmdletBinding()]
+    param()
+
+    $IFEO = 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
+    $dwwin = 'dwwin.exe'
+    $imageKeyPath = Join-Path $IFEO $dwwin
+
+    if (-not (Test-Path $imageKeyPath)) {
+        New-Item $IFEO -Name $dwwin | Out-Null
+    }
+
+    New-ItemProperty $imageKeyPath -Name 'Debugger' -Value ([Guid]::NewGuid().ToString()) | Out-Null
+}
+
+function Enable-DWWin {
+    [CmdletBinding()]
+    param()
+
+    $IFEO = 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
+    $dwwin = 'dwwin.exe'
+    $imageKeyPath = Join-Path $IFEO $dwwin
+
+    Remove-Item $imageKeyPath 
 }
 
 function Enable-PageHeap {
