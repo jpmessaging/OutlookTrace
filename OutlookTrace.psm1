@@ -2364,9 +2364,10 @@ function Save-OfficeRegistry {
         'HKCU\Software\Wow6432Node\Microsoft\Office'
 
         'HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
-        'HKCU\SOFTWARE\Classes\Local Settings\Software\Microsoft\MSIPC'
+        'HKCU\Software\Classes\Local Settings\Software\Microsoft\MSIPC'
         'HKCU\Software\IM Providers'
         'HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications'
+        'HKCU\Software\Microsoft\AuthN' # for Alternate Login ID. https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/configuring-alternate-login-id
 
         # HKLM
         'HKLM\Software\Microsoft\Office'
@@ -4726,7 +4727,7 @@ function Enable-DWWin {
     $dwwin = 'dwwin.exe'
     $imageKeyPath = Join-Path $IFEO $dwwin
 
-    Remove-Item $imageKeyPath 
+    Remove-Item $imageKeyPath
 }
 
 function Enable-PageHeap {
@@ -4745,7 +4746,7 @@ function Enable-PageHeap {
 
     $IFEO = 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
     $imageKeyPath = Join-Path $IFEO $ProcessName
-    
+
     if (-not (Test-Path $imageKeyPath)) {
         New-Item $IFEO -Name $ProcessName | Out-Null
     }
@@ -4769,7 +4770,7 @@ function Disable-PageHeap {
 
     $IFEO = 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
     $imageKeyPath = Join-Path $IFEO $ProcessName
-    
+
     if (-not (Test-Path $imageKeyPath)) {
         # There's nothing to do.
         return
@@ -6158,6 +6159,83 @@ function Invoke-WamSignOut {
 
 <#
 .SYNOPSIS
+Helper command to recursively get registry key and its values.
+
+.DESCRIPTION
+Output object has the following properties:
+
+- "KeyName"
+- "Properties": PSCustomObject that contains key's properties (i.e. key values)
+- Sub keys
+
+Each subkey becomes a property.
+e.g. For the following 'Outlook' key,
+
+Outlook
+    |- Profiles
+
+The output object will have a property called "Profiles".
+#>
+function Get-RegistryChildItem {
+    [CmdletBinding()]
+    param(
+        # Registry path
+        [string]$Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        Write-Error "Cannot find $Path."
+        return
+    }
+
+    # Stack contains a hash table with "Parent" of type PSCustomObject and "Key" of type Microsoft.Win32.RegistryKey
+    $stack = New-Object System.Collections.Generic.Stack[object]
+    $stack.Push(@{Parent = $null; Key = (Get-Item $Path) })
+    $root = $null
+
+    while ($stack.Count -gt 0) {
+        $node = $stack.Pop()
+        $key = $node.Key
+        $parent = $node.Parent
+
+        $obj = [PSCustomObject]@{
+            KeyName    = $key.PSChildName
+            Properties = $key | Get-ItemProperty
+        }
+
+        # Connect to its parent if exits; otherwise this is the root.
+        if ($parent) {
+            $(Add-Member -InputObject $parent -MemberType NoteProperty -Name $obj.KeyName -Value $obj) 2>&1 | Write-Log
+        }
+        else {
+            $root = $obj
+        }
+
+        # Add child nodes with parent being the current object
+        foreach ($child in @(Get-ChildItem $key.PSPath)) {
+            $stack.Push(@{Parent = $obj; Key = $child })
+        }
+
+        $key.Dispose()
+    }
+
+    $root
+}
+
+function Get-OfficeIdentity {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [string]$User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+    $identityPath = Join-Path $userRegRoot 'SOFTWARE\Microsoft\Office\16.0\Common\Identity'
+
+    Get-RegistryChildItem $identityPath
+}
+
+<#
+.SYNOPSIS
     Collect Microsoft Office Outlook related configuration & traces
 .DESCRIPTION
     This will collect different kinds of traces & log files depending on the value specified in the "Component" parameter.
@@ -6293,7 +6371,7 @@ function Collect-OutlookInfo {
     Write-Log "Script Version: $Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString()))"
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
-    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid))); RunningAsAdmin: $runAsAdmin"
+    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin: $runAsAdmin"
     Write-Log "Target user: $($targetUser.Name) ($($targetUser.Sid))"
     Write-Log $logonUserError
     Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
@@ -6371,17 +6449,23 @@ function Collect-OutlookInfo {
             Write-Log "Starting officeRegistryTask."
             $officeRegistryTask = Start-Task { param($path, $user) Save-OfficeRegistry -Path $path -User $user } -ArgumentList $RegistryDir, $targetUser
 
-            Write-Log "Starting oSConfigurationTask."
-            $oSConfigurationTask = Start-Task { param($path) Save-OSConfiguration -Path $path } -ArgumentList $OSDir
+            Write-Log "Starting officeIdentityTask."
+            $officeIdentityTask = Start-Task { param($path, $user) Get-OfficeIdentity -User $user | Export-CliXml (Join-Path $path 'OfficeIdentity') } -ArgumentList $OfficeDir, $targetUser
+
+            Write-Log "Starting osConfigurationTask."
+            $osConfigurationTask = Start-Task { param($path) Save-OSConfiguration -Path $path } -ArgumentList $OSDir
+
             Run-Command { param($user) Get-WinInetProxy -User $user } -ArgumentList $targetUser -Path $OSDir
             Run-Command { param($user) Get-ProxyAutoConfig -User $user } -ArgumentList $targetUser -Path $OSDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 40
+
             Run-Command { Get-OfficeInfo } -Path $OfficeDir
             Run-Command { param($user) Get-OutlookProfile -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { param($user) Get-OutlookAddin -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { Get-ClickToRunConfiguration } -Path $OfficeDir
             Run-Command { param($user) Get-IMProvider -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            # Run-Command { param($user) Get-OfficeIdentity -User $user } -ArgumentList $targetUser -Path $OfficeDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 60
             Run-Command { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
@@ -6422,7 +6506,7 @@ function Collect-OutlookInfo {
             else {
                 # If target user is different from current user, don't start FiddlerCap because it won't be able to capture (WinInet proxy needs to be configured for the target user).
                 $fiddler = Start-FiddlerCap -Path $Path -ErrorAction Stop -CheckAvailabilityOnly
-                Write-Warning "Let the user ($($targetUser.Name)) start $($fiddler.FiddlerPath)." 
+                Write-Warning "Let the user ($($targetUser.Name)) start $($fiddler.FiddlerPath)."
             }
 
             $fiddlerCapStarted = $true
@@ -6768,11 +6852,11 @@ function Collect-OutlookInfo {
             Run-Command { param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user } -ArgumentList $targetUser, $MSIPCDir
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
 
-            if ($oSConfigurationTask) {
+            if ($osConfigurationTask) {
                 Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -PercentComplete -1
-                $($oSConfigurationTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
+                $($osConfigurationTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
                 Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -Completed
-                Write-Log "oSConfigurationTask is complete."
+                Write-Log "osConfigurationTask is complete."
             }
 
             if ($officeRegistryTask) {
@@ -6780,6 +6864,11 @@ function Collect-OutlookInfo {
                 $($officeRegistryTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
                 Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -Completed
                 Write-Log "officeRegistryTask is complete."
+            }
+
+            if ($officeIdentityTask) {
+                $($officeIdentityTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
+                Write-Log "officeIdentityTask is complete"
             }
 
             if ($networkInfoTask) {
@@ -6866,4 +6955,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Collect-OutlookInfo
