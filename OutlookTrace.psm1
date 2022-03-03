@@ -6180,7 +6180,8 @@ function Get-RegistryChildItem {
     [CmdletBinding()]
     param(
         # Registry path
-        [string]$Path
+        [string]$Path,
+        [switch]$IncludeRawItemProperty
     )
 
     if (-not (Test-Path $Path)) {
@@ -6198,14 +6199,32 @@ function Get-RegistryChildItem {
         $key = $node.Key
         $parent = $node.Parent
 
+        if ($IncludeRawItemProperty) {
+            $props = $key | Get-ItemProperty
+        }
+        else {
+            $hash = [ordered]@{}
+
+            foreach ($name in ($key.GetValueNames() | Sort-Object)) {
+                if ($name) {
+                    $hash.Add($name, $key.GetValue($name))
+                }
+                else {
+                    $hash.Add('(default)', $key.GetValue($name))
+                }
+            }
+
+            $props = [PSCustomObject]$hash
+        }
+
         $obj = [PSCustomObject]@{
-            KeyName    = $key.PSChildName
-            Properties = $key | Get-ItemProperty
+            # KeyName    = $key.PSChildName
+            Properties = $props
         }
 
         # Connect to its parent if exits; otherwise this is the root.
         if ($parent) {
-            $(Add-Member -InputObject $parent -MemberType NoteProperty -Name $obj.KeyName -Value $obj) 2>&1 | Write-Log
+            $(Add-Member -InputObject $parent -MemberType NoteProperty -Name $key.PSChildName -Value $obj) 2>&1 | Write-Log
         }
         else {
             $root = $obj
@@ -6232,6 +6251,37 @@ function Get-OfficeIdentity {
     $identityPath = Join-Path $userRegRoot 'SOFTWARE\Microsoft\Office\16.0\Common\Identity'
 
     Get-RegistryChildItem $identityPath
+}
+
+<#
+.SYNOPSIS
+Get Alternate ID support configuration.
+https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/configuring-alternate-login-id#step-3-configure-registry-for-impacted-users-using-group-policy
+#>
+function Get-AlternateId {
+    [CmdletBinding()]
+    param(
+        [string]$User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot $User
+
+    $authNPath = Join-Path $userRegRoot 'Software\Microsoft\AuthN'
+    $domainHint = Get-ItemProperty $authNPath -Name 'DomainHint' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DomainHint'
+
+    $identityPath = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity'
+    $enableAlternateIdSupport = Get-ItemProperty $identityPath -Name 'EnableAlternateIdSupport' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'EnableAlternateIdSupport'
+
+    if ($domainHint) {
+        $domainZonePath = Join-Path $userRegRoot "Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\Domains\$domainHint"
+        $domainZone = Get-RegistryChildItem $domainZonePath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'Properties'
+    }
+
+    [PSCustomObject]@{
+        DomainHint                 = $domainHint
+        EnableAlternateIdSupport   = $enableAlternateIdSupport
+        InternetSettingsDomainZone = $domainZone
+    }
 }
 
 <#
@@ -6386,8 +6436,8 @@ function Collect-OutlookInfo {
     Write-Log "Parameters $($sb.ToString())"
 
     # To use Start-Task, make sure to open runspaces first and close it when finished.
-    # Currently MaxRunspaces is 7 or more because there are 7 tasks at most. 3 of them, outlookMonitorTask, psrTask, and hungMonitorTask are long running.
-    Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(7, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
+    # Currently MaxRunspaces is 8 or more because there are 7 tasks at most. 3 of them, outlookMonitorTask, psrTask, and hungMonitorTask are long running.
+    Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(8, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
     # Open-TaskRunspace -Variables (Get-Variable 'logWriter')
 
     # Configure log file mode and max file size for ETW traces (OutlookTrace, WAM, LDAP, and CAPI)
@@ -6450,7 +6500,7 @@ function Collect-OutlookInfo {
             $officeRegistryTask = Start-Task { param($path, $user) Save-OfficeRegistry -Path $path -User $user } -ArgumentList $RegistryDir, $targetUser
 
             Write-Log "Starting officeIdentityTask."
-            $officeIdentityTask = Start-Task { param($path, $user) Get-OfficeIdentity -User $user | Export-CliXml (Join-Path $path 'OfficeIdentity') } -ArgumentList $OfficeDir, $targetUser
+            $officeIdentityTask = Start-Task { param($path, $user) Get-OfficeIdentity -User $user | Export-CliXml (Join-Path $path 'OfficeIdentity.xml') } -ArgumentList $OfficeDir, $targetUser
 
             Write-Log "Starting osConfigurationTask."
             $osConfigurationTask = Start-Task { param($path) Save-OSConfiguration -Path $path } -ArgumentList $OSDir
@@ -6465,7 +6515,7 @@ function Collect-OutlookInfo {
             Run-Command { param($user) Get-OutlookAddin -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { Get-ClickToRunConfiguration } -Path $OfficeDir
             Run-Command { param($user) Get-IMProvider -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            # Run-Command { param($user) Get-OfficeIdentity -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Run-Command { param($user) Get-AlternateId -User $user } -ArgumentList $targetUser -Path $OfficeDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 60
             Run-Command { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
@@ -6955,4 +7005,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Collect-OutlookInfo
