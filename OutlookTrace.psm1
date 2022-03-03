@@ -6284,6 +6284,63 @@ function Get-AlternateId {
     }
 }
 
+function Get-UseOnlineContent {
+    [CmdletBinding()]
+    param (
+        [string]$User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot $User
+
+    foreach ($path in @('Software\Microsoft\Office\16.0\Common\Internet', 'Software\Policies\Microsoft\office\16.0\common\Internet')) {
+        $path = Join-Path $userRegRoot $path
+        $prop = Get-ItemProperty (Join-Path $userRegRoot $path) -Name 'UseOnlineContent' -ErrorAction SilentlyContinue
+
+        if ($path -match 'Registry::(.*)') {
+            $shortPath = $Matches[1]
+        }
+
+        [PSCustomObject]@{
+            Path             = $shortPath
+            UseOnlineContent = $prop.UseOnlineContent
+        }
+    }
+}
+
+function Get-AutodiscoverConfig {
+    [CmdletBinding()]
+    param (
+        [string]$User
+    )
+
+    $officeInfo = Get-OfficeInfo
+    $major = $officeInfo.Version.Split('.')[0] -as [int]
+
+    $userRegRoot = Get-UserRegistryRoot $User
+    $valueNames = @('Exclude*', 'Prefer*')
+
+    foreach ($path in @("Software\Microsoft\Office\$major.0\Outlook\AutoDiscover", "Software\Policies\Microsoft\Office\$major.0\Outlook\AutoDiscover")) {
+        $path = Join-Path $userRegRoot $path
+        $props = Get-ItemProperty $path -Name $valueNames -ErrorAction SilentlyContinue
+
+        if (-not $props) {
+            continue
+        }
+
+        if ($path -match 'Registry::(.*)') {
+            $shortPath = $Matches[1]
+        }
+
+        $hash = @{ Path = $shortPath }
+
+        foreach ($name in (Get-Member -InputObject $props -MemberType NoteProperty -Name $valueNames | Select-Object -ExpandProperty 'Name')) {
+            $hash.Add($name, $props.$name)
+        }
+
+        [PSCustomObject]$hash
+    }
+}
+
 <#
 .SYNOPSIS
     Collect Microsoft Office Outlook related configuration & traces
@@ -6513,9 +6570,11 @@ function Collect-OutlookInfo {
             Run-Command { Get-OfficeInfo } -Path $OfficeDir
             Run-Command { param($user) Get-OutlookProfile -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { param($user) Get-OutlookAddin -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Run-Command { param($user) Get-AutodiscoverConfig -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { Get-ClickToRunConfiguration } -Path $OfficeDir
             Run-Command { param($user) Get-IMProvider -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { param($user) Get-AlternateId -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Run-Command { param($user) Get-UseOnlineContent -User $user } -ArgumentList $targetUser -Path $OfficeDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 60
             Run-Command { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
@@ -7005,4 +7064,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Collect-OutlookInfo
