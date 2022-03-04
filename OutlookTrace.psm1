@@ -3910,7 +3910,7 @@ function Start-FiddlerCap {
     }
 
     if ($CheckAvailabilityOnly) {
-        [PSCustomObject]@{ FiddlerPath = $fiddlerPath }
+        [PSCustomObject]@{ FiddlerPath = $fiddlerExe }
         return
     }
 
