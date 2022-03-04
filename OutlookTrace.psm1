@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-03-02'
+$Version = 'v2022-03-03'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -3296,6 +3296,11 @@ function Get-CachedAutodiscoverLocation {
 
     # ForcePSTPath if any
     $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
     $officeInfo = Get-OfficeInfo -ErrorAction Stop
     $ver = ($officeInfo.Version.Split('.')[0] -as [int]).ToString('00.0')
 
@@ -5489,6 +5494,10 @@ function ConvertTo-CLSID {
 
         $userRegRoot = Get-UserRegistryRoot -User $User
 
+        if (-not $userRegRoot) {
+            return
+        }
+
         $locations = @(
             # ClickToRun Registry & the user's Classes
             "Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\"
@@ -5978,6 +5987,11 @@ function Get-IMProvider {
     )
 
     $root = Get-UserRegistryRoot $User
+
+    if (-not $root) {
+        return
+    }
+
     $defaultIMApp = Get-ItemProperty (Join-Path $root 'SOFTWARE\IM Providers') -Name 'DefaultIMApp' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultIMApp'
     if (-not $defaultIMApp) {
         Write-Error "Failed to get DefaultIMApp."
@@ -6248,6 +6262,11 @@ function Get-OfficeIdentity {
     )
 
     $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
     $identityPath = Join-Path $userRegRoot 'SOFTWARE\Microsoft\Office\16.0\Common\Identity'
 
     Get-RegistryChildItem $identityPath
@@ -6265,6 +6284,10 @@ function Get-AlternateId {
     )
 
     $userRegRoot = Get-UserRegistryRoot $User
+
+    if (-not $userRegRoot) {
+        return
+    }
 
     $authNPath = Join-Path $userRegRoot 'Software\Microsoft\AuthN'
     $domainHint = Get-ItemProperty $authNPath -Name 'DomainHint' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DomainHint'
@@ -6292,6 +6315,10 @@ function Get-UseOnlineContent {
 
     $userRegRoot = Get-UserRegistryRoot $User
 
+    if (-not $userRegRoot) {
+        return
+    }
+
     foreach ($path in @('Software\Microsoft\Office\16.0\Common\Internet', 'Software\Policies\Microsoft\office\16.0\common\Internet')) {
         $path = Join-Path $userRegRoot $path
         $prop = Get-ItemProperty (Join-Path $userRegRoot $path) -Name 'UseOnlineContent' -ErrorAction SilentlyContinue
@@ -6313,10 +6340,15 @@ function Get-AutodiscoverConfig {
         [string]$User
     )
 
+    $userRegRoot = Get-UserRegistryRoot $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
     $officeInfo = Get-OfficeInfo
     $major = $officeInfo.Version.Split('.')[0] -as [int]
 
-    $userRegRoot = Get-UserRegistryRoot $User
     $valueNames = @('Exclude*', 'Prefer*')
 
     foreach ($path in @("Software\Microsoft\Office\$major.0\Outlook\AutoDiscover", "Software\Policies\Microsoft\Office\$major.0\Outlook\AutoDiscover")) {
