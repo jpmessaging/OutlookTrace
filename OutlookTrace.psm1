@@ -3385,6 +3385,65 @@ function Remove-CachedAutodiscover {
     }
 }
 
+<#
+.SYNOPSIS
+Save cached Outlook/OPX config json files
+#>
+function Save-CachedOutlookConfig {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        # Where to save
+        $Path,
+        # Target user name
+        [string]$User
+    )
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
+
+    $Path = Resolve-Path $Path
+    $sourcePath = $null
+
+    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
+        $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
+    }
+
+    if (-not $sourcePath) {
+        Write-Error "Cannot find LocalAppData for $User."
+        return
+    }
+
+    # Get OutlookConfig & OPX json files and copy them to Path
+    try {
+        if (Test-Path $sourcePath) {
+            Get-ChildItem $sourcePath -Filter '*Config*.json' -Force -Recurse | Copy-Item -Destination $Path
+        }
+    }
+    catch {
+        # Just in case Copy-Item throws a terminating error.
+        Write-Error -ErrorRecord $_
+    }
+
+    # Remove Hidden attribute
+    foreach ($file in @(Get-ChildItem $Path -Force)) {
+        if ((Get-ItemProperty $file.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
+            try {
+                # Unfortunately, this does not work before PowerShellV5.
+                (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
+                continue
+            }
+            catch {
+                # ignore error
+            }
+
+            # This could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
+            Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
+        }
+    }
+}
+
 function Start-LdapTrace {
     [CmdletBinding(PositionalBinding = $false)]
     param(
@@ -6610,6 +6669,7 @@ function Collect-OutlookInfo {
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 60
             Run-Command { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
+            Run-Command { param($user, $OfficeDir) Save-CachedOutlookConfig -User $user -Path $(Join-Path $OfficeDir 'Cached OutlookConfig') } -ArgumentList $targetUser, $OfficeDir
             Run-Command { param($user, $OfficeDir) Save-DLP -User $user -Path $(Join-Path $OfficeDir 'DLP') } -ArgumentList $targetUser, $OfficeDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 80
@@ -7096,4 +7156,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Collect-OutlookInfo
