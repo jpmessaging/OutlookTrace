@@ -3444,6 +3444,27 @@ function Save-CachedOutlookConfig {
     }
 }
 
+<#
+.SYNOPSIS
+Remove cached OutlookConfig/OPX json files
+#>
+function Remove-CachedOutlookConfig {
+    [CmdletBinding()]
+    param(
+        # Target user name
+        [string]$User
+    )
+
+    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
+        $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
+    }
+    else {
+        Write-Error "Cannot find LocalAppData for $User."
+    }
+
+    Get-ChildItem -LiteralPath $sourcePath -Filter '*Config*.json' -Force -Recurse | ForEach-Object { Remove-Item $_.FullName -Force }
+}
+
 function Start-LdapTrace {
     [CmdletBinding(PositionalBinding = $false)]
     param(
@@ -5051,7 +5072,7 @@ function Save-HungDump {
                 Write-Log "Saved dump file: $($dumpResult.DumpFile)"
 
                 if ($savedDumpCount -ge $DumpCount) {
-                    Write-Log "Dump count reached $DumpCount. Existing."
+                    Write-Log "Dump count reached $DumpCount. Exiting."
                     break
                 }
 
@@ -6636,8 +6657,8 @@ function Collect-OutlookInfo {
             # $msinfo32Task = Start-Task -Command 'Save-MSInfo32' -Parameters @{Path = $OSDir}
 
             Write-Log "Starting officeModuleInfoTask."
-            $cts = New-Object System.Threading.CancellationTokenSource
-            $officeModuleInfoTask = Start-Task { param($path, $token) Save-OfficeModuleInfo -Path $path -CancellationToken $token } -ArgumentList $OfficeDir, $cts.Token
+            $officeModuleInfoTaskCts = New-Object System.Threading.CancellationTokenSource
+            $officeModuleInfoTask = Start-Task { param($path, $token) Save-OfficeModuleInfo -Path $path -CancellationToken $token } -ArgumentList $OfficeDir, $officeModuleInfoTaskCts.Token
 
             Write-Log "Starting networkInfoTask."
             $networkInfoTask = Start-Task { param($path) Save-NetworkInfo -Path $path } -ArgumentList $NetworkDir
@@ -7088,7 +7109,7 @@ function Collect-OutlookInfo {
                 }
                 else {
                     Write-Log "officeModuleInfoTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled."
-                    $cts.Cancel()
+                    $officeModuleInfoTaskCts.Cancel()
                 }
 
                 $($officeModuleInfoTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
@@ -7156,4 +7177,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Collect-OutlookInfo
