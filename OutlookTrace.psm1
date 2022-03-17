@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-03-10'
+$Version = 'v2022-03-16'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -4988,10 +4988,37 @@ function Save-Dump {
     if ($wow64) {
         $ps32 = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
         $command = "& {Import-Module '$Script:MyModulePath' -DisableNameChecking; Save-Dump -Path '$Path' -ProcessId $ProcessId -SkipWow64Check}"
-        Write-Log "Invoking $ps32 -c `"$command`""
-        $errs = $($result = & $ps32 -NoProfile -WindowStyle Hidden -OutputFormat XML -c $command) 2>&1
-        $result
-        $errs | ForEach-Object { Write-Error -ErrorRecord $_ }
+        Write-Log "Invoking $ps32 -NoLogo -NoProfile -OutputFormat XML -ExecutionPolicy Unrestricted -Command '$command'"
+
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $ps32
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.UseShellExecute = $false
+        $startInfo.Arguments = "-NoLogo -NoProfile -OutputFormat XML -ExecutionPolicy Unrestricted -Command `"$command`""
+        $startInfo.CreateNoWindow = $true
+
+        $psProcess = $null
+
+        try {
+            $psProcess = New-Object System.Diagnostics.Process
+            $psProcess.StartInfo = $startInfo
+            $psProcess.Start() | Out-Null
+
+            $psProcess.WaitForExit()
+            $stdOut = $psProcess.StandardOutput.ReadToEnd()
+
+            if ($stdOut) {
+                $saveDumpOutput = Join-Path $Path 'saveDumpOutput.xml'
+                [IO.File]::AppendAllText($saveDumpOutput, $stdOut)
+                Import-Clixml $saveDumpOutput
+                Remove-Item $saveDumpOutput -Force
+            }
+        }
+        finally {
+            if ($psProcess) {
+                $psProcess.Dispose()
+            }
+        }
     }
     else {
         $dumpFile = Join-Path $Path "$($process.Name)_$(Get-Date -Format 'yyyy-MM-dd-HHmmss').dmp"
@@ -5032,8 +5059,9 @@ function Save-HungDump {
         # Folder to save dump files
         [Parameter(Mandatory = $true, Position = 0)]
         [string]$Path,
-        # Target process (either Name or PID)
+        # Target process ID
         [Parameter(Mandatory = $true, Position = 1)]
+        [ValidateRange(1, [int]::MaxValue)]
         [int]$ProcessId,
         [int]$TimeoutSecond = 5,
         [int]$DumpCount = 1,
@@ -5045,57 +5073,71 @@ function Save-HungDump {
         return
     }
 
-    $hWnd = $process.MainWindowHandle
-    $name = $process.Name
-
-    $ERROR_INVALID_WINDOW_HANDLE = 1400
     $ERROR_TIMEOUT = 1460
     $savedDumpCount = 0
+    $intervalSeconds = 1
 
-    # Start monitoring
-    while ($true) {
-        if ($CancellationToken.IsCancellationRequested) {
-            Write-Log "Cancel request acknowledged."
-            break
-        }
-
-        $result = [IntPtr]::Zero
-        if (-not ([Win32.User32]::SendMessageTimeoutW($hWnd, 0, [IntPtr]::Zero, [IntPtr]::Zero, 0, $TimeoutSecond * 1000, [ref]$result))) {
-            $ec = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-
-            # if error code is 0 or ERROR_TIMEOUT, timeout occurred.
-            if ($ec -eq 0 -or $ec -eq $ERROR_TIMEOUT) {
-                # Write-Host "Hung window detected with $name (PID $ProcessId). $($savedDumpCount+1)/$DumpCount" -ForegroundColor Green
-                Write-Log "Hung window detected with $name (PID $ProcessId). $($savedDumpCount+1)/$DumpCount"
-                $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId
-                $savedDumpCount++
-                Write-Log "Saved dump file: $($dumpResult.DumpFile)"
-
-                if ($savedDumpCount -ge $DumpCount) {
-                    Write-Log "Dump count reached $DumpCount. Exiting."
-                    break
-                }
-
-                Start-Sleep -Seconds 1
-                # To avoid too many dumps in a short time period, wait for one timeout period before starting the next monitoring cycle.
-                #Start-Sleep -Seconds $TimeoutSecond
+    # Keep monitoring until one of the following is met:
+    # - Cancellation is requested
+    # - The target process exits
+    # - DumpCount is reached.
+    try {
+        while ($true) {
+            if ($CancellationToken.IsCancellationRequested) {
+                Write-Log "Cancel request acknowledged."
+                return
             }
-            elseif ($ec -eq $ERROR_INVALID_WINDOW_HANDLE -and $process.HasExited) {
+
+            if ($process.HasExited) {
                 Write-Log "$($process.Name) (PID $ProcessId) has exited."
                 return
             }
+
+            # Need to get the process object every time since MainWindowHandle can change during the life time of a process.
+            if ($proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+                $hWnd = $proc.MainWindowHandle
+                $proc.Dispose()
+
+                # During start up and shut down, MainWindowHandle can be 0.
+                if ($hWnd -eq 0) {
+                    Start-Sleep -Seconds $intervalSeconds
+                    continue
+                }
+            }
             else {
-                Write-Error ("SendMessageTimeoutW failed with 0x{0:x8}" -f $ec)
+                Write-Error "Cannnot find a process with PID $ProcessId."
                 return
             }
-        }
-        else {
-            # Write-Verbose "SendMessageTimeoutW succeeded"
-            Start-Sleep -Seconds 1
+
+            $result = [IntPtr]::Zero
+            if (-not ([Win32.User32]::SendMessageTimeoutW($hWnd, 0, [IntPtr]::Zero, [IntPtr]::Zero, 0, $TimeoutSecond * 1000, [ref]$result))) {
+                $ec = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+
+                # if error code is 0 or ERROR_TIMEOUT, timeout occurred.
+                if ($ec -eq 0 -or $ec -eq $ERROR_TIMEOUT) {
+                    Write-Log "Hung window detected with $name (PID $ProcessId, hWnd $hWnd). $($savedDumpCount+1)/$DumpCount"
+                    $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId
+                    $savedDumpCount++
+                    Write-Log "Saved dump file: $($dumpResult.DumpFile)"
+
+                    if ($savedDumpCount -ge $DumpCount) {
+                        Write-Log "Dump count reached $DumpCount. Exiting."
+                        return
+                    }
+                }
+                else {
+                    Write-Error ("SendMessageTimeoutW failed with 0x{0:x8}" -f $ec)
+                }
+            }
+
+            Start-Sleep -Seconds $intervalSeconds
         }
     }
-
-    $process.Dispose()
+    finally {
+        if ($process) {
+            $process.Dispose()
+        }
+    }
 }
 
 function Save-MSIPC {
@@ -6871,34 +6913,39 @@ function Collect-OutlookInfo {
         if ($Component -contains 'HungDump') {
             $hungDumpCts = New-Object System.Threading.CancellationTokenSource
             $monitorStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
-            Write-Log "Starting hungMonitorTask. HungTimeoutSecond: $HungTimeoutSecond."
+            Write-Log "Starting hungMonitorTask. HungMonitorTarget: $HungMonitorTarget, HungTimeoutSecond: $HungTimeoutSecond."
 
-            # Save at most 10 dump files for now.
+            # Save at most 10 dump files for each instance of the process.
+            $maxDumpFileCount = 10
+
             $hungMonitorTask = Start-Task -ScriptBlock {
                 param($path, $timeout, $dumpCount, $cancelToken, $name, $monitorStartedEvent)
 
                 $monitorStartedEvent.Set() | Out-Null
 
-                # Wait for Outlook to come live.
+                # The target process may restart while being monitored. Keep monitoring until canceled (via hungDumpCts).
                 while ($true) {
-                    if ($cancelToken.IsCancellationRequested) {
-                        return
+                    # Wait for the target process ($name) to come live.
+                    while ($true) {
+                        if ($cancelToken.IsCancellationRequested) {
+                            return
+                        }
+
+                        $targetProcess = Get-Process -Name $name -ErrorAction SilentlyContinue
+
+                        if ($targetProcess -and -not $targetProcess.HasExited) {
+                            $id = $targetProcess.Id
+                            $targetProcess.Dispose()
+                            break
+                        }
+
+                        Start-Sleep -Seconds 2
                     }
 
-                    $outlookProc = Get-Process -Name $name -ErrorAction SilentlyContinue
-
-                    if ($outlookProc) {
-                        break
-                    }
-                    Start-Sleep -Seconds 2
+                    Write-Log "hungMonitorTask has found $name (PID $id). Starting hung window monitoring."
+                    $(Save-HungDump -Path $path -ProcessId $id -DumpCount $dumpCount -CancellationToken $cancelToken) 2>&1 | Write-Log
                 }
-
-                $id = $outlookProc.Id
-                $outlookProc.Dispose()
-
-                Write-Log "hungMonitorTask has found $name (PID $id). Starting hung window monitoring."
-                Save-HungDump -Path $path -ProcessId $id -DumpCount $dumpCount -CancellationToken $cancelToken
-            } -ArgumentList (Join-Path $tempPath 'HungDump'), $HungTimeoutSecond, 10, $hungDumpCts.Token, $HungMonitorTarget, $monitorStartedEvent
+            } -ArgumentList (Join-Path $tempPath 'HungDump'), $HungTimeoutSecond, $maxDumpFileCount, $hungDumpCts.Token, $HungMonitorTarget, $monitorStartedEvent
 
             $monitorStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan) | Out-Null
             $hungDumpStarted = $true
