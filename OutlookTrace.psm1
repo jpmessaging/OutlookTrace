@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-03-16'
+$Version = 'v2022-04-06'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -657,7 +657,7 @@ function Write-Log {
     process {
         # If ErrorRecord is provided, use it.
         if ($ErrorRecord) {
-            $Message += "$(if ($Message) {'; '})[ErrorRecord]InvocationInfo.MyCommand: $($ErrorRecord.InvocationInfo.MyCommand), Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
+            $Message += "$(if ($Message) {'; '})[ErrorRecord] Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
         }
 
         # Ignore null or an empty string.
@@ -681,12 +681,20 @@ function Write-Log {
             $delta = $currentTime.Subtract($Script:lastLogTime)
         }
 
+        $caller = Get-PSCallStack | Select-Object -Skip 1 | & {
+            process {
+                if (-not $_.Command.StartsWith('<ScriptBlock><Process>')) {
+                    $_.Command
+                }
+            }
+        } | Select-Object -First 1
+
         # Format as CSV:
         $sb = New-Object System.Text.StringBuilder
         $sb.Append($currentTimeFormatted).Append(',') | Out-Null
         $sb.Append($delta.TotalMilliseconds).Append(',') | Out-Null
         $sb.Append([System.Threading.Thread]::CurrentThread.ManagedThreadId).Append(',') | Out-Null
-        $sb.Append((Get-PSCallStack)[1].Command).Append(',') | Out-Null
+        $sb.Append($caller).Append(',') | Out-Null
         $sb.Append('"').Append($Message.Replace('"', "'")).Append('"') | Out-Null
 
         # Protect from concurrent write
@@ -733,48 +741,51 @@ function Open-TaskRunspace {
         [switch]$IncludeScriptVariables
     )
 
-    if (-not $Script:runspacePool) {
-        Write-Log "Setting up a Runspace Pool with an initialSessionState. MinRunspaces: $MinRunspaces, MaxRunspaces: $MaxRunspaces."
-        $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
-
-        # Add functions from this script module. This will find all the functions including non-exported ones.
-        # Note: I just want to call "ImportPSModule". It works, but emits "WARNING: The names of some imported commands ...".
-        # Just to avoid this, I'm manually adding each command.
-        #   $initialSessionState.ImportPSModule($MyInvocation.MyCommand.Module.Path)
-        if ($MyInvocation.MyCommand.Module) {
-            Get-Command -Module $MyInvocation.MyCommand.Module | ForEach-Object {
-                $initialSessionState.Commands.Add($(
-                        New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($_.Name, $_.ScriptBlock)
-                    ))
-            }
-        }
-
-        # Import extra modules.
-        if ($Modules) {
-            $initialSessionState.ImportPSModule($Modules)
-        }
-
-        # Import Script-scoped variable.
-        if ($IncludeScriptVariables) {
-            foreach ($_ in @(Get-Variable -Scope Script | Where-Object { $_.Options -notmatch 'Constant' -and $_.Value })) {
-                $initialSessionState.Variables.Add($(
-                        New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
-                    ))
-            }
-        }
-
-        # Import given variables
-        foreach ($_ in $Variables) {
-            $initialSessionState.Variables.Add($(
-                    New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #>$null
-                ))
-        }
-
-        $Script:runspacePool = [runspacefactory]::CreateRunspacePool($MinRunspaces, $MaxRunspaces, $initialSessionState, $Host)
-        $Script:runspacePool.Open()
-
-        Write-Log "RunspacePool ($($Script:runspacePool.InstanceId.ToString())) is opened."
+    if ($Script:runspacePool) {
+        return
     }
+
+
+    Write-Log "Setting up a Runspace Pool with an initialSessionState. MinRunspaces: $MinRunspaces, MaxRunspaces: $MaxRunspaces."
+    $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+
+    # Add functions from this script module. This will find all the functions including non-exported ones.
+    # Note: I just want to call "ImportPSModule". It works, but emits "WARNING: The names of some imported commands ...".
+    # Just to avoid this, I'm manually adding each command.
+    #   $initialSessionState.ImportPSModule($MyInvocation.MyCommand.Module.Path)
+    if ($MyInvocation.MyCommand.Module) {
+        Get-Command -Module $MyInvocation.MyCommand.Module | & {
+            process {
+                $initialSessionState.Commands.Add((New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry($_.Name, $_.ScriptBlock)))
+            }
+        }
+    }
+
+    # Import extra modules.
+    if ($Modules) {
+        $initialSessionState.ImportPSModule($Modules)
+    }
+
+    # Import Script-scoped variables.
+    if ($IncludeScriptVariables) {
+        Get-Variable -Scope Script | & {
+            process {
+                if ($_.Options -notmatch 'Constant' -and $_.Value) {
+                    $initialSessionState.Variables.Add((New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #> $null))
+                }
+            }
+        }
+    }
+
+    # Import given variables
+    foreach ($_ in $Variables) {
+        $initialSessionState.Variables.Add((New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #> $null))
+    }
+
+    $Script:runspacePool = [runspacefactory]::CreateRunspacePool($MinRunspaces, $MaxRunspaces, $initialSessionState, $Host)
+    $Script:runspacePool.Open()
+
+    Write-Log "RunspacePool ($($Script:runspacePool.InstanceId.ToString())) is opened."
 }
 
 function Close-TaskRunspace {
@@ -1055,24 +1066,39 @@ function Compress-Folder {
             $Destination = New-Item $Destination -ItemType Directory -ErrorAction Stop | Select-Object -ExpandProperty FullName
         }
 
-        # Apply filters if any.
-        if ($Filter.Count) {
-            $files = @(foreach ($f in $Filter) { Get-ChildItem -LiteralPath $Path -Filter $f -Recurse -Force | Where-Object { -not $_.PSIsContainer } })
-        }
-        else {
-            $files = @(Get-ChildItem -LiteralPath $Path -Recurse -Force | Where-Object { -not $_.PSIsContainer })
-        }
+        $files = @(
+            $Filter |  & {
+                # Apply filename filters if any. Note: Even if Filter is null, the pipeline will run (unlike foreach keyword)
+                process {
+                    Get-ChildItem -LiteralPath $Path -File -Recurse -Force -Filter $_
+                }
+            } | & {
+                # Apply DateTime filters
+                begin {
+                    $fileNames = @{}
+                }
 
-        if ($PSBoundParameters.ContainsKey('FromDateTime') -and $FromDateTime -ne [DateTime]::MinValue) {
-            $files = @($files | Where-Object { $_.LastWriteTime -ge $FromDateTime })
-        }
+                process {
+                    $file = $_
 
-        if ($PSBoundParameters.ContainsKey('ToDateTime') -and $ToDateTime -ne ([DateTime]::MaxValue)) {
-            $files = @($files | Where-Object { $_.LastWriteTime -le $ToDateTime })
-        }
+                    if ($FromDateTime -and $file.LastWriteTime -lt $FromDateTime) {
+                        return
+                    }
 
-        # Remove duplicate by Fullname
-        $files = @($files | Group-Object -Property 'FullName' | ForEach-Object { $_.Group | Select-Object -First 1 })
+                    if ($ToDateTime -and $file.LastWriteTime -gt $ToDateTime) {
+                        return
+                    }
+
+                    # Remove duplicate by Fullname. Avoid Group-Object because it's slow.
+                    if ($fileNames.ContainsKey($file.FullName)) {
+                        return
+                    }
+
+                    $fileNames.Add($file.FullName, $null)
+                    $file
+                }
+            }
+        )
 
         # If there are no files after filters are applied, bail.
         if ($files.Count -eq 0) {
@@ -1447,6 +1473,11 @@ function Compress-Folder {
     }
 
     # Here's main body of Compress-Folder
+    if ($FromDateTime -and $ToDateTime -and $FromDateTime -gt $ToDateTime) {
+        Write-Error "FromDateTime must be less than or equal to ToDateTime."
+        return
+    }
+
     switch ($ArchiveType) {
         'Zip' {
             if ($PSVersionTable.PSVersion.Major -gt 2) {
@@ -1464,7 +1495,13 @@ function Compress-Folder {
     }
 
     $params = @{}
-    $PSBoundParameters.Keys | ForEach-Object { if ($compressCmd.Parameters.ContainsKey($_)) { $params.Add($_, $PSBoundParameters[$_]) } }
+
+    foreach ($_ in $PSBoundParameters.GetEnumerator()) {
+        if ($compressCmd.Parameters.ContainsKey($_.Key)) {
+            $params.Add($_.Key, $_.Value)
+        }
+    }
+
     & $compressCmd @params
 }
 
@@ -2212,44 +2249,28 @@ function Resolve-User {
 
 function Get-LogonUser {
     [CmdletBinding()]
-    param(
-        [switch]$IgnoreCache
-    )
+    param()
 
-    # If there's a cache, use it unless IgnoreCache is specified
-    if (-not $IgnoreCache -and $Script:LogonUser) {
-        Write-Log "Returning a cache."
-        return $Script:LogonUser
+    # Find unique users of explorer.exe instances.
+    Get-WmiObject Win32_Process -Filter "Name = 'explorer.exe'" | & {
+        begin { $usersCache = @{} }
+        process {
+            $owner = $_.GetOwner()
+
+            # Without admin privilege, owner info other than self can be empty.
+            if (-not $owner.User) {
+                Write-Verbose "Cannot obtain the owner of explorer (PID $($_.ProcessID)). Probably you are runnning without admin privilege."
+                return
+            }
+
+            $user = "$($owner.Domain)\$($owner.User)"
+
+            if (-not $usersCache.ContainsKey($user)) {
+                $usersCache.Add($user, $null)
+                Resolve-User $user
+            }
+        }
     }
-
-    # quser.exe might not be available.
-    if (-not (Get-Command quser.exe -ErrorAction SilentlyContinue)) {
-        Write-Error "quser.exe is not available."
-        return
-    }
-
-    $err = $($quserResult = Invoke-Command {
-            $ErrorActionPreference = 'Continue'
-            & quser.exe
-        }) 2>&1
-
-    if ($err -or $LASTEXITCODE -ne 0) {
-        Write-Error "quser failed. exit code:$LASTEXITCODE; stdout:`"$quserResult`"; error:`"$err`""
-        return
-    }
-
-    $currentSession = $quserResult | Where-Object { $_.StartsWith('>') } | Select-Object -First 1
-    if (-not $currentSession) {
-        Write-Error "Cannot find current session with quser."
-        return
-    }
-
-    Write-Log "Current session: $currentSession"
-    $match = [Regex]::Match($currentSession, '^>(?<name>.+?)\s{2,}')
-    $userName = $match.Groups['name'].Value
-
-    $Script:LogonUser = Resolve-User $userName
-    $Script:LogonUser
 }
 
 <#
@@ -2381,8 +2402,9 @@ function Save-OfficeRegistry {
     )
 
     $userRegRoot = Get-UserRegistryRoot $User -SkipRegistryPrefix
+
     if ($userRegRoot) {
-        $registryKeys = $registryKeys | ForEach-Object { $_.Replace("HKCU", $userRegRoot).TrimEnd('\') }
+        $registryKeys = $registryKeys | & { process { $_.Replace("HKCU", $userRegRoot).TrimEnd('\') } }
     }
 
     # Make sure NOT to use WOW64 version of reg.exe when running on 32bit PowerShell on 64bit OS.
@@ -2547,8 +2569,8 @@ function Save-NetworkInfo {
 <#
 .DESCRIPTION
 Run a given script block. If Path is given, save the result there.
-If FileName is given, it's used for the file name for saving the result. If its extension is not ".xml", Out-File will be used. Otherwise Export-CliXml will be used.
-If FileName is not give, the file name will be auto-decided. If the command is an application, then Out-File will be used. Otherwise Export-CliXml will be used.
+If FileName is given, it's used for the file name for saving the result. If its extension is not ".xml", Set-Content will be used. Otherwise Export-CliXml will be used.
+If FileName is not give, the file name will be auto-decided. If the command is an application, then Set-Content will be used. Otherwise Export-CliXml will be used.
 #>
 function Run-Command {
     [CmdletBinding()]
@@ -2569,15 +2591,15 @@ function Run-Command {
         # To redirect error, call operator (&) is used, instead of $ScriptBlock.InvokeReturnAsIs().
         $err = $($result = & $ScriptBlock @ArgumentList) 2>&1
         foreach ($e in $err) {
-            Write-Log "'$ScriptBlock' had a non-terminating error. $e" -ErrorRecord $e
+            Write-Log "{$ScriptBlock} had a non-terminating error. $e" -ErrorRecord $e
         }
     }
     catch {
-        Write-Log "'$ScriptBlock' threw a terminating error. $_" -ErrorRecord $_
+        Write-Log "{$ScriptBlock} threw a terminating error. $_" -ErrorRecord $_
     }
 
     $sw.Stop()
-    Write-Log "'$ScriptBlock' took $($sw.ElapsedMilliseconds) ms. $(if ($null -eq $result) {"It returned nothing."})"
+    Write-Log "{$ScriptBlock} took $($sw.ElapsedMilliseconds) ms. $(if ($null -eq $result) {"It returned nothing."})"
 
     if ($null -eq $result) {
         return
@@ -2585,7 +2607,6 @@ function Run-Command {
 
     # If Path is given, save the result.
     if ($Path) {
-        $sb = $ScriptBlock.ToString()
         $exportAsXml = $true
 
         if ($FileName) {
@@ -2595,6 +2616,7 @@ function Run-Command {
         }
         else {
             # Decide the filename & export method based on the command type
+            $sb = $ScriptBlock.ToString()
             $Command = ([RegEx]::Match($sb, '\w+-\w+')).Value
             if (-not $Command) {
                 $Command = $sb
@@ -2624,10 +2646,10 @@ function Run-Command {
         }
 
         if ($exportAsXml) {
-            $result | Export-Clixml -Path (Join-Path $Path $FileName)
+            $result | Export-Clixml -LiteralPath (Join-Path $Path $FileName)
         }
         else {
-            $result | Out-File -FilePath (Join-Path $Path $FileName)
+            $result | Set-Content -LiteralPath (Join-Path $Path $FileName)
         }
     }
     else {
@@ -2935,28 +2957,38 @@ function Get-ProxyAutoConfig {
         $result
     }
 
-    foreach ($proxy in @(Get-WinInetProxy -User $User)) {
-        # If AutoDetect is on, detect URL with WPAD using WinHttpDetectAutoProxyConfigUrl.
-        if ($proxy.AutoDetect) {
-            [Win32.SafeGlobalFreeString]$wpadUrl = $null
-            if ([Win32.WinHttp]::WinHttpDetectAutoProxyConfigUrl([Win32.WinHttp+AutoDetectType] 'WINHTTP_AUTO_DETECT_TYPE_DHCP, WINHTTP_AUTO_DETECT_TYPE_DNS_A', [ref]$wpadUrl)) {
-                Get-PAC $wpadUrl.ToString() | ForEach-Object { $_.Add('WPAD', $true); $_.Add('User', $proxy.User); [PSCustomObject]$_ }
-            }
-            else {
-                $ec = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-                $winhttpEc = $ec -as [Win32.WinHttp+Error]
+    Get-WinInetProxy -User $User | & {
+        process {
+            $proxy = $_
 
-                if ($winhttpEc) {
-                    Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $winhttpEc ($($winhttpEc.value__))"
+            if ($proxy.AutoDetect) {
+                [Win32.SafeGlobalFreeString]$wpadUrl = $null
+
+                if ([Win32.WinHttp]::WinHttpDetectAutoProxyConfigUrl([Win32.WinHttp+AutoDetectType] 'WINHTTP_AUTO_DETECT_TYPE_DHCP, WINHTTP_AUTO_DETECT_TYPE_DNS_A', [ref]$wpadUrl)) {
+                    $pac = Get-PAC $wpadUrl.ToString()
+                    $pac.Add('IsWpad', $true)
+                    $pac.Add('User', $proxy.User)
+                    [PSCustomObject]$pac
                 }
                 else {
-                    Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $ec"
+                    $ec = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                    $winhttpEc = $ec -as [Win32.WinHttp+Error]
+
+                    if ($winhttpEc) {
+                        Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $winhttpEc ($($winhttpEc.value__))"
+                    }
+                    else {
+                        Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $ec"
+                    }
                 }
             }
-        }
 
-        if ($proxy.AutoConfigUrl) {
-            Get-PAC $proxy.AutoConfigUrl | ForEach-Object { $_.Add('WPAD', $false); $_.Add('User', $proxy.User); [PSCustomObject]$_ }
+            if ($proxy.AutoConfigUrl) {
+                $pac = Get-PAC $proxy.AutoConfigUrl
+                $pac.Add('IsWpad', $false)
+                $pac.Add('User', $proxy.User)
+                [PSCustomObject]$pac
+            }
         }
     }
 }
@@ -3196,83 +3228,78 @@ function Get-OutlookProfile {
     }
 
     $userRegRoot = Get-UserRegistryRoot $User
+
     if (-not $userRegRoot) {
-        return
-    }
-
-    # List Outlook "profiles" keys
-    $profiles = New-Object System.Collections.Generic.List[object]
-    $versionKeys = @(Get-ChildItem (Join-Path $userRegRoot 'Software\Microsoft\Office\') -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '\d\d\.0' })
-    $defaultProfile = $null
-
-    foreach ($versionKey in $versionKeys) {
-        Get-ChildItem (Join-Path $versionKey.PsPath '\Outlook\Profiles') -ErrorAction SilentlyContinue | ForEach-Object { $profiles.Add($_) }
-        if (-not $defaultProfile) {
-            $defaultProfile = Get-ItemProperty (Join-Path $versionKey.PsPath 'Outlook') -Name 'DefaultProfile' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultProfile'
-        }
-        $versionKey.Close()
-    }
-
-    if (-not $profiles.Count) {
-        Write-Log "There are no profiles for $User."
         return
     }
 
     $PR_PROFILE_CONFIG_FLAGS = '00036601'
 
     # Flag constants:
-    # This corresponds [Use Cached Exchange Mode]
-    $CONFIG_OST_CACHE_PRIVATE = 0x180
-    # This corresponds to [Download Public Folder Favorites]
-    $CONFIG_OST_CACHE_PUBLIC = 0x400
-    # This corresponds to [Download shared folders]
-    $CONFIG_OST_CACHE_DELEGATE_PIM = 0x800
+    $CONFIG_OST_CACHE_PRIVATE = 0x180      # [Use Cached Exchange Mode]
+    $CONFIG_OST_CACHE_PUBLIC = 0x400       # [Download Public Folder Favorites]
+    $CONFIG_OST_CACHE_DELEGATE_PIM = 0x800 # [Download shared folders]
 
-    foreach ($profile in $profiles) {
-        $flags = 0
-        $CACHE_PRIVATE = $false
-        $CACHE_PUBLIC = $false
-        $CACHE_DELEGATE_PIM = $false
+    $defaultProfile = $null
 
-        $subkeys = Get-ChildItem $profile.PSPath -Recurse
+    Get-ChildItem (Join-Path $userRegRoot 'Software\Microsoft\Office\') -ErrorAction SilentlyContinue | & {
+        param ([ref] $defaultProfile)
+        process {
+            $key = $_
+            if ($key.Name -match '\d\d\.0') {
+                if (-not $defaultProfile.Value) {
+                    $defaultProfile.Value = Get-ItemProperty (Join-Path $key.PSPath 'Outlook') -Name 'DefaultProfile' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultProfile'
+                }
 
-        foreach ($subkey in $subkeys) {
-            if ($subkey.Property | Where-Object { $_ -eq $PR_PROFILE_CONFIG_FLAGS }) {
-                $bytes = $subkey.GetValue($PR_PROFILE_CONFIG_FLAGS)
-                $flags = [BitConverter]::ToUInt32($bytes, 0)
-                break
+                Get-ChildItem (Join-Path $key.PSPath '\Outlook\Profiles') -ErrorAction SilentlyContinue
             }
+
+            $key.Close()
         }
+    } ([ref] $defaultProfile) | & {
+        process {
+            $prof = $_
 
-        # Close all the sub keys
-        $subkeys | ForEach-Object { $_.Close() }
+            Get-ChildItem $prof.PSPath -Recurse | & {
+                process {
+                    $key = $_
+                    $flagsFound = $false
 
-        if (($flags -band $CONFIG_OST_CACHE_PRIVATE) -ne 0) {
-            $CACHE_PRIVATE = $true
+                    foreach ($prop in $key.Property) {
+                        if ($prop -eq $PR_PROFILE_CONFIG_FLAGS) {
+                            $bytes = $key.GetValue($PR_PROFILE_CONFIG_FLAGS)
+                            $flags = [BitConverter]::ToUInt32($bytes, 0)
+                            $flagsFound = $true
+                            break
+                        }
+                    }
+
+                    $key.Close()
+
+                    if (-not $flagsFound) {
+                        return
+                    }
+
+                    $CACHE_PRIVATE = ($flags -band $CONFIG_OST_CACHE_PRIVATE) -ne 0
+                    $CACHE_PUBLIC = ($flags -band $CONFIG_OST_CACHE_PUBLIC) -ne 0
+                    $CACHE_DELEGATE_PIM = ($flags -band $CONFIG_OST_CACHE_DELEGATE_PIM) -ne 0
+
+                    [PSCustomObject]@{
+                        User                          = $User
+                        Profile                       = $prof.Name
+                        IsDefault                     = (Split-Path $prof.Name -Leaf) -eq $defaultProfile
+                        CachedMode                    = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
+                        DownloadPublicFolderFavorites = $CACHE_PUBLIC
+                        DownloadSharedFolders         = $CACHE_DELEGATE_PIM
+                        PR_PROFILE_CONFIG_FLAGS       = $flags
+                    }
+                }
+            } | Select-Object -First 1
+
+            $prof.Close()
         }
-
-        if (($flags -band $CONFIG_OST_CACHE_PUBLIC) -ne 0) {
-            $CACHE_PUBLIC = $true
-        }
-
-        if (($flags -band $CONFIG_OST_CACHE_DELEGATE_PIM) -ne 0) {
-            $CACHE_DELEGATE_PIM = $true
-        }
-
-        [PSCustomObject]@{
-            User                          = $User
-            Profile                       = $profile.Name
-            IsDefault                     = (Split-Path $profile.Name -Leaf) -eq $defaultProfile
-            CachedMode                    = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
-            DownloadPublicFolderFavorites = $CACHE_PUBLIC
-            DownloadSharedFolders         = $CACHE_DELEGATE_PIM
-            PR_PROFILE_CONFIG_FLAGS       = $flags
-        }
-
-        $profile.Close()
     }
 }
-
 
 <#
 .SYNOPSIS
@@ -3301,7 +3328,12 @@ function Get-CachedAutodiscoverLocation {
         return
     }
 
-    $officeInfo = Get-OfficeInfo -ErrorAction Stop
+    $officeInfo = Get-OfficeInfo
+
+    if (-not $officeInfo) {
+        return
+    }
+
     $ver = ($officeInfo.Version.Split('.')[0] -as [int]).ToString('00.0')
 
     foreach ($keyPath in @("SOFTWARE\Policies\Microsoft\Office\$ver\Outlook", "SOFTWARE\Microsoft\Office\$ver\Outlook")) {
@@ -3340,31 +3372,36 @@ function Save-CachedAutodiscover {
         Write-Log "Searching $($cachePath.Name) $($cachePath.Path)"
         # Get Autodiscover XML files and copy them to Path
         try {
-            if (Test-Path $cachePath.Path) {
-                # Use recurse only for the path under LOCALAPPDATA.
-                Get-ChildItem $cachePath.Path -Filter '*Autod*.xml' -Force -Recurse:$($cachePath.Name -eq 'UnderLocalAppData') | Copy-Item -Destination $Path
+            if (-not (Test-Path $cachePath.Path)) {
+                Write-Verbose "Skipping $($cachePath.Path) because the path does not exist."
+                continue
+            }
+
+            # Use recurse only for the path under LOCALAPPDATA.
+            Get-ChildItem $cachePath.Path -Filter '*Autod*.xml' -Force -Recurse:$($cachePath.Name -eq 'UnderLocalAppData') | Copy-Item -Destination $Path -PassThru | & {
+                # Remove Hidden attribute
+                process {
+                    $file = $_
+
+                    if ((Get-ItemProperty $file.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
+                        try {
+                            # Unfortunately, this does not work before PowerShell V5.
+                            (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
+                            return
+                        }
+                        catch {
+                            # ignore error
+                        }
+
+                        # This could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
+                        Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
+                    }
+                }
             }
         }
         catch {
             # Just in case Copy-Item throws a terminating error.
             Write-Error -ErrorRecord $_
-        }
-    }
-
-    # Remove Hidden attribute
-    foreach ($file in @(Get-ChildItem $Path -Force)) {
-        if ((Get-ItemProperty $file.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
-            try {
-                # Unfortunately, this does not work before PowerShellV5.
-                (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
-                continue
-            }
-            catch {
-                # ignore error
-            }
-
-            # This could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
-            Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
         }
     }
 }
@@ -3380,9 +3417,11 @@ function Remove-CachedAutodiscover {
         [string]$User
     )
 
-    Get-CachedAutodiscoverLocation | ForEach-Object {
-        Get-ChildItem -LiteralPath $_.Path -Filter '*Autod*.xml' -Force -Recurse:$($_.Name -eq 'UnderLocalAppData') | ForEach-Object { Remove-Item $_.FullName -Force }
-    }
+    Get-CachedAutodiscoverLocation -User $User | & {
+        process {
+            Get-ChildItem -LiteralPath $_.Path -Filter '*Autod*.xml' -Force -Recurse:($_.Name -eq 'UnderLocalAppData')
+        }
+    } | Remove-Item -Force
 }
 
 <#
@@ -3417,30 +3456,28 @@ function Save-CachedOutlookConfig {
 
     # Get OutlookConfig & OPX json files and copy them to Path
     try {
-        if (Test-Path $sourcePath) {
-            Get-ChildItem $sourcePath -Filter '*Config*.json' -Force -Recurse | Copy-Item -Destination $Path
+        Get-ChildItem $sourcePath -Filter '*Config*.json' -Force -Recurse -ErrorAction SilentlyContinue | Copy-Item -Destination $Path -PassThru | & {
+            process {
+                $file = $_
+
+                try {
+                    if ((Get-ItemProperty $file.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
+                        (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
+                        return
+                    }
+                }
+                catch {
+                    # ignore
+                }
+
+                # This could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
+                Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
+            }
         }
     }
     catch {
         # Just in case Copy-Item throws a terminating error.
         Write-Error -ErrorRecord $_
-    }
-
-    # Remove Hidden attribute
-    foreach ($file in @(Get-ChildItem $Path -Force)) {
-        if ((Get-ItemProperty $file.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
-            try {
-                # Unfortunately, this does not work before PowerShellV5.
-                (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
-                continue
-            }
-            catch {
-                # ignore error
-            }
-
-            # This could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
-            Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
-        }
     }
 }
 
@@ -3462,7 +3499,7 @@ function Remove-CachedOutlookConfig {
         Write-Error "Cannot find LocalAppData for $User."
     }
 
-    Get-ChildItem -LiteralPath $sourcePath -Filter '*Config*.json' -Force -Recurse | ForEach-Object { Remove-Item $_.FullName -Force }
+    Get-ChildItem -LiteralPath $sourcePath -Filter '*Config*.json' -Force -Recurse | Remove-Item -Force
 }
 
 function Start-LdapTrace {
@@ -3564,24 +3601,18 @@ function Stop-LdapTrace {
     Remove-Item $keypath -ErrorAction SilentlyContinue | Out-Null
 }
 
-function Save-OfficeModuleInfo {
+function Get-OfficeModuleInfo {
     [CmdletBinding()]
     param (
-        [parameter(Mandatory = $true)]
-        $Path,
-        # filter items by their name using -match (e.g. 'outlook.exe','mso\d\d.*\.dll'). These are treated as "OR".
+        # Filter files by their name using -match (e.g. 'outlook.exe','mso\d\d.*\.dll'). These are treated as "OR".
         [string[]]$Filters,
         [Threading.CancellationToken]$CancellationToken
     )
 
-    if (-not (Test-Path $Path)) {
-        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
-    }
-
     # If MS Office is not installed, bail.
-    $officeInfo = Get-OfficeInfo -ErrorAction SilentlyContinue
+    $officeInfo = Get-OfficeInfo
+
     if (-not $officeInfo) {
-        Write-Error "MS Office is not installed."
         return
     }
 
@@ -3597,63 +3628,73 @@ function Save-OfficeModuleInfo {
         }
     )
 
-    Write-Log "officePaths are $officePaths"
-
-    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    Write-Log "officePaths are $($officePaths -join ',')"
 
     # Get exe and dll
     # It's slightly faster to run gci twice with -Filter than running once with -Include *exe, *.dll
-    $items = @(
-        foreach ($officePath in $officePaths) {
-            Get-ChildItem -Path $officePath -Filter *.exe -Recurse -ErrorAction SilentlyContinue
-            Get-ChildItem -Path $officePath -Filter *.dll -Recurse -ErrorAction SilentlyContinue
+    $officePaths | & {
+        process {
+            if ($CancellationToken.IsCancellationRequested) {
+                return
+            }
+
+            Get-ChildItem -Path $_ -Filter '*.exe' -Recurse -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $_ -Filter '*.dll' -Recurse -ErrorAction SilentlyContinue
         }
-    )
+    } | & {
+        process {
+            if ($CancellationToken.IsCancellationRequested) {
+                return
+            }
 
-    $listingFinished = $sw.Elapsed
-    Write-Log "Listing $($items.Count) items took $($listingFinished.TotalMilliseconds) ms."
+            # Apply filters if any
+            if ($Filters.Count -eq 0) {
+                $_
+                return
+            }
 
-    # Apply filters
-    if ($Filters.Count) {
-        # This is for PowerShell v2. PSv2 iterates a null collection.
-        $items = $items | Where-Object {
             foreach ($filter in $Filters) {
                 if ($_.Name -match $filter) {
-                    $true
+                    $_
                     break
                 }
             }
         }
-    }
-
-    $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
-    $name = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
-
-    @(
-        foreach ($item in $items) {
-            if ($item.VersionInfo.FileVersionRaw) {
-                $fileVersion = $item.VersionInfo.FileVersionRaw
+    } | & {
+        process {
+            $file = $_
+            if ($file.VersionInfo.FileVersionRaw) {
+                $fileVersion = $file.VersionInfo.FileVersionRaw
             }
             else {
-                $fileVersion = $item.VersionInfo.FileVersion
+                $fileVersion = $file.VersionInfo.FileVersion
             }
 
             [PSCustomObject]@{
-                Name        = $item.Name
-                FullName    = $item.FullName
+                Name        = $file.Name
+                FullName    = $file.FullName
                 #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
                 FileVersion = $fileVersion
             }
+        }
+    }
+}
 
-            if ($CancellationToken.IsCancellationRequested) {
-                Write-Log "Cancel request acknowledged."
-                break
-            }
+function Save-OfficeModuleInfo {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        $Path,
+        # filter items by their name using -match (e.g. 'outlook.exe','mso\d\d.*\.dll'). These are treated as "OR".
+        [string[]]$Filters,
+        # Not implemented currently.
+        [Threading.CancellationToken]$CancellationToken
+    )
 
-        }) | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml") #-Encoding UTF8
+    New-Item $Path -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
 
-    $sw.Stop()
-    Write-Log "Enumerating items took $(($sw.Elapsed - $listingFinished).TotalMilliseconds) ms."
+    $PSBoundParameters.Remove('Path') | Out-Null
+    Get-OfficeModuleInfo @PSBoundParameters | Export-Clixml -LiteralPath (Join-Path $Path "$($MyInvocation.MyCommand.Noun).xml")
 }
 
 <#
@@ -3978,7 +4019,7 @@ function Start-FiddlerCap {
             # Usually you can simply specify ErrorAction:Continue to the cmdlet. However, Start-Process does not respect that. So, I need to manually set $ErrorActionPreference here.
             $err = $($process = Invoke-Command {
                     $ErrorActionPreference = "Continue"
-                    Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru
+                    Start-Process $fiddlerSetupFile -ArgumentList "/S /D=`"$fiddlerPath`"" -Wait -PassThru
                 }) 2>&1
 
             if ($process.ExitCode -ne 0) {
@@ -4053,15 +4094,19 @@ function Start-Procmon {
 
     # Search procmon.exe or procmon64.exe under $ProcmonSearchPath (including subfolders).
     if ($ProcmonSearchPath -and (Test-Path $ProcmonSearchPath)) {
-        $findResult = @(Get-ChildItem -Path $ProcmonSearchPath -Filter 'procmon*.exe' -Recurse)
-        if ($findResult.Count -ge 1) {
-            $procmonFile = $findResult[0].FullName
-            if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
-                $procmon64 = $findResult | Where-Object { $_.Name -eq 'procmon64.exe' } | Select-Object -First 1
-                if ($procmon64) {
-                    $procmonFile = $procmon64.FullName
-                }
-            }
+        $files = Get-ChildItem -Path $ProcmonSearchPath -Filter 'procmon*.exe' -Exclude 'Procmon64a.exe' -Recurse
+
+        # For x64, prefer Procmon64.exe if available. Otherwise, just use Procmon.exe
+        if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
+            $procmonFile = $files | Where-Object { $_.Name -eq 'Procmon64.exe' } | Select-Object -First 1 -ExpandProperty FullName
+        }
+
+        if (-not $procmonFile) {
+            $procmonFile = $files | Where-Object { $_.Name -eq 'Procmon.exe' } | Select-Object -First 1 -ExpandProperty FullName
+        }
+
+        if (-not $procmonFile) {
+            Write-Log "ProcmonSearchPath '$ProcmonSearchPath' is provided, but coulnd't find Procmon.exe or Procmon64.exe."
         }
     }
 
@@ -4165,6 +4210,8 @@ function Start-Procmon {
             }
         }) 2>&1
 
+    $processId = $process.Id
+
     try {
         if (-not $process -or $process.HasExited) {
             Write-Error "procmon failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
@@ -4180,8 +4227,8 @@ function Start-Procmon {
     Write-Log "Procmon successfully started"
     [PSCustomObject]@{
         ProcmonPath          = $procmonFile
-        ProcmonProcessId     = $process.Id
-        PMLFile              = $pmlFile
+        ProcmonProcessId     = $processId
+        PmlFile              = $pmlFile
         ProcmonZipDownloaded = $procmonZipDownloaded
         ProcmonFolderPath    = $procmonFolderPath
     }
@@ -4628,10 +4675,11 @@ function Get-OfficeInfo {
     }
     else {
         Write-Log "Cannot find the Office installation from HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall. Fall back to HKLM:\SOFTWARE\Microsoft\Office"
-        $keys = @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Office\ | Where-Object { [RegEx]::IsMatch($_.PSChildName, '\d\d\.0') -or $_.PSChildName -eq 'ClickToRun' })
+        $keys = @(Get-ChildItem 'Registry::HKLM\SOFTWARE\Microsoft\Office\' -ErrorAction SilentlyContinue | Where-Object { [RegEx]::IsMatch($_.PSChildName, '\d\d\.0') -or $_.PSChildName -eq 'ClickToRun' })
 
         # If 'ClickToRun' exists, use its "InstallPath" & "VersionToReport".
         $clickToRun = $keys | Where-Object { $_.PSChildName -eq 'ClickToRun' }
+
         if ($clickToRun) {
             $installPath = Get-ItemProperty $clickToRun.PSPath | Select-Object -ExpandProperty 'InstallPath'
             $version = Get-ItemProperty (Join-Path $clickToRun.PSPath 'Configuration') | Select-Object -ExpandProperty 'VersionToReport'
@@ -4653,7 +4701,8 @@ function Get-OfficeInfo {
         return
     }
 
-    $outlookReg = Get-ItemProperty 'HKLM:\SOFTWARE\Clients\Mail\Microsoft Outlook' -ErrorAction SilentlyContinue
+    $outlookReg = Get-ItemProperty 'Registry::HKLM\SOFTWARE\Clients\Mail\Microsoft Outlook' -ErrorAction SilentlyContinue
+
     if ($outlookReg) {
         $mapiDll = Get-ItemProperty $outlookReg.DLLPathEx -ErrorAction SilentlyContinue
     }
@@ -5188,26 +5237,28 @@ function Save-DLP {
     )
 
     # Get the path to %LOCALAPPDATA%\Microsoft\Outlook.
-    $sourcePath = $null
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
 
-    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
-        $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
-    }
-
-    $files = @(Get-ChildItem $sourcePath -Filter 'PolicyNudge*')
-
-    if ($files.Count -eq 0) {
+    if (-not $localAppdata) {
+        Write-Error "Cannot find LocalAppData folder for User $User."
         return
     }
 
-    if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
-    }
-
-    $Path = Resolve-Path $Path
+    $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
 
     try {
-        Get-ChildItem $sourcePath -Filter 'PolicyNudge*' | Copy-Item -Destination $Path
+        Get-ChildItem $sourcePath -Filter 'PolicyNudge*' | & {
+            begin { $checkDest = $true }
+            process {
+                # Create the destination folder only when there's a file to copy.
+                if ($checkDest -and -not (Test-Path $Path)) {
+                    New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+                    $checkDest = $false
+                }
+
+                $_ | Copy-Item -Destination $Path
+            }
+        }
     }
     catch {
         Write-Error -ErrorRecord $_
@@ -5675,23 +5726,10 @@ function Get-OutlookAddin {
     )
 
     $userRegRoot = Get-UserRegistryRoot $User
+
     if (-not $userRegRoot) {
         return
     }
-
-    # Get keys under "Addins"
-    $addinKeys = @(
-        @(
-            'Registry::HKLM\SOFTWARE\Microsoft\Office\Outlook\Addins'
-            'Registry::HKLM\SOFTWARE\WOW6432Node\Microsoft\Office\Outlook\Addins'
-            'Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\Office\Outlook\Addins'
-            'Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\Office\Outlook\AddIns'
-            Join-Path $userRegRoot 'Software\Microsoft\Office\Outlook\Addins'
-        ) |
-        ForEach-Object {
-            Get-ChildItem $_ -ErrorAction SilentlyContinue
-        }
-    )
 
     $LoadBehavior = @{
         0  = 'None'
@@ -5703,81 +5741,95 @@ function Get-OutlookAddin {
         16 = 'LoadAtNextStartupOnly'
     }
 
-    $cache = @{}
+    @(
+        'Registry::HKLM\SOFTWARE\Microsoft\Office\Outlook\Addins'
+        'Registry::HKLM\SOFTWARE\WOW6432Node\Microsoft\Office\Outlook\Addins'
+        'Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\Office\Outlook\Addins'
+        'Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\Office\Outlook\AddIns'
+        Join-Path $userRegRoot 'Software\Microsoft\Office\Outlook\Addins'
+    ) | Get-ChildItem -ErrorAction SilentlyContinue | & {
+        begin { $cache = @{} }
+        process {
+            $addin = $_
 
-    foreach ($addin in $addinKeys) {
-        $props = @{}
-        $props['Path'] = $addin.Name
-        $props['ProgID'] = $addin.PSChildName
+            try {
+                $props = @{}
+                $props['Path'] = $addin.Name
+                $props['ProgID'] = $addin.PSChildName
 
-        # First check LoadBehavior and if it's missing, ignore this entry
-        $loadBehaviorValue = $addin.GetValue('LoadBehavior')
+                # First check LoadBehavior and if it's missing, ignore this entry
+                $loadBehaviorValue = $addin.GetValue('LoadBehavior')
 
-        if ($loadBehaviorValue) {
-            $props['LoadBehavior'] = $LoadBehavior[$loadBehaviorValue]
-        }
-        else {
-            Write-Log "Skipping $($props['ProgID']) because its LoadBehavior is null."
-            continue
-        }
-
-        if ($cache.ContainsKey($props['ProgID'])) {
-            Write-Log "Skipping $($props['ProgID']) because it's already found."
-            continue
-        }
-        else {
-            $cache.Add($props['ProgID'], $null)
-        }
-
-        # Try to get CLSID.
-        $($clsid = ConvertTo-CLSID $props['ProgID'] -User $User -ErrorAction Continue) 2>&1 | Write-Log
-
-        if ($clsid) {
-            $props['CLSID'] = $clsid.String
-
-            # Check InprocServer32, LocalServer32, RemoteServer32
-            foreach ($comType in @('InprocServer32', 'LocalServer32', 'RemoteServer32')) {
-                $comSpec = Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
-
-                if (-not $comSpec) {
-                    $comSpec = Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\WOW6432Node\CLSID\\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
+                if ($loadBehaviorValue) {
+                    $props['LoadBehavior'] = $LoadBehavior[$loadBehaviorValue]
+                }
+                else {
+                    Write-Log "Skipping $($props['ProgID']) because its LoadBehavior is null."
+                    return
                 }
 
-                if (-not $comSpec) {
-                    $comSpec = Get-ItemProperty "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
+                if ($cache.ContainsKey($props['ProgID'])) {
+                    Write-Log "Skipping $($props['ProgID']) because it's already found."
+                    return
+                }
+                else {
+                    $cache.Add($props['ProgID'], $null)
                 }
 
-                if (-not $comSpec) {
-                    $comSpec = Get-ItemProperty "Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID\$($props['CLSID'])\$comType" -ErrorAction SilentlyContinue
+                # Try to get CLSID.
+                $($clsid = ConvertTo-CLSID $props['ProgID'] -User $User -ErrorAction Continue) 2>&1 | Write-Log
+
+                if ($clsid) {
+                    $props['CLSID'] = $clsid.String
+
+                    # Check InprocServer32, LocalServer32, RemoteServer32
+                    @('InprocServer32', 'LocalServer32', 'RemoteServer32') | & {
+                        process {
+                            # The order of keys matters here for speed.
+                            # Checking sub key of HKEY_CLASSES_ROOT\CLSID\ & HKEY_CLASSES_ROOT\WOW6432Node\CLSID\ are quite slow when the path does not exist (> 100 ms). Thus they are checked later.
+                            @(
+                                'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\'
+                                'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID'
+                                'Registry::HKEY_CLASSES_ROOT\CLSID\'
+                                'Registry::HKEY_CLASSES_ROOT\WOW6432Node\CLSID\'
+                            ) | & {
+                                param ($subPath) # e.g. "{C15AC6D0-15EE-49B3-9B2A-948320426B88}\InprocServer32"
+                                process {
+                                    $comSpec = Get-ItemProperty (Join-Path $_ $subPath) -ErrorAction SilentlyContinue
+
+                                    if ($comSpec) {
+                                        $props['Location'] = $comSpec.'(default)'
+                                        $props['ThreadingModel'] = $comSpec.ThreadingModel
+                                        $props['CodeBase'] = $comSpec.CodeBase
+                                        # Stop the pipeline
+                                        $true
+                                    }
+                                }
+                            } (Join-Path $props['CLSID'] $_)
+                        }
+                    } | Select-Object -First 1 | Out-Null
+                }
+                elseif ($manifest = $addin.GetValue('Manifest')) {
+                    # A managed addin does not have CLSID. Check "Manifest" instead.
+                    $props['Location'] = $manifest
+                    Write-Log "Manifest is found. This is a VSTO addin."
+                }
+                else {
+                    # If both CLSID & Manifest are missing, ignore this entry.
+                    return
                 }
 
-                if ($comSpec) {
-                    $props['Location'] = $comSpec.'(default)'
-                    $props['ThreadingModel'] = $comSpec.ThreadingModel
-                    $props['CodeBase'] = $comSpec.CodeBase
-                    break
-                }
+                # ToDo: text might get garbled in DBCS environment.
+                $props['Description'] = $addin.GetValue('Description')
+                $props['FriendlyName'] = $addin.GetValue('FriendlyName')
+
+                [PSCustomObject]$props
+            }
+            finally {
+                $addin.Close()
             }
         }
-        elseif ($manifest = $addin.GetValue('Manifest')) {
-            # A managed addin does not have CLSID. Check "Manifest" instead.
-            $props['Location'] = $manifest
-            Write-Log "Manifest is found. This is a VSTO addin."
-        }
-        else {
-            # If both CLSID & Manifest are missing, ignore this entry.
-            continue
-        }
-
-        # ToDo: text might get garbled in DBCS environment.
-        $props['Description'] = $addin.GetValue('Description')
-        $props['FriendlyName'] = $addin.GetValue('FriendlyName')
-
-        [PSCustomObject]$props
     }
-
-    # Close all the keys
-    $addinKeys | ForEach-Object { $_.Close() }
 }
 
 function Get-ClickToRunConfiguration {
@@ -5797,7 +5849,7 @@ function Get-WebView2 {
         'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
         'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
         'Registry::HKEY_CURRENT_USER\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-    ) | ForEach-Object { Get-ItemProperty $_ -ErrorAction SilentlyContinue }
+    ) | Get-ItemProperty -ErrorAction SilentlyContinue
 }
 
 function Get-DeviceJoinStatus {
@@ -5891,7 +5943,8 @@ function Start-PerfTrace {
     )
 
     $configFile = Join-Path $Path "perf.config"
-    Out-File -FilePath $configFile -InputObject $counters -Force -Encoding "ascii"
+    # Note: Encoding must be Ascii here ('utf8' will write as UTF-8 with BOM, which does not work for logman)
+    Set-Content -LiteralPath $configFile -Value $counters -Encoding Ascii
 
     $filePath = Join-Path $Path $FileName
     Write-Log "Staring PerfCounter. Mode: $LogFileMode, IntervalSecond: $IntervalSecond, MaxFileSizeMB: $MaxFileSizeMB, FilePath: $filePath"
@@ -5911,6 +5964,7 @@ function Start-PerfTrace {
 
     if ($LASTEXITCODE -ne 0) {
         Write-Error "logman failed with 0x$('{0:x}' -f $LASTEXITCODE). $stdout"
+        return
     }
 
     $stdout = & logman.exe start 'PerfCounter'
@@ -5958,12 +6012,15 @@ function Save-Process {
     }
 
     Write-Log "Saving Win32_Process"
-    Get-WmiObject -Class Win32_Process | ForEach-Object {
-        if ($_.ProcessName -eq 'Outlook.exe' -or $_.ProcessName -like 'Fiddler*.exe') {
-            $owner = $_.GetOwner()
-            $_ | Add-Member -MemberType NoteProperty -Name 'User' -Value "$($owner.Domain)\$($owner.User)"
+
+    Get-WmiObject -Class Win32_Process | & {
+        process {
+            if ($_.ProcessName -eq 'Outlook.exe' -or $_.ProcessName -like 'Fiddler*.exe') {
+                $owner = $_.GetOwner()
+                $_ | Add-Member -MemberType NoteProperty -Name 'User' -Value "$($owner.Domain)\$($owner.User)"
+            }
+            $_
         }
-        $_
     } | Export-Clixml -Path (Join-Path $Path "Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
 }
 
@@ -6047,8 +6104,11 @@ function Start-Wpr {
         if (-not (Test-Path $Path)) {
             New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
         }
+
         $Path = Resolve-Path $Path
     }
+
+    Write-Log "Starting WPR trace"
 
     if ($Path) {
         # For some reason, if the path contains a space & is double-quoted & ends with a backslash, wpr fails with "Invalid temporary trace directory. Error code: 0xc5586004"
@@ -6087,18 +6147,26 @@ function Stop-Wpr {
     if (-not (Test-Path $Path)) {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
+
     $Path = Resolve-Path $Path
-
     $filePath = Join-Path $Path $FileName
-    $(wpr.exe -stop $filePath -skipPdbGen) 2>&1 | Out-Null
 
-    # If "Invalid command syntax", retry without -skipPdbGen because the option might not be avaiable (e.g. W2019)
-    if ($LASTEXITCODE -eq 0xc5600602) {
-        $(wpr.exe -stop $filePath) 2>&1 | Out-Null
+    Write-Log "Stopping WPR trace"
+
+    # Here Start-Process is used to suppress progress bar written by wpr.exe.
+    $process = Start-Process -FilePath 'wpr.exe' -ArgumentList "-stop `"$filePath`"", '-skipPdbGen' -WindowStyle Hidden -PassThru -Wait
+    $exitCode = $process.ExitCode
+    $process.Dispose()
+
+    # If "Invalid command syntax", retry without -skipPdbGen because the option might not be available (e.g. W2019)
+    if ($exitCode -eq 0xc5600602) {
+        $process = Start-Process -FilePath 'wpr.exe' -ArgumentList "-stop `"$filePath`"" -WindowStyle Hidden -PassThru -Wait
+        $exitCode = $process.ExitCode
+        $process.Dispose()
     }
 
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "wpr failed to stop. LASTEXITCODE: 0x$('{0:x}' -f $LASTEXITCODE)."
+    if ($exitCode -ne 0) {
+        Write-Error "wpr failed to stop. ExitCode: 0x$('{0:x}' -f $exitCode)."
     }
 }
 
@@ -6134,9 +6202,20 @@ function Get-IMProvider {
 
     $isRunning = $false
     $process = Get-Process -Name $defaultIMApp -ErrorAction SilentlyContinue | Select-Object -First 1
+
     if ($process) {
         $isRunning = $true
         $process.Dispose()
+    }
+
+    # If IM application is not runnning, bail because instantiating its COM object will start the app and can take a long time.
+    if (-not $isRunning) {
+        [PSCustomObject]@{
+            DefaultIMApp = $defaultIMApp
+            IsRunning    = $isRunning
+        }
+
+        return
     }
 
     $imProvider = $null
@@ -6262,8 +6341,7 @@ function Invoke-WamSignOut {
     # https://docs.microsoft.com/en-us/uwp/api/windows.security.authentication.web.core.webauthenticationcoremanager.findallaccountsasync?view=winrt-20348
     $accounts = Await ([Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::FindAllAccountsAsync($provider, $ClientId)) ([Windows.Security.Authentication.Web.Core.FindAllAccountsResult, Windows, ContentType = WindowsRuntime])
 
-    $count = 0
-    $accounts.Accounts | ForEach-Object { $count++ }
+    $count = $accounts.Accounts | Measure-Object | Select-Object -ExpandProperty Count
 
     if ($count -eq 0) {
         Write-Log "No account found."
@@ -6469,6 +6547,11 @@ function Get-AutodiscoverConfig {
     }
 
     $officeInfo = Get-OfficeInfo
+
+    if (-not $officeInfo) {
+        return
+    }
+
     $major = $officeInfo.Version.Split('.')[0] -as [int]
 
     $valueNames = @('Exclude*', 'Prefer*')
@@ -6530,7 +6613,6 @@ function Collect-OutlookInfo {
         [ValidateSet('Zip', 'Cab')]
         [string]$ArchiveType = 'Zip',
         # Skip archiving
-        [Alias('SkipZip')]
         [switch]$SkipArchive,
         # AutoFlush log file.
         [switch]$AutoFlush,
@@ -6592,11 +6674,32 @@ function Collect-OutlookInfo {
         }
     }
     else {
-        # Get logon user & save the error (cannot use Write-Log yet).
-        $logonUserError = $($targetUser = Get-LogonUser) 2>&1
-        # If Get-LogonUser fails for some reason (e.g. Access Denied), fall back to current user
-        if (-not $targetUser) {
-            $targetUser = $currentUser
+        # Get logon users
+        $logonUserErrors = $($logonUsers = @(Get-LogonUser)) 2>&1
+
+        if ($logonUserErrors) {
+            Write-Error "Failed to get logon users.`n$($logonUserErrors -join "`n")"
+            return
+        }
+
+        if ($logonUsers.Count -eq 0) {
+            Write-Error "Cannot find any logon user."
+            return
+        }
+        elseif ($logonUsers.Count -eq 1) {
+            $targetUser = $logonUsers[0]
+        }
+        else {
+            # Multiple logon users are found. If the current user is one of them, use it as targetUser. Otherwise, 'User' parameter needs to be used.
+            $currentLogonUser = $logonUsers | Where-Object { $_.Sid -eq $currentUser.Sid } | Select-Object -First 1
+
+            if ($currentLogonUser) {
+                $targetUser = $currentLogonUser
+            }
+            else {
+                Write-Error "Found multiple logon users ($($logonUsers.Count) users). Please specify the target user by `"-User`" parameter."
+                return
+            }
         }
     }
 
@@ -6611,7 +6714,12 @@ function Collect-OutlookInfo {
 
             # Get the list of current parameters that's also available in the updated cmdlet
             $params = @{}
-            $PSBoundParameters.Keys | ForEach-Object { if ($updatedSelf.Parameters.ContainsKey($_)) { $params.Add($_, $PSBoundParameters[$_]) } }
+
+            foreach ($_ in $PSBoundParameters.GetEnumerator()) {
+                if ($updatedSelf.Parameters.ContainsKey($_.Key)) {
+                    $params.Add($_.Key, $_.Value)
+                }
+            }
 
             if ($updatedSelf.Parameters.ContainsKey('SkipAutoUpdate')) {
                 $params.Add('SkipAutoUpdate', $true)
@@ -6634,7 +6742,6 @@ function Collect-OutlookInfo {
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
     Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin: $runAsAdmin"
     Write-Log "Target user: $($targetUser.Name) ($($targetUser.Sid))"
-    Write-Log $logonUserError
     Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
 
     $sb = New-Object System.Text.StringBuilder
@@ -6647,9 +6754,11 @@ function Collect-OutlookInfo {
     Write-Log "Parameters $($sb.ToString())"
 
     # To use Start-Task, make sure to open runspaces first and close it when finished.
-    # Currently MaxRunspaces is 8 or more because there are 7 tasks at most. 3 of them, outlookMonitorTask, psrTask, and hungMonitorTask are long running.
-    Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(8, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
-    # Open-TaskRunspace -Variables (Get-Variable 'logWriter')
+    # Currently MaxRunspaces is 8 or more because there are 8 tasks at most. 3 of them, outlookMonitorTask, psrTask, and hungMonitorTask are long running.
+    # Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(8, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
+
+    $vars = 'logWriter', 'PSDefaultParameterValues' | Get-Variable
+    Open-TaskRunspace -Variables $vars -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(8, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
 
     # Configure log file mode and max file size for ETW traces (OutlookTrace, WAM, LDAP, and CAPI)
     $PSDefaultParameterValues['Start-*Trace:LogFileMode'] = $LogFileMode
@@ -6820,16 +6929,32 @@ function Collect-OutlookInfo {
                     $psrStartedEvent.Set() | Out-Null
                     $canceled = $cancelToken.WaitHandle.WaitOne($waitDurationMS)
                     Stop-PSR
+
                     if ($canceled) {
                         Write-Log "PSR task cancellation is acknowledged."
                         break
                     }
+
                     if ($circular) {
-                        $removedCount = 0
-                        $cutoff = [datetime]::Now.AddHours(-1)
-                        Get-ChildItem $path -Filter '*.mht' | Where-Object { $_.LastWriteTime -lt $cutoff } | ForEach-Object { Remove-Item $_.FullName; $removedCount++ }
-                        if ($removedCount) {
-                            Write-Log "$removedCount mht files were removed because they were older than 1 hour"
+                        # Remove mht files older than 1 hour
+                        Get-ChildItem $path -Filter '*.mht' | & {
+                            begin {
+                                $cutfoff = [datetime]::Now.AddHours(-1)
+                                $removedCount = 0
+                            }
+
+                            process {
+                                if ($_.LastWriteTime -lt $cutoff) {
+                                    Remove-Item $_.FullName
+                                    ++$removedCount
+                                }
+                            }
+
+                            end {
+                                if ($removedCount) {
+                                    Write-Log "$removedCount mht files were removed because they were older than 1 hour"
+                                }
+                            }
                         }
                     }
                 }
@@ -6993,12 +7118,6 @@ function Collect-OutlookInfo {
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted) {
             Write-Log "Waiting for the user to stop"
             Read-Host 'Hit enter to stop'
-
-            # To allow Write-Host from another runspace, don't block the host by Read-Host here.
-            # Write-Host "Hit enter to stop:"
-            # while (-not $Host.UI.RawUI.KeyAvailable -or $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown").VirtualKeyCode -ne 13) {
-            #     Start-Sleep 1
-            # }
         }
     }
     catch {
@@ -7207,13 +7326,17 @@ function Collect-OutlookInfo {
     Invoke-Item $Path
 }
 
-# Configure Export-Clixml & Out-File to use UTF8 by default.
+# Configure Export-Clixml, Out-File, Set-Content to use UTF8 by default.
 if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Contains("Export-CliXml:Encoding")) {
     $PSDefaultParameterValues.Add("Export-Clixml:Encoding", 'UTF8')
 }
 
 if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Contains("Out-File:Encoding")) {
     $PSDefaultParameterValues.Add("Out-File:Encoding", 'utf8')
+}
+
+if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Contains("Set-Content:Encoding")) {
+    $PSDefaultParameterValues.Add("Set-Content:Encoding", 'utf8')
 }
 
 # Add type for Win32 interop
@@ -7224,4 +7347,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Collect-OutlookInfo
