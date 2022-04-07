@@ -11,16 +11,16 @@ Fiddler トレースや Process Monitor ログも含めて採取する場合に�
 
 ## 利用方法
 
-1.  Outlook を実行している場合には終了します。
-2.  OutlookTrace.psm1 をダウンロードして対象のマシン上にコピーします。
-3.  管理者権限で cmd を起動します。
-4.  PowerShell を以下のように起動します。
+1. Outlook を実行している場合には終了します。
+2. OutlookTrace.psm1 をダウンロードして対象のマシン上にコピーします。
+3. 管理者権限で cmd を起動します。
+4. PowerShell を以下のように起動します。
 
     ```
     powershell -ExecutionPolicy Bypass
     ```
 
-5.  OutlookTrace.psm1 をインポートします。
+5. OutlookTrace.psm1 をインポートします。
 
     ```
     Import-Module <OutlookTrace.psm1 へのパス> -DisableNameChecking
@@ -32,7 +32,7 @@ Fiddler トレースや Process Monitor ログも含めて採取する場合に�
     Import-Module C:\temp\OutlookTrace.psm1 -DisableNameChecking
     ```
 
-6.  Collect-OutlookInfo を実行します
+6. Collect-OutlookInfo を実行します
 
     ※ 採取するコンポーネントについてはエンジニアからの案内をご確認ください。
 
@@ -48,7 +48,7 @@ Fiddler トレースや Process Monitor ログも含めて採取する場合に�
     Collect-OutlookInfo -Path C:\temp -Component Configuration, Outlook, Netsh, PSR, WAM
     ```
 
-7.  正常にトレースが開始されると、"Hit enter to stop" と表示されます。
+7. 正常にトレースが開始されると、`Hit enter to stop` と表示されます。
 
     ※ 採取するコンポーネントに Dump を含めた場合、`Hit enter to save a process dump of Outlook. To quit, enter q:` とプロンプトされます。ダンプ ファイルを取得したいタイミングで Enter を入力してください。ハング事象の場合、およそ 30 秒間隔で 3 回程度採取ください。ダンプ ファイルの採取が終了したら `q` を入力します。
 
@@ -86,11 +86,12 @@ Fiddler トレースや Process Monitor ログも含めて採取する場合に�
        ```
 
     4. [1. キャプチャ開始] をクリックします。
-    自動的にブラウザが起動されたら、そのブラウザはクローズいただいて結構です。
+
+        自動的にブラウザが起動されたら、そのブラウザはクローズいただいて結構です。
     </details>
 
-8.  Outlook を起動して、現象を再現させます。
-9.  採取するコンポーネントに Fiddler を含めた場合、以下の手順で停止して保存します。
+8. Outlook を起動して、現象を再現させます。
+9. 採取するコンポーネントに Fiddler を含めた場合、以下の手順で停止して保存します。
 
     <details>
         <summary>Fiddler 停止方法</summary>
@@ -120,7 +121,7 @@ Fiddler トレースや Process Monitor ログも含めて採取する場合に�
 手順 6 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。
 Fiddler トレースを採取した場合には、手順 8 で指定したパスワードも併せてお寄せください。
 
-# ライセンス
+## ライセンス
 
 Copyright (c) 2021 Ryusuke Fujita
 
