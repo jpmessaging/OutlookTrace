@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-04-06'
+$Version = 'v2022-04-13'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -1294,7 +1294,7 @@ function Compress-Folder {
         # Use Shell.Application COM.
         # Create a Zip file manually
         $shellApp = New-Object -ComObject Shell.Application
-        Set-Content $archivePath ("PK" + [char]5 + [char]6 + ("$([char]0)" * 18))
+        Set-Content $archivePath ("PK" + [char]5 + [char]6 + ("$([char]0)" * 18)) -Encoding Ascii
         (Get-Item $archivePath).IsReadOnly = $false
         $zipFile = $shellApp.NameSpace($archivePath)
 
@@ -1570,7 +1570,7 @@ function Start-WamTrace {
 
     # Create a provider listing
     $providerFile = Join-Path $Path -ChildPath 'wam.prov'
-    Set-Content $WamProviders -Path $providerFile -ErrorAction Stop
+    Set-Content $WamProviders -Path $providerFile -Encoding Ascii -ErrorAction Stop
 
     switch ($LogFileMode) {
         'NewFile' {
@@ -1641,9 +1641,9 @@ function Start-OutlookTrace {
     Write-Log "Creating a provider listing according to the version $major"
 
     switch ($major) {
-        14 { Set-Content $Outlook2010Providers -Path $providerFile -ErrorAction Stop; break }
-        15 { Set-Content $Outlook2013Providers -Path $providerFile -ErrorAction Stop; break }
-        16 { Set-Content $Outlook2016Providers -Path $providerFile -ErrorAction Stop; break }
+        14 { Set-Content $Outlook2010Providers -Path $providerFile -Encoding Ascii -ErrorAction Stop; break }
+        15 { Set-Content $Outlook2013Providers -Path $providerFile -Encoding Ascii -ErrorAction Stop; break }
+        16 { Set-Content $Outlook2016Providers -Path $providerFile -Encoding Ascii -ErrorAction Stop; break }
         default { throw "Couldn't find the version from $_" }
     }
 
@@ -6983,7 +6983,7 @@ function Collect-OutlookInfo {
         if ($Component -contains 'WAM') {
             Enable-WamEventLog -ErrorAction SilentlyContinue
             Stop-WamTrace -ErrorAction SilentlyContinue
-            Start-WamTrace -Path (Join-Path $tempPath 'WAM')
+            Start-WamTrace -Path (Join-Path $tempPath 'WAM') -ErrorAction Stop
             $wamTraceStarted = $true
         }
 
