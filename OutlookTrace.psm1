@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-04-13'
+$Version = 'v2022-04-14'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -1294,7 +1294,7 @@ function Compress-Folder {
         # Use Shell.Application COM.
         # Create a Zip file manually
         $shellApp = New-Object -ComObject Shell.Application
-        Set-Content $archivePath ("PK" + [char]5 + [char]6 + ("$([char]0)" * 18)) -Encoding Ascii
+        Set-Content -LiteralPath $archivePath -Value ("PK" + [char]5 + [char]6 + ("$([char]0)" * 18)) -Encoding Ascii
         (Get-Item $archivePath).IsReadOnly = $false
         $zipFile = $shellApp.NameSpace($archivePath)
 
@@ -1570,7 +1570,7 @@ function Start-WamTrace {
 
     # Create a provider listing
     $providerFile = Join-Path $Path -ChildPath 'wam.prov'
-    Set-Content $WamProviders -Path $providerFile -Encoding Ascii -ErrorAction Stop
+    Set-Content -LiteralPath $providerFile -Value $WamProviders -Encoding Ascii -ErrorAction Stop
 
     switch ($LogFileMode) {
         'NewFile' {
@@ -1640,12 +1640,14 @@ function Start-OutlookTrace {
     $major = $officeInfo.Version.Split('.')[0] -as [int]
     Write-Log "Creating a provider listing according to the version $major"
 
-    switch ($major) {
-        14 { Set-Content $Outlook2010Providers -Path $providerFile -Encoding Ascii -ErrorAction Stop; break }
-        15 { Set-Content $Outlook2013Providers -Path $providerFile -Encoding Ascii -ErrorAction Stop; break }
-        16 { Set-Content $Outlook2016Providers -Path $providerFile -Encoding Ascii -ErrorAction Stop; break }
+    $providers = switch ($major) {
+        14 { $Outlook2010Providers; break }
+        15 { $Outlook2013Providers; break }
+        16 { $Outlook2016Providers; break }
         default { throw "Couldn't find the version from $_" }
     }
+
+    Set-Content -LiteralPath $providerFile -Value $providers -Encoding Ascii -ErrorAction Stop
 
     # Configure log file mode, filename, and max file size if ncessary.
     switch ($LogFileMode) {
@@ -4019,7 +4021,8 @@ function Start-FiddlerCap {
             # Usually you can simply specify ErrorAction:Continue to the cmdlet. However, Start-Process does not respect that. So, I need to manually set $ErrorActionPreference here.
             $err = $($process = Invoke-Command {
                     $ErrorActionPreference = "Continue"
-                    Start-Process $fiddlerSetupFile -ArgumentList "/S /D=`"$fiddlerPath`"" -Wait -PassThru
+                    # Do not double-quote $fiddlerPath here like /D=`"$fiddlerPath`". FiddlerSetupCap.exe doesn't like it for some reason. It's ok to have spaces in the path.
+                    Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru
                 }) 2>&1
 
             if ($process.ExitCode -ne 0) {
