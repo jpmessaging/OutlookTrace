@@ -6559,8 +6559,8 @@ function Get-AutodiscoverConfig {
 
     $valueNames = @('Exclude*', 'Prefer*')
 
-    foreach ($path in @("Software\Microsoft\Office\$major.0\Outlook\AutoDiscover", "Software\Policies\Microsoft\Office\$major.0\Outlook\AutoDiscover")) {
-        $path = Join-Path $userRegRoot $path
+    foreach ($_ in @("Software\Microsoft\Office\$major.0\Outlook\AutoDiscover", "Software\Policies\Microsoft\Office\$major.0\Outlook\AutoDiscover")) {
+        $path = Join-Path $userRegRoot $_
         $props = Get-ItemProperty $path -Name $valueNames -ErrorAction SilentlyContinue
 
         if (-not $props) {
@@ -6571,7 +6571,7 @@ function Get-AutodiscoverConfig {
             $shortPath = $Matches[1]
         }
 
-        $hash = @{ Path = $shortPath }
+        $hash = [ordered]@{ Path = $shortPath }
 
         foreach ($name in (Get-Member -InputObject $props -MemberType NoteProperty -Name $valueNames | Select-Object -ExpandProperty 'Name')) {
             $hash.Add($name, $props.$name)
