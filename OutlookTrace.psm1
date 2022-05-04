@@ -6010,7 +6010,9 @@ function Save-Process {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        $Path
+        $Path,
+        # Name of process whose owner info is also saved.
+        [string[]]$Name
     )
 
     if (-not (Test-Path $Path)) {
@@ -6021,10 +6023,18 @@ function Save-Process {
 
     Get-WmiObject -Class Win32_Process | & {
         process {
-            if ($_.ProcessName -eq 'Outlook.exe' -or $_.ProcessName -like 'Fiddler*.exe') {
-                $owner = $_.GetOwner()
-                $_ | Add-Member -MemberType NoteProperty -Name 'User' -Value "$($owner.Domain)\$($owner.User)"
+            $processName = [IO.Path]::GetFileNameWithoutExtension($_.ProcessName)
+            if ($Name | Where-Object { $processName -like $_ } | Select-Object -First 1) {
+                try {
+                    # GetOwner() could fail if the process has exited. Not likely, but be defensive here.
+                    $owner = $_.GetOwner()
+                    $_ | Add-Member -MemberType NoteProperty -Name 'User' -Value "$($owner.Domain)\$($owner.User)"
+                }
+                catch {
+                    # Ignore
+                }
             }
+
             $_
         }
     } | Export-Clixml -Path (Join-Path $Path "Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
@@ -6568,6 +6578,57 @@ function Get-SocialConnectorConfig {
     }
 }
 
+function Start-ProcessMonitoring {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        # Folder path to save process list
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        # Name of processes to monitor
+        [string[]]$Name,
+        [System.Threading.CancellationToken]$CancelToken,
+        [TimeSpan]$Interval = [TimeSpan]::FromSeconds(3)
+    )
+
+    $targets = $Name | & { process { @{ Name = $_; Ids = @{} } } }
+    Write-Log "Start monitoring $($Name -join ', ')."
+
+    while ($true) {
+        $found = Get-Process -Name $Name -ErrorAction SilentlyContinue | & {
+            process {
+                # Update the found target's info.
+                $name = $_.ProcessName
+                $id = $_.Id
+                $startTime = $_.StartTime
+                $_.Dispose()
+
+                $targets | & {
+                    process {
+                        if ($name -like $_.Name -and (-not $_.Ids.ContainsKey($id) -or $_.Ids[$id] -ne $startTime) ) {
+                            Write-Log "Found new $name with PID $id, StartTime $startTime."
+                            $_.Ids.Add($id, $startTime)
+                            $true
+                        }
+                    }
+                } | Select-Object -First 1
+            }
+        }
+
+        # $found can be a bool or an array of bool, and either case is ok.
+        if ($found) {
+            Save-Process -Path $Path -Name $Name
+        }
+
+        if ($CancelToken.IsCancellationRequested) {
+            Write-Log "Cancel request acknowledged."
+            return
+        }
+
+        Start-Sleep -Seconds $Interval.Seconds
+    }
+}
+
 <#
 .SYNOPSIS
     Collect Microsoft Office Outlook related configuration & traces
@@ -6836,7 +6897,7 @@ function Collect-OutlookInfo {
             Run-Command { param($user, $OfficeDir) Save-DLP -User $user -Path $(Join-Path $OfficeDir 'DLP') } -ArgumentList $targetUser, $OfficeDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 80
-            Run-Command { param($OSDir) Save-Process -Path $OSDir } -ArgumentList $OSDir
+            Run-Command { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir
 
             if ($targetUser) {
                 $targetUser | Export-Clixml -Path (Join-Path $OSDir 'User.xml')
@@ -6844,20 +6905,8 @@ function Collect-OutlookInfo {
 
             # The user might start & stop Outlook while tracing. In order to capture Outlook's instance, run a task to check Outlook.exe periodically until it finds an instance.
             Write-Log "Starting outlookMonitorTask."
-            $outlookMonitorTask = Start-Task {
-                param($OSDir)
-                while ($true) {
-                    if ($p = Get-Process -Name 'Outlook') {
-                        Write-Log "outlookMonitorTask found Outlook's process (PID: $($p.Id))"
-                        Save-Process -Path $OSDir
-                        $p.Dispose()
-                        return
-                    }
-                    else {
-                        Start-Sleep -Seconds 3
-                    }
-                }
-            } -ArgumentList $OSDir
+            $outlookMonitorTaskCts = New-Object System.Threading.CancellationTokenSource
+            $outlookMonitorTask = Start-Task { param ($path, $name, $cancelToken) Start-ProcessMonitoring -Path $path -Name $name -CancelToken $cancelToken } -ArgumentList $OSDir, @('Outlook', 'Fiddler*'), $outlookMonitorTaskCts.Token
 
             Write-Progress -Activity $activity -Status 'Done' -Completed
         }
@@ -7222,8 +7271,8 @@ function Collect-OutlookInfo {
         # Wait for the tasks started earlier and save the event logs
         if ($Component -contains 'Configuration') {
             if ($outlookMonitorTask) {
-                # This task just tries to save Outlook process's info. No need to wait or receive.
-                $(Remove-Task $outlookMonitorTask) 2>&1 | Write-Log
+                $outlookMonitorTaskCts.Cancel()
+                $($outlookMonitorTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
             }
 
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
@@ -7282,7 +7331,7 @@ function Collect-OutlookInfo {
 
             # Save process list again after traces
             if ($Component.Count -gt 1) {
-                Run-Command { param($OSDir) Save-Process -Path $OSDir } -ArgumentList $OSDir
+                Run-Command { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir
             }
         }
 
