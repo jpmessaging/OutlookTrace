@@ -1935,10 +1935,13 @@ function Stop-PSR {
         return
     }
 
-    Write-Log 'Stopping PSR'
+    Write-Log "Stopping PSR (PID: $($currentInstance.Id))."
     $stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru
 
     $(Wait-Process -InputObject $currentInstance) 2>&1 | Write-Log
+
+    Write-Log "PSR instance is stopped"
+    $currentInstance.Dispose()
 
     # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hung.
     # The existing instance is supposed to signal an event and 'psr /stop' instance is waiting for this event to be signaled. But it seems this does not happen when there were no clicks.
@@ -6396,9 +6399,10 @@ The output object will have a property called "Profiles".
 function Get-RegistryChildItem {
     [CmdletBinding()]
     param(
+        [Parameter(Mandatory = $true)]
         # Registry path
-        [string]$Path,
-        [switch]$IncludeRawItemProperty
+        [string]$Path
+        # [switch]$IncludeRawItemProperty
     )
 
     if (-not (Test-Path $Path)) {
@@ -6416,26 +6420,10 @@ function Get-RegistryChildItem {
         $key = $node.Key
         $parent = $node.Parent
 
-        if ($IncludeRawItemProperty) {
-            $props = $key | Get-ItemProperty
-        }
-        else {
-            $hash = [ordered]@{}
-
-            foreach ($name in ($key.GetValueNames() | Sort-Object)) {
-                if ($name) {
-                    $hash.Add($name, $key.GetValue($name))
-                }
-                else {
-                    $hash.Add('(default)', $key.GetValue($name))
-                }
-            }
-
-            $props = [PSCustomObject]$hash
-        }
+        $props = $key | Get-ItemProperty
 
         $obj = [PSCustomObject]@{
-            # KeyName    = $key.PSChildName
+            PSPath     = $key.PSPath # $key.PSPath.SubString('Microsoft.PowerShell.Core\Registry::'.Length)
             Properties = $props
         }
 
@@ -6448,8 +6436,8 @@ function Get-RegistryChildItem {
         }
 
         # Add child nodes with parent being the current object
-        foreach ($child in @(Get-ChildItem $key.PSPath)) {
-            $stack.Push(@{Parent = $obj; Key = $child })
+        Get-ChildItem $key.PSPath | & {
+            process { $stack.Push(@{Parent = $obj; Key = $_ }) }
         }
 
         $key.Dispose()
@@ -6500,7 +6488,8 @@ function Get-AlternateId {
 
     if ($domainHint) {
         $domainZonePath = Join-Path $userRegRoot "Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\Domains\$domainHint"
-        $domainZone = Get-RegistryChildItem $domainZonePath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'Properties'
+        # $domainZone = Get-RegistryChildItem $domainZonePath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'Properties'
+        $domainZone = Get-ItemProperty $domainZonePath -ErrorAction SilentlyContinue | Select-Object -Property * -ExcludeProperty PS*
     }
 
     [PSCustomObject]@{
@@ -6522,18 +6511,15 @@ function Get-UseOnlineContent {
         return
     }
 
-    foreach ($path in @('Software\Microsoft\Office\16.0\Common\Internet', 'Software\Policies\Microsoft\office\16.0\common\Internet')) {
+    if (-not $officeInfo) {
+        return
+    }
+
+    $major = $officeInfo.Version.Split('.')[0]
+
+    foreach ($path in @("Software\Microsoft\Office\$major.0\Common\Internet", "Software\Policies\Microsoft\office\$major.0\common\Internet")) {
         $path = Join-Path $userRegRoot $path
-        $prop = Get-ItemProperty (Join-Path $userRegRoot $path) -Name 'UseOnlineContent' -ErrorAction SilentlyContinue
-
-        if ($path -match 'Registry::(.*)') {
-            $shortPath = $Matches[1]
-        }
-
-        [PSCustomObject]@{
-            Path             = $shortPath
-            UseOnlineContent = $prop.UseOnlineContent
-        }
+        Get-ItemProperty $path -Name 'UseOnlineContent' -ErrorAction SilentlyContinue
     }
 }
 
@@ -6555,29 +6541,30 @@ function Get-AutodiscoverConfig {
         return
     }
 
-    $major = $officeInfo.Version.Split('.')[0] -as [int]
-
-    $valueNames = @('Exclude*', 'Prefer*')
+    $major = $officeInfo.Version.Split('.')[0]
 
     foreach ($_ in @("Software\Microsoft\Office\$major.0\Outlook\AutoDiscover", "Software\Policies\Microsoft\Office\$major.0\Outlook\AutoDiscover")) {
         $path = Join-Path $userRegRoot $_
-        $props = Get-ItemProperty $path -Name $valueNames -ErrorAction SilentlyContinue
+        Get-ItemProperty $path -Name Exclude*, Prefer* -ErrorAction SilentlyContinue | Select-Object -Property * -ExcludeProperty PSParentPath, PSChildName, PSProvider
+    }
+}
 
-        if (-not $props) {
-            continue
-        }
+function Get-SocialConnectorConfig {
+    [CmdletBinding()]
+    param (
+        [string]$User
+    )
 
-        if ($path -match 'Registry::(.*)') {
-            $shortPath = $Matches[1]
-        }
+    $userRegRoot = Get-UserRegistryRoot $User
 
-        $hash = [ordered]@{ Path = $shortPath }
+    if (-not $userRegRoot) {
+        return
+    }
 
-        foreach ($name in (Get-Member -InputObject $props -MemberType NoteProperty -Name $valueNames | Select-Object -ExpandProperty 'Name')) {
-            $hash.Add($name, $props.$name)
-        }
-
-        [PSCustomObject]$hash
+    foreach ($_ in @('Software\Microsoft\Office\Outlook\SocialConnector', 'Software\Policies\Microsoft\Office\Outlook\SocialConnector')) {
+        $path = Join-Path $userRegRoot $_
+        # Get-RegistryValue $path -ErrorAction SilentlyContinue
+        Get-ItemProperty $path -ErrorAction SilentlyContinue
     }
 }
 
@@ -6837,6 +6824,7 @@ function Collect-OutlookInfo {
             Run-Command { param($user) Get-OutlookProfile -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { param($user) Get-OutlookAddin -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { param($user) Get-AutodiscoverConfig -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Run-Command { param($user) Get-SocialConnectorConfig -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { Get-ClickToRunConfiguration } -Path $OfficeDir
             Run-Command { param($user) Get-IMProvider -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { param($user) Get-AlternateId -User $user } -ArgumentList $targetUser -Path $OfficeDir
@@ -7350,4 +7338,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Collect-OutlookInfo
