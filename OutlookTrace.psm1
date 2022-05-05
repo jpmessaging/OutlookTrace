@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-05-03'
+$Version = 'v2022-05-04'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -6040,6 +6040,57 @@ function Save-Process {
     } | Export-Clixml -Path (Join-Path $Path "Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
 }
 
+function Start-ProcessMonitoring {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        # Folder path to save process list
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        # Name of processes to monitor
+        [string[]]$Name,
+        [System.Threading.CancellationToken]$CancelToken,
+        [TimeSpan]$Interval = [TimeSpan]::FromSeconds(3)
+    )
+
+    $targets = $Name | & { process { @{ Name = $_; Ids = @{} } } }
+    Write-Log "Start monitoring $($Name -join ', ')."
+
+    while ($true) {
+        $found = Get-Process -Name $Name -ErrorAction SilentlyContinue | & {
+            process {
+                # Update the found target's info.
+                $name = $_.ProcessName
+                $id = $_.Id
+                $startTime = $_.StartTime
+                $_.Dispose()
+
+                $targets | & {
+                    process {
+                        if ($name -like $_.Name -and (-not $_.Ids.ContainsKey($id) -or $_.Ids[$id] -ne $startTime) ) {
+                            Write-Log "Found new $name with PID $id, StartTime $startTime."
+                            $_.Ids.Add($id, $startTime)
+                            $true
+                        }
+                    }
+                } | Select-Object -First 1
+            }
+        }
+
+        # $found can be a bool or an array of bool, and either case is ok.
+        if ($found) {
+            Save-Process -Path $Path -Name $Name
+        }
+
+        if ($CancelToken.IsCancellationRequested) {
+            Write-Log "Cancel request acknowledged."
+            return
+        }
+
+        Start-Sleep -Seconds $Interval.Seconds
+    }
+}
+
 <#
 Check GitHub's latest release and if it's newer, download and import it except if OutlookTrace is installed as module.
 #>
@@ -6456,21 +6507,143 @@ function Get-RegistryChildItem {
     $root
 }
 
+# function Get-OfficeIdentity {
+#     [CmdletBinding(PositionalBinding = $false)]
+#     param(
+#         [string]$User
+#     )
+
+#     $userRegRoot = Get-UserRegistryRoot -User $User
+
+#     if (-not $userRegRoot) {
+#         return
+#     }
+
+#     $identityPath = Join-Path $userRegRoot 'SOFTWARE\Microsoft\Office\16.0\Common\Identity'
+
+#     Get-RegistryChildItem $identityPath
+# }
+
 function Get-OfficeIdentity {
-    [CmdletBinding(PositionalBinding = $false)]
+    [CmdletBinding()]
     param(
         [string]$User
     )
 
-    $userRegRoot = Get-UserRegistryRoot -User $User
+    $userRegRoot = Get-UserRegistryRoot $User
 
     if (-not $userRegRoot) {
         return
     }
 
-    $identityPath = Join-Path $userRegRoot 'SOFTWARE\Microsoft\Office\16.0\Common\Identity'
+    $IdpMapping = @{
+        0 = 'Unknown'
+        1 = 'LiveId'
+        2 = 'OrgId'
+        3 = 'ActiveDirectory'
+        4 = 'ADAL'
+        5 = 'SSPI'
+        6 = 'OAuth2'
+        7 = 'Badger'
+    }
 
-    Get-RegistryChildItem $identityPath
+    # Get the Office Identities
+    $identities = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity\Identities' | Get-ChildItem -ErrorAction SilentlyContinue | & {
+        process {
+            # Get properties and add LastSwitchedTime if available.
+            $props = $_ | Get-ItemProperty
+
+            $lastSwitchedTime = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity\Profiles' | Join-Path -ChildPath $_.PSChildName `
+            | Get-ItemProperty -Name 'LastSwitchedTime' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'LastSwitchedTime'
+
+            if ($lastSwitchedTime) {
+                $props | Add-Member -NotePropertyName 'LastSwitchedTime' -NotePropertyValue $lastSwitchedTime
+            }
+
+            # Get the ones with ServicesManagerCache
+            $servicesManagerCachePath = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\ServicesManagerCache\Identities' | Join-Path -ChildPath $_.PSChildName
+
+            if (Test-Path $servicesManagerCachePath) {
+                $props
+            }
+
+            $_.Dispose()
+        }
+    }
+
+    if (-not $identities) {
+        Write-Log "Cannot find Office Identities."
+        return
+    }
+
+    $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 } | Sort-Object 'LastSwitchedTime' -Descending | Select-Object -First 1
+
+    foreach ($identity in $identities) {
+        $connectedExperience = Get-ConnectedExperience $identity
+
+        [PSCustomObject]@{
+            Profile                    = $identity.PSChildName
+            LastSwitchedTime           = $identity.LastSwitchedTime
+            IsActive                   = $identity -eq $activeIdentity
+            EmailAddress               = $identity.EmailAddress
+            FriendlyName               = $identity.FriendlyName
+            HomeTenantId               = $identity.HomeTenantId
+            SigninName                 = $identity.SigninName
+            IdP                        = $IdpMapping[$identity.IdP]
+            # Persisted                  = $identity.Persisted -eq 1
+            SignedOut                  = $identity.SignedOut -eq 1
+            ConnectedExperienceEnabled = $connectedExperience.Enabled
+            # ConnectedExperiencePendingChanges             = $connectedExperience.PendingChanges
+        }
+    }
+}
+
+# Get ConnectedExperience state from the Office's roaming settings.
+function Get-ConnectedExperience {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Identity
+    )
+
+    $profileName = $Identity.PSChildName
+    $roamingSettingsPath = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Roaming\Identities' `
+    | Join-Path -ChildPath $profileName | Join-Path -ChildPath 'Settings\1272\{00000000-0000-0000-0000-000000000000}'
+
+    if (-not $roamingSettingsPath) {
+        Write-Log "Cannot find roaming settings for $profileName."
+        return
+    }
+
+    # If PendingChanges is available, use it.
+    $pendingChanges = Join-Path $roamingSettingsPath 'PendingChanges' | Get-ItemProperty -Name 'Data' -ErrorAction SilentlyContinue
+
+    if ($pendingChanges) {
+        $data = $pendingChanges.Data
+    }
+    else {
+        $roamingSetings = Get-ItemProperty $roamingSettingsPath -Name 'Data' -ErrorAction SilentlyContinue
+        $data = $roamingSetings.Data
+    }
+
+    if ($data) {
+        $value = [BitConverter]::ToInt32($data, 0)
+    }
+    else {
+        Write-Log "There is no roaming data for $profileName."
+    }
+
+    # 1 == Enabled, 2 == Disabled
+    $enabled = $false
+
+    if ($value -eq 1 -or $null -eq $value) {
+        $enabled = $true
+    }
+
+    [PSCustomObject]@{
+        Enabled        = $enabled
+        PendingChanges = $null -ne $pendingChanges
+    }
 }
 
 <#
@@ -6498,7 +6671,6 @@ function Get-AlternateId {
 
     if ($domainHint) {
         $domainZonePath = Join-Path $userRegRoot "Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\Domains\$domainHint"
-        # $domainZone = Get-RegistryChildItem $domainZonePath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'Properties'
         $domainZone = Get-ItemProperty $domainZonePath -ErrorAction SilentlyContinue | Select-Object -Property * -ExcludeProperty PS*
     }
 
@@ -6573,59 +6745,7 @@ function Get-SocialConnectorConfig {
 
     foreach ($_ in @('Software\Microsoft\Office\Outlook\SocialConnector', 'Software\Policies\Microsoft\Office\Outlook\SocialConnector')) {
         $path = Join-Path $userRegRoot $_
-        # Get-RegistryValue $path -ErrorAction SilentlyContinue
         Get-ItemProperty $path -ErrorAction SilentlyContinue
-    }
-}
-
-function Start-ProcessMonitoring {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        # Folder path to save process list
-        [string]$Path,
-        [Parameter(Mandatory = $true)]
-        # Name of processes to monitor
-        [string[]]$Name,
-        [System.Threading.CancellationToken]$CancelToken,
-        [TimeSpan]$Interval = [TimeSpan]::FromSeconds(3)
-    )
-
-    $targets = $Name | & { process { @{ Name = $_; Ids = @{} } } }
-    Write-Log "Start monitoring $($Name -join ', ')."
-
-    while ($true) {
-        $found = Get-Process -Name $Name -ErrorAction SilentlyContinue | & {
-            process {
-                # Update the found target's info.
-                $name = $_.ProcessName
-                $id = $_.Id
-                $startTime = $_.StartTime
-                $_.Dispose()
-
-                $targets | & {
-                    process {
-                        if ($name -like $_.Name -and (-not $_.Ids.ContainsKey($id) -or $_.Ids[$id] -ne $startTime) ) {
-                            Write-Log "Found new $name with PID $id, StartTime $startTime."
-                            $_.Ids.Add($id, $startTime)
-                            $true
-                        }
-                    }
-                } | Select-Object -First 1
-            }
-        }
-
-        # $found can be a bool or an array of bool, and either case is ok.
-        if ($found) {
-            Save-Process -Path $Path -Name $Name
-        }
-
-        if ($CancelToken.IsCancellationRequested) {
-            Write-Log "Cancel request acknowledged."
-            return
-        }
-
-        Start-Sleep -Seconds $Interval.Seconds
     }
 }
 
@@ -6870,9 +6990,6 @@ function Collect-OutlookInfo {
             Write-Log "Starting officeRegistryTask."
             $officeRegistryTask = Start-Task { param($path, $user) Save-OfficeRegistry -Path $path -User $user } -ArgumentList $RegistryDir, $targetUser
 
-            Write-Log "Starting officeIdentityTask."
-            $officeIdentityTask = Start-Task { param($path, $user) Get-OfficeIdentity -User $user | Export-CliXml (Join-Path $path 'OfficeIdentity.xml') } -ArgumentList $OfficeDir, $targetUser
-
             Write-Log "Starting osConfigurationTask."
             $osConfigurationTask = Start-Task { param($path) Save-OSConfiguration -Path $path } -ArgumentList $OSDir
 
@@ -6890,6 +7007,7 @@ function Collect-OutlookInfo {
             Run-Command { param($user) Get-IMProvider -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { param($user) Get-AlternateId -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Run-Command { param($user) Get-UseOnlineContent -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Run-Command { param($user) Get-OfficeIdentity -User $user } -ArgumentList $targetUser -Path $OfficeDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 60
             Run-Command { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
@@ -7292,11 +7410,6 @@ function Collect-OutlookInfo {
                 $($officeRegistryTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
                 Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -Completed
                 Write-Log "officeRegistryTask is complete."
-            }
-
-            if ($officeIdentityTask) {
-                $($officeIdentityTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
-                Write-Log "officeIdentityTask is complete"
             }
 
             if ($networkInfoTask) {
