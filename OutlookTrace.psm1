@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-05-08'
+$Version = 'v2022-05-12'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -6507,23 +6507,6 @@ function Get-RegistryChildItem {
     $root
 }
 
-# function Get-OfficeIdentity {
-#     [CmdletBinding(PositionalBinding = $false)]
-#     param(
-#         [string]$User
-#     )
-
-#     $userRegRoot = Get-UserRegistryRoot -User $User
-
-#     if (-not $userRegRoot) {
-#         return
-#     }
-
-#     $identityPath = Join-Path $userRegRoot 'SOFTWARE\Microsoft\Office\16.0\Common\Identity'
-
-#     Get-RegistryChildItem $identityPath
-# }
-
 function Get-OfficeIdentity {
     [CmdletBinding()]
     param(
@@ -6550,6 +6533,13 @@ function Get-OfficeIdentity {
     # Get the Office Identities
     $identities = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity\Identities' | Get-ChildItem -ErrorAction SilentlyContinue | & {
         process {
+            # Get the ones with ServicesManagerCache
+            $servicesManagerCachePath = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\ServicesManagerCache\Identities' | Join-Path -ChildPath $_.PSChildName
+
+            if (-not (Test-Path $servicesManagerCachePath)) {
+                return
+            }
+
             # Get properties and add LastSwitchedTime if available.
             $props = $_ | Get-ItemProperty
 
@@ -6560,13 +6550,7 @@ function Get-OfficeIdentity {
                 $props | Add-Member -NotePropertyName 'LastSwitchedTime' -NotePropertyValue $lastSwitchedTime
             }
 
-            # Get the ones with ServicesManagerCache
-            $servicesManagerCachePath = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\ServicesManagerCache\Identities' | Join-Path -ChildPath $_.PSChildName
-
-            if (Test-Path $servicesManagerCachePath) {
-                $props
-            }
-
+            $props
             $_.Dispose()
         }
     }
@@ -6576,7 +6560,8 @@ function Get-OfficeIdentity {
         return
     }
 
-    $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 } | Sort-Object 'LastSwitchedTime' -Descending | Select-Object -First 1
+    # $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 } | Sort-Object 'LastSwitchedTime' -Descending | Select-Object -First 1
+    $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 } | Sort-Object 'LastSwitchedTime' | Select-Object -Last 1
 
     foreach ($identity in $identities) {
         $connectedExperience = Get-ConnectedExperience $identity
@@ -7097,7 +7082,7 @@ function Collect-OutlookInfo {
                         # Remove mht files older than 1 hour
                         Get-ChildItem $path -Filter '*.mht' | & {
                             begin {
-                                $cutfoff = [datetime]::Now.AddHours(-1)
+                                $cutoff = [datetime]::Now.AddHours(-1)
                                 $removedCount = 0
                             }
 
