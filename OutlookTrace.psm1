@@ -3265,41 +3265,38 @@ function Get-OutlookProfile {
         process {
             $prof = $_
 
-            Get-ChildItem $prof.PSPath -Recurse | & {
+            # Get PR_PROFILE_CONFIG_FLAGS value (it's possible that it does not exist)
+            $flags = Get-ChildItem $prof.PSPath -Recurse | & {
                 process {
                     $key = $_
-                    $flagsFound = $false
 
-                    foreach ($prop in $key.Property) {
-                        if ($prop -eq $PR_PROFILE_CONFIG_FLAGS) {
-                            $bytes = $key.GetValue($PR_PROFILE_CONFIG_FLAGS)
-                            $flags = [BitConverter]::ToUInt32($bytes, 0)
-                            $flagsFound = $true
-                            break
-                        }
-                    }
-
-                    $key.Close()
-
-                    if (-not $flagsFound) {
+                    # Ignore GroupsStore key
+                    if ($key.PSChildName -eq 'GroupsStore') {
                         return
                     }
 
-                    $CACHE_PRIVATE = ($flags -band $CONFIG_OST_CACHE_PRIVATE) -ne 0
-                    $CACHE_PUBLIC = ($flags -band $CONFIG_OST_CACHE_PUBLIC) -ne 0
-                    $CACHE_DELEGATE_PIM = ($flags -band $CONFIG_OST_CACHE_DELEGATE_PIM) -ne 0
+                    $bytes = $key | Get-ItemProperty -Name $PR_PROFILE_CONFIG_FLAGS -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $PR_PROFILE_CONFIG_FLAGS
+                    $key.Close()
 
-                    [PSCustomObject]@{
-                        User                          = $User
-                        Profile                       = $prof.Name
-                        IsDefault                     = (Split-Path $prof.Name -Leaf) -eq $defaultProfile
-                        CachedMode                    = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
-                        DownloadPublicFolderFavorites = $CACHE_PUBLIC
-                        DownloadSharedFolders         = $CACHE_DELEGATE_PIM
-                        PR_PROFILE_CONFIG_FLAGS       = $flags
+                    if ($bytes) {
+                        [BitConverter]::ToUInt32($bytes, 0)
                     }
                 }
             } | Select-Object -First 1
+
+            $CACHE_PRIVATE = ($flags -band $CONFIG_OST_CACHE_PRIVATE) -ne 0
+            $CACHE_PUBLIC = ($flags -band $CONFIG_OST_CACHE_PUBLIC) -ne 0
+            $CACHE_DELEGATE_PIM = ($flags -band $CONFIG_OST_CACHE_DELEGATE_PIM) -ne 0
+
+            [PSCustomObject]@{
+                User                          = $User
+                Profile                       = $prof.Name
+                IsDefault                     = (Split-Path $prof.Name -Leaf) -eq $defaultProfile
+                CachedMode                    = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
+                DownloadPublicFolderFavorites = $CACHE_PUBLIC
+                DownloadSharedFolders         = $CACHE_DELEGATE_PIM
+                PR_PROFILE_CONFIG_FLAGS       = $flags
+            }
 
             $prof.Close()
         }
