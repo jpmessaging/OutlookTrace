@@ -3238,12 +3238,11 @@ function Get-OutlookProfile {
         return
     }
 
-    $PR_PROFILE_CONFIG_FLAGS = '00036601'
-
-    # Flag constants:
-    $CONFIG_OST_CACHE_PRIVATE = 0x180      # [Use Cached Exchange Mode]
-    $CONFIG_OST_CACHE_PUBLIC = 0x400       # [Download Public Folder Favorites]
-    $CONFIG_OST_CACHE_DELEGATE_PIM = 0x800 # [Download shared folders]
+    # https://docs.microsoft.com/en-us/office/client-developer/outlook/auxiliary/iolkaccountmanager-enumerateaccounts
+    $CLSID_OlkMail = '{ED475418-B0D6-11D2-8C3B-00104B2A6676}'
+    $CLSID_OlkPOP3Account = '{ED475411-B0D6-11D2-8C3B-00104B2A6676}'
+    $CLSID_OlkIMAP4Account = '{ED475412-B0D6-11D2-8C3B-00104B2A6676}'
+    $CLSID_OlkMAPIAccount = '{ED475414-B0D6-11D2-8C3B-00104B2A6676}'
 
     $defaultProfile = $null
 
@@ -3253,7 +3252,7 @@ function Get-OutlookProfile {
             $key = $_
             if ($key.Name -match '\d\d\.0') {
                 if (-not $defaultProfile.Value) {
-                    $defaultProfile.Value = Get-ItemProperty (Join-Path $key.PSPath 'Outlook') -Name 'DefaultProfile' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultProfile'
+                    $defaultProfile.Value = Join-Path $key.PSPath 'Outlook' | Get-ItemProperty -Name 'DefaultProfile' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultProfile'
                 }
 
                 Get-ChildItem (Join-Path $key.PSPath '\Outlook\Profiles') -ErrorAction SilentlyContinue
@@ -3265,41 +3264,172 @@ function Get-OutlookProfile {
         process {
             $prof = $_
 
-            # Get PR_PROFILE_CONFIG_FLAGS value (it's possible that it does not exist)
-            $flags = Get-ChildItem $prof.PSPath -Recurse | & {
-                process {
-                    $key = $_
+            $accountStore = Join-Path $prof.PSPath '*' | Get-ItemProperty -Name $CLSID_OlkMail -ErrorAction SilentlyContinue | Select-Object -First 1
+            $olkMailBytes = $accountStore.$CLSID_OlkMail
+            $accountCount = $olkMailBytes.Count / 4
 
-                    # Ignore GroupsStore key
-                    if ($key.PSChildName -eq 'GroupsStore') {
-                        return
+            $accounts = @(
+                for ($i = 0; $i -lt $accountCount; ++$i) {
+                    $accountId = "{0:x8}" -f [BitConverter]::ToInt32($olkMailBytes, $i * 4)
+                    $account = Join-Path $accountStore.PSPath $accountId | Get-ItemProperty
+
+                    $acct =
+                    switch ($account.clsid) {
+                        $CLSID_OlkPOP3Account { Get-Pop3Account $account; break }
+                        $CLSID_OlkIMAP4Account { Get-Imap4Account $account; break; }
+                        $CLSID_OlkMAPIAccount { Get-MapiAccount $account; break }
                     }
 
-                    $bytes = $key | Get-ItemProperty -Name $PR_PROFILE_CONFIG_FLAGS -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $PR_PROFILE_CONFIG_FLAGS
-                    $key.Close()
-
-                    if ($bytes) {
-                        [BitConverter]::ToUInt32($bytes, 0)
+                    if ($i -eq 0) {
+                        $acct.IsDefaultAccount = $true
                     }
+
+                    $acct
                 }
-            } | Select-Object -First 1
+            )
 
-            $CACHE_PRIVATE = ($flags -band $CONFIG_OST_CACHE_PRIVATE) -ne 0
-            $CACHE_PUBLIC = ($flags -band $CONFIG_OST_CACHE_PUBLIC) -ne 0
-            $CACHE_DELEGATE_PIM = ($flags -band $CONFIG_OST_CACHE_DELEGATE_PIM) -ne 0
+            $defaultAccount = $accounts | Where-Object { $_.IsDefaultAccount } | Select-Object -First 1
 
             [PSCustomObject]@{
                 User                          = $User
-                Profile                       = $prof.Name
-                IsDefault                     = (Split-Path $prof.Name -Leaf) -eq $defaultProfile
-                CachedMode                    = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
-                DownloadPublicFolderFavorites = $CACHE_PUBLIC
-                DownloadSharedFolders         = $CACHE_DELEGATE_PIM
-                PR_PROFILE_CONFIG_FLAGS       = $flags
+                Name                          = $prof.PSChildName
+                Path                          = $prof.Name
+                IsDefault                     = $prof.PSChildName -eq $defaultProfile
+                Accounts                      = $accounts
+                DefaultAccountType            = $defaultAccount.AccountType
+                CachedMode                    = $defaultAccount.CachedMode
+                DownloadPublicFolderFavorites = $defaultAccount.DownloadPublicFolderFavorites
+                DownloadSharedFolders         = $defaultAccount.DownloadSharedFolders
             }
 
             $prof.Close()
         }
+    }
+}
+
+function Get-Pop3Account {
+    [CmdletBinding()]
+    param(
+        $Account
+    )
+
+    $Pop3DefaultPort = 110
+    $SmtpDefaultPort = 25
+
+    [PSCustomObject]@{
+        AccountName          = $Account.'Account Name'
+        AccountType          = 'POP3'
+        IsDefaultAccount     = $false
+        DisplayName          = $Account.'Display Name'
+        Eamil                = $Account.Email
+        Pop3Server           = $Account.'POP3 Server'
+        Pop3Port             = if ($Account.'Pop3 Port') { $Account.'Pop3 Port' } else { $Pop3DefaultPort }
+        Pop3User             = $Account.'POP3 User'
+        SmtpServer           = $Account.'SMTP Server'
+        SmtpPort             = if ($Account.'SMTP Port') { $Account.'SMTP Port' } else { $SmtpDefaultPort }
+        SmtpUser             = $Account.'SMTP User'
+        SmtpUseAuth          = $Account.'SMTP Use Auth' -eq 1
+        SmtpUseSPA           = $Account.'SMTP Use SPA' -eq 1
+        SmtpSecureConnection = switch ($Account.'SMTP Secure Connection') { 0 { 'None'; break } 1 { 'SSL'; break } 2 { 'TLS'; break } 3 { 'Auto'; break } }
+    }
+}
+
+function Get-Imap4Account {
+    [CmdletBinding()]
+    param(
+        $Account
+    )
+
+    $ImapDefaultPort = 143
+    $SmtpDefaultPort = 25
+
+    [PSCustomObject]@{
+        AccountName          = $Account.'Account Name'
+        AccountType          = 'IMAP4'
+        IsDefaultAccount     = $false
+        DisplayName          = $Account.'Display Name'
+        Eamil                = $Account.Email
+        ImapServer           = $Account.'IMAP Server'
+        ImapPort             = if ($Account.'IMAP Port') { $Account.'IMAP Port' } else { $ImapDefaultPort }
+        ImapUser             = $Account.'IMAP User'
+        ImapUseSPA           = $Account.'IMAP Use SPA' -eq 1
+        SmtpServer           = $Account.'SMTP Server'
+        SmtpPort             = if ($Account.'SMTP Port') { $Account.'SMTP Port' } else { $SmtpDefaultPort }
+        SmtpUser             = $Account.'SMTP User'
+        SmtpUseAuth          = $Account.'SMTP Use Auth' -eq 1
+        SmtpUseSPA           = $Account.'SMTP Use SPA' -eq 1
+        SmtpSecureConnection = switch ($Account.'SMTP Secure Connection') { 0 { 'None'; break } 1 { 'SSL'; break } 2 { 'TLS'; break } 3 { 'Auto'; break } }
+    }
+}
+
+function Get-MapiAccount {
+    [CmdletBinding()]
+    param(
+        $Account
+    )
+
+    $providerUid = [BitConverter]::ToString($Account.'XP Provider UID').Replace('-', '')
+
+    $prof = Split-Path $Account.PSParentPath
+    $PR_EMSMDB_SECTION_UID = '01023d15'
+    $emsmdbSectionUidBytes = Join-Path $prof $providerUid | Get-ItemProperty -Name $PR_EMSMDB_SECTION_UID -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $PR_EMSMDB_SECTION_UID
+    $emsmdbSectionUid = [BitConverter]::ToString($emsmdbSectionUidBytes).Replace('-', '')
+
+    # Profile properties
+    $PR_DISPLAY_NAME = '001f3001'
+    $PR_PROFILE_CONFIG_FLAGS = '00036601'
+    $PR_PROFILE_CONFIG_FLAGS_EX = '1003666e'
+
+    # Config flag constants
+    $CONFIG_OST_CACHE_PRIVATE = 0x180      # [Use Cached Exchange Mode]
+    $CONFIG_OST_CACHE_PUBLIC = 0x400       # [Download Public Folder Favorites]
+    $CONFIG_OST_CACHE_DELEGATE_PIM = 0x800 # [Download shared folders]
+
+    # Shared calendar options
+    $SharedCal = @{
+        0 = 'None'
+        1 = 'REST'
+        2 = 'MAPI'
+    }
+
+    $props = Join-Path $prof $emsmdbSectionUid | Get-ItemProperty -Name $PR_DISPLAY_NAME, $PR_PROFILE_CONFIG_FLAGS, $PR_PROFILE_CONFIG_FLAGS_EX -ErrorAction SilentlyContinue
+
+    $displayName = $null
+
+    if ($props.$PR_DISPLAY_NAME) {
+        $displayName = [System.Text.encoding]::Unicode.GetString($props.$PR_DISPLAY_NAME)
+    }
+
+    $flags = 0
+
+    if ($props.$PR_PROFILE_CONFIG_FLAGS) {
+        $flags = [BitConverter]::ToUInt32($props.$PR_PROFILE_CONFIG_FLAGS, 0)
+    }
+    else {
+        Write-Log "Cannot find PR_PROFILE_CONFIG_FLAGS (0x66010003) for account '$accountName'."
+    }
+
+    $CACHE_PRIVATE = ($flags -band $CONFIG_OST_CACHE_PRIVATE) -ne 0
+    $CACHE_PUBLIC = ($flags -band $CONFIG_OST_CACHE_PUBLIC) -ne 0
+    $CACHE_DELEGATE_PIM = ($flags -band $CONFIG_OST_CACHE_DELEGATE_PIM) -ne 0
+
+    # Get PR_PROFILE_CONFIG_FLAGS_EX.
+    $sharedCalFlags = 0
+
+    if ($props.$PR_PROFILE_CONFIG_FLAGS_EX) {
+        $sharedCalFlags = [BitConverter]::ToInt32($props.$PR_PROFILE_CONFIG_FLAGS_EX, 0)
+    }
+
+    [PSCustomObject]@{
+        AccountName                   = $Account.'Account Name'
+        AccountType                   = 'MAPI'
+        IsDefaultAccount              = $false
+        DisplayName                   = $displayName
+        CachedMode                    = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
+        DownloadPublicFolderFavorites = $CACHE_PUBLIC
+        DownloadSharedFolders         = $CACHE_DELEGATE_PIM
+        PR_PROFILE_CONFIG_FLAGS       = $flags
+        SharedCalendarOption          = $SharedCal[$sharedCalFlags -band 0xffff]
     }
 }
 
