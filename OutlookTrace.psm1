@@ -5202,24 +5202,26 @@ function Save-MSIPC {
 
     # MSIPC info is in %LOCALAPPDATA%\Microsoft\MSIPC
     if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
-        $msipcPath = Join-Path $localAppdata 'Microsoft\MSIPC'
+        $msipcPath = Join-Path $localAppdata 'Microsoft\MSIPC\Logs\*'
     }
     else {
         return
     }
 
-    if (-not (Test-Path $msipcPath)) {
-        Write-Error "$msipcPath does not exist"
+    # Just copy *.ipclog files
+    $filter = '*.ipclog'
+
+    if (-not (Test-Path $msipcPath -Filter $filter)) {
+        Write-Log "There are no files matching '$filter' in $(Split-Path $msipcPath)."
         return
     }
 
-    if (-not (Test-Path $Path -ErrorAction Stop)) {
+    if (-not (Test-Path $Path)) {
         New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
     }
 
     try {
-        # Just copy *.ipclog files
-        Copy-Item (Join-Path $msipcPath 'Logs\*') -Destination $Path -Exclude '*.lock'
+        Copy-Item -Path $msipcPath -Filter $filter -Destination $Path
     }
     catch {
         Write-Error -ErrorRecord $_
@@ -5234,7 +5236,7 @@ function Save-DLP {
     param (
         [Parameter(Mandatory = $true)]
         # Destination folder path to save to
-        $Path,
+        [string]$Path,
         [string]
         $User
     )
@@ -5247,21 +5249,20 @@ function Save-DLP {
         return
     }
 
-    $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
+    $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook\*'
+    $fileNameFilter = 'PolicyNudge*'
+
+    if (-not (Test-Path $sourcePath -Filter $fileNameFilter)) {
+        Write-Log "There are no files matching '$fileNameFilter' in $(Split-Path $sourcePath)."
+        return
+    }
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+    }
 
     try {
-        Get-ChildItem $sourcePath -Filter 'PolicyNudge*' | & {
-            begin { $checkDest = $true }
-            process {
-                # Create the destination folder only when there's a file to copy.
-                if ($checkDest -and -not (Test-Path $Path)) {
-                    New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
-                    $checkDest = $false
-                }
-
-                $_ | Copy-Item -Destination $Path
-            }
-        }
+        Copy-Item -Path $sourcePath -Filter $fileNameFilter -Destination $Path
     }
     catch {
         Write-Error -ErrorRecord $_
@@ -6528,37 +6529,47 @@ function Get-OfficeIdentity {
     }
 
     # Get the Office Identities
-    $identities = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity\Identities' | Get-ChildItem -ErrorAction SilentlyContinue | & {
-        process {
-            # Get the ones with ServicesManagerCache
-            $servicesManagerCachePath = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\ServicesManagerCache\Identities' | Join-Path -ChildPath $_.PSChildName
-
-            if (-not (Test-Path $servicesManagerCachePath)) {
-                return
-            }
-
-            # Get properties and add LastSwitchedTime if available.
-            $props = $_ | Get-ItemProperty
-
-            $lastSwitchedTime = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity\Profiles' | Join-Path -ChildPath $_.PSChildName `
-            | Get-ItemProperty -Name 'LastSwitchedTime' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'LastSwitchedTime'
-
-            if ($lastSwitchedTime) {
-                $props | Add-Member -NotePropertyName 'LastSwitchedTime' -NotePropertyValue $lastSwitchedTime
-            }
-
-            $props
-            $_.Dispose()
-        }
-    }
+    $identities = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity\Identities\*' | Get-ItemProperty -ErrorAction SilentlyContinue
 
     if (-not $identities) {
         Write-Log "Cannot find Office Identities."
         return
     }
 
-    # $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 } | Sort-Object 'LastSwitchedTime' -Descending | Select-Object -First 1
-    $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 } | Sort-Object 'LastSwitchedTime' | Select-Object -Last 1
+    # Add LastSwitchedTime in profile if avaialble.
+    foreach ($id in $identities) {
+        $lastSwitchedTime = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity\Profiles' | Join-Path -ChildPath $id.PSChildName `
+        | Get-ItemProperty -Name 'LastSwitchedTime' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'LastSwitchedTime'
+
+        if ($lastSwitchedTime) {
+            $id | Add-Member -NotePropertyName 'LastSwitchedTime' -NotePropertyValue $lastSwitchedTime
+        }
+    }
+
+    # Find the one with the latest LastSwitchedTime if any.
+    $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 -and $_.LastSwitchedTime } | Sort-Object 'LastSwitchedTime' | Select-Object -Last 1
+
+    if ($activeIdentity) {
+        Write-Log "Found active identity based on active profile."
+    }
+    else {
+        # If there is no active profile, then pick one with LiveId, OrgId, or ADAL
+        $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 -and ($IdpMapping[$_.IdP] -eq 'LiveId' -or $IdpMapping[$_.IdP] -eq 'OrgId' -or $IdpMapping[$_.IdP] -eq 'ADAL') } | Select-Object -First 1
+
+        if ($activeIdentity) {
+            Write-Log "Found active identity based on IdP $($IdpMapping[$_.IdP])."
+        }
+        else {
+            $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 } | Select-Object -First 1
+
+            if ($activeIdentity) {
+                Write-Log "Found active identity based on not SignedOut."
+            }
+            else {
+                Write-Log "There is no active identity."
+            }
+        }
+    }
 
     foreach ($identity in $identities) {
         $connectedExperience = Get-ConnectedExperience $identity
