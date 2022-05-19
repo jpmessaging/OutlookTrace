@@ -4854,10 +4854,9 @@ function Get-OfficeInfo {
 function Add-WerDumpKey {
     [CmdletBinding()]
     param (
-        [parameter(Mandatory = $true)]
-        [string]$TargetProcess, # Target Process (e.g. Outlook.exe)
-        [parameter(Mandatory = $true)]
-        $Path # Folder to save dump files
+        [Parameter(Mandatory = $true)]
+        $Path, # Folder to save dump files
+        [string]$TargetProcess # Target Process (e.g. Outlook.exe)
     )
 
     # Need admin rights to modify HKLM registry values.
@@ -4872,34 +4871,41 @@ function Add-WerDumpKey {
 
     $Path = (Resolve-Path $Path -ErrorAction Stop).Path
 
-    # Check if $TargetProcess ends with ".exe".
-    if (-not $TargetProcess.EndsWith(".exe")) {
-        Write-Log "$TargetProcess does not end with '.exe'.  Adding '.exe'"
-        $TargetProcess += '.exe'
-    }
-
     # Create a key 'LocalDumps' under HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps, if it doesn't exist
     $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
     if (-not (Test-Path (Join-Path $werKey 'LocalDumps'))) {
         New-Item $werKey -Name 'LocalDumps' -ErrorAction Stop | Out-Null
     }
 
-    # Create a ProcessName key under LocalDumps, if it doesn't exist
     $localDumpsKey = Join-Path $werKey 'LocalDumps'
-    if (-not (Test-Path (Join-Path $localDumpsKey $TargetProcess))) {
-        New-Item $localDumpsKey -Name $TargetProcess -ErrorAction Stop | Out-Null
+
+    if ($TargetProcess) {
+        # Check if $TargetProcess ends with ".exe".
+        if (-not $TargetProcess.EndsWith(".exe")) {
+            Write-Log "$TargetProcess does not end with '.exe'. Adding '.exe'"
+            $TargetProcess += '.exe'
+        }
+
+        # Create a ProcessName key under LocalDumps, if it doesn't exist
+        $targetKey = Join-Path $localDumpsKey $TargetProcess
+
+        if (-not (Test-Path $targetKey)) {
+            New-Item $localDumpsKey -Name $TargetProcess -ErrorAction Stop | Out-Null
+        }
+    }
+    else {
+        $targetKey = $localDumpsKey
     }
 
-    # Create "CustomDumpFlags", "DumpType", and "DumpFolder" values in ProcessName key
-    $ProcessKey = Join-Path $localDumpsKey $TargetProcess
-    Write-Log "Setting up $ProcessKey with CustomDumpFlags:0x61826, DumpType:0, DumpFolder:$Path"
+    # Create "CustomDumpFlags", "DumpType", and "DumpFolder" values
+    Write-Log "Setting up $targetKey with CustomDumpFlags:0x61826, DumpType:0, DumpFolder:$Path"
     # -Force will overwrite existing value
     # 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4)| MiniDumpWithFullMemory (2)
-    New-ItemProperty $ProcessKey -Name 'CustomDumpFlags' -Value 0x00061826 -Force -ErrorAction Stop | Out-Null
-    New-ItemProperty $ProcessKey -Name 'DumpType' -Value 0 -PropertyType DWORD -Force -ErrorAction Stop | Out-Null
-    New-ItemProperty $ProcessKey -Name 'DumpFolder' -Value $Path -PropertyType String -Force -ErrorAction Stop | Out-Null
+    New-ItemProperty $targetKey -Name 'CustomDumpFlags' -Value 0x00061826 -Force -ErrorAction Stop | Out-Null
+    New-ItemProperty $targetKey -Name 'DumpType' -Value 0 -PropertyType DWORD -Force -ErrorAction Stop | Out-Null
+    New-ItemProperty $targetKey -Name 'DumpFolder' -Value $Path -PropertyType String -Force -ErrorAction Stop | Out-Null
 
-    # Rename DW Installed keys to "_Installed" to temporarily disable
+    # Rename DW Installed keys to "_Installed" in order to disable it temporarily
     $pcHealth = @(
         # For C2R
         'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
@@ -4924,26 +4930,36 @@ function Add-WerDumpKey {
 function Remove-WerDumpKey {
     [CmdletBinding()]
     param (
-        [parameter(Mandatory = $true)]
         [string]$TargetProcess # Target Process (e.g. Outlook.exe)
     )
 
-    # Check if $TargetProcess ends with ".exe".
-    if (-not $TargetProcess.EndsWith(".exe")) {
-        Write-Log "$TargetProcess does not end with '.exe'.  Adding '.exe'"
-        $TargetProcess += '.exe'
-    }
-
     $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
     $localDumpsKey = Join-Path $werKey 'LocalDumps'
-    $ProcessKey = Join-Path $localDumpsKey $TargetProcess
 
-    if (Test-Path $ProcessKey) {
-        Write-Log "Removing $ProcessKey"
-        Remove-Item $ProcessKey
+    if (Test-Path $localDumpsKey) {
+        if ($TargetProcess) {
+            # Check if TargetProcess ends with ".exe".
+            if (-not $TargetProcess.EndsWith(".exe")) {
+                Write-Log "$TargetProcess does not end with '.exe'. Adding '.exe'"
+                $TargetProcess += '.exe'
+            }
+
+            $targetKey = Join-Path $localDumpsKey $TargetProcess
+            Write-Log "Removing $targetKey"
+            Remove-Item $targetKey
+        }
+        else {
+            Write-Log "Removing values of $localDumpsKey"
+            Remove-ItemProperty $localDumpsKey -Name 'CustomDumpFlags', 'DumpType', 'DumpFolder'
+        }
+
+        if ($null -eq (Get-ChildItem $localDumpsKey | Select-Object -First 1)) {
+            Write-Log "Removing $localDumpsKey because it has no subkeys."
+            Remove-Item $localDumpsKey
+        }
     }
     else {
-        Write-Error "$ProcessKey does not exist"
+        Write-Log "Cannot find $localDumpsKey."
     }
 
     # Rename DW "_Installed" keys back to "Installed"
@@ -4994,7 +5010,9 @@ function Enable-DWWin {
     $dwwin = 'dwwin.exe'
     $imageKeyPath = Join-Path $IFEO $dwwin
 
-    Remove-Item $imageKeyPath
+    if (Test-Path $imageKeyPath) {
+        Remove-Item $imageKeyPath
+    }
 }
 
 function Enable-PageHeap {
@@ -7291,7 +7309,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'CrashDump') {
-            Add-WerDumpKey -Path (Join-Path $tempPath 'WerDump') -TargetProcess 'Outlook.exe'
+            Add-WerDumpKey -Path (Join-Path $tempPath 'WerDump')
             $crashDumpStarted = $true
         }
 
@@ -7495,7 +7513,7 @@ function Collect-OutlookInfo {
         }
 
         if ($crashDumpStarted) {
-            Remove-WerDumpKey -TargetProcess 'Outlook.exe'
+            Remove-WerDumpKey
         }
 
         if ($fiddlerCapStarted) {
