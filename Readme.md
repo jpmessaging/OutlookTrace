@@ -2,7 +2,7 @@
 
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2022-05-12/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2022-05-19/OutlookTrace.psm1)
 
 ## How to use
 
@@ -159,7 +159,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | CAPI          | CAPI (Crypt API) ETW                                                                                           |
 | TCO           | TCO trace                                                                                                      |
 | Dump          | Outlook's process dump                                                                                         |
-| CrashDump     | Outlook's crash dump                                                                                           |
+| CrashDump     | Crash dump for any process                                                                                     |
 | HungDump      | Outlook's hung dump (When a window hung is detected, it generate a dump file)                                  |
 | WPR           | WPR (Windows Performance Recorder) ETW (OS must be Windows 10 or above)                                        |
 | WFP           | Windows Firewall diagnostic log                                                                                |
