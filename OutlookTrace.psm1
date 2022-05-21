@@ -1059,6 +1059,15 @@ function Compress-Folder {
             return
         }
 
+        # Check if .NET Framework's compression is avaiable.
+        try {
+            Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
+        }
+        catch {
+            Write-Error -Message "System.IO.Compression is not available. $_" -Exception $_.Exception
+            return
+        }
+
         if (Test-Path $Destination) {
             $Destination = Resolve-Path -LiteralPath $Destination
         }
@@ -1074,10 +1083,6 @@ function Compress-Folder {
                 }
             } | & {
                 # Apply DateTime filters
-                begin {
-                    $fileNames = @{}
-                }
-
                 process {
                     $file = $_
 
@@ -1089,12 +1094,6 @@ function Compress-Folder {
                         return
                     }
 
-                    # Remove duplicate by Fullname. Avoid Group-Object because it's slow.
-                    if ($fileNames.ContainsKey($file.FullName)) {
-                        return
-                    }
-
-                    $fileNames.Add($file.FullName, $null)
                     $file
                 }
             }
@@ -1103,15 +1102,6 @@ function Compress-Folder {
         # If there are no files after filters are applied, bail.
         if ($files.Count -eq 0) {
             Write-Error "There are no files after filters are applied. Server: $env:COMPUTERNAME, Path: $Path, Filter: $Filter, FromDateTime: $FromDateTime, ToDateTime: $ToDateTime"
-            return
-        }
-
-        # Check if .NET Framework's compression is avaiable.
-        try {
-            Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
-        }
-        catch {
-            Write-Error -Message "System.IO.Compression is not available. $_" -Exception $_.Exception
             return
         }
 
@@ -1126,22 +1116,27 @@ function Compress-Folder {
         }
 
         $zipStream = $zipArchive = $null
+
         try {
             New-Item $zipFilePath -ItemType file | Out-Null
 
             $zipStream = New-Object System.IO.FileStream -ArgumentList $zipFilePath, ([IO.FileMode]::Open)
             $zipArchive = New-Object System.IO.Compression.ZipArchive -ArgumentList $zipStream, ([IO.Compression.ZipArchiveMode]::Create)
             $count = 0
-            $prevProgress = 0
+            
+            $progressInterval = 10
+            $prevProgress = - $progressInterval
+            $activity = "Creating a zip file $zipFilePath"
 
             foreach ($file in $files) {
                 $progress = 100 * $count / $files.Count
-                if ($progress -ge $prevProgress + 10) {
-                    Write-Progress -Activity "Creating a zip file $zipFilePath" -Status "Please wait" -PercentComplete $progress
+                if ($progress -ge $prevProgress + $progressInterval) {
+                    Write-Progress -Activity $activity -Status "Please wait" -PercentComplete $progress
                     $prevProgress = $progress
                 }
 
                 $fileStream = $zipEntryStream = $null
+
                 try {
                     $fileStream = New-Object System.IO.FileStream -ArgumentList $file.FullName, ([IO.FileMode]::Open), ([IO.FileAccess]::Read), ([IO.FileShare]::ReadWrite)
                     $zipEntry = $zipArchive.CreateEntry($file.FullName.Substring($Path.TrimEnd('\').Length + 1))
@@ -1173,7 +1168,7 @@ function Compress-Folder {
                 $zipStream.Dispose()
             }
 
-            Write-Progress -Activity "Creating a zip file $zipFilePath" -Status "Done" -Completed
+            Write-Progress -Activity $activity -Status "Done" -Completed
             $archivePath = $zipFilePath
         }
 
