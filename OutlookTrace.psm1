@@ -6829,16 +6829,18 @@ function Get-UseOnlineContent {
         return
     }
 
+    $officeInfo = Get-OfficeInfo
+
     if (-not $officeInfo) {
         return
     }
 
     $major = $officeInfo.Version.Split('.')[0]
 
-    foreach ($path in @("Software\Microsoft\Office\$major.0\Common\Internet", "Software\Policies\Microsoft\office\$major.0\common\Internet")) {
-        $path = Join-Path $userRegRoot $path
-        Get-ItemProperty $path -Name 'UseOnlineContent' -ErrorAction SilentlyContinue
-    }
+    & {
+        "Software\Microsoft\Office\$major.0\Common\Internet"
+        "Software\Policies\Microsoft\office\$major.0\common\Internet"
+    } | Join-Path -Path $userRegRoot -ChildPath { $_ } | Get-ItemProperty -Name 'UseOnlineContent' -ErrorAction SilentlyContinue
 }
 
 function Get-AutodiscoverConfig {
