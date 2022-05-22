@@ -2477,7 +2477,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { whoami.exe /USER }; FileName = 'whoami.txt' }
     } | & {
         process {
-            Run-Command @_ -Path $Path
+            Invoke-ScriptBlock @_ -Path $Path
         }
     }
 }
@@ -2564,11 +2564,10 @@ function Save-NetworkInfo {
         @{ScriptBlock = { netsh advfirewall monitor show consec rule name=all } }
     } | & {
         process {
-            Run-Command @_ -Path $Path
+            Invoke-ScriptBlock @_ -Path $Path
         }
     }
 }
-
 
 <#
 .DESCRIPTION
@@ -2576,7 +2575,7 @@ Run a given script block. If Path is given, save the result there.
 If FileName is given, it's used for the file name for saving the result. If its extension is not ".xml", Set-Content will be used. Otherwise Export-CliXml will be used.
 If FileName is not give, the file name will be auto-decided. If the command is an application, then Set-Content will be used. Otherwise Export-CliXml will be used.
 #>
-function Run-Command {
+function Invoke-ScriptBlock {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true, Position = 0)]
@@ -7144,29 +7143,29 @@ function Collect-OutlookInfo {
             Write-Log "Starting osConfigurationTask."
             $osConfigurationTask = Start-Task { param($path) Save-OSConfiguration -Path $path } -ArgumentList $OSDir
 
-            Run-Command { param($user) Get-WinInetProxy -User $user } -ArgumentList $targetUser -Path $OSDir
-            Run-Command { param($user) Get-ProxyAutoConfig -User $user } -ArgumentList $targetUser -Path $OSDir
+            Invoke-ScriptBlock { param($user) Get-WinInetProxy -User $user } -ArgumentList $targetUser -Path $OSDir
+            Invoke-ScriptBlock { param($user) Get-ProxyAutoConfig -User $user } -ArgumentList $targetUser -Path $OSDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 40
 
-            Run-Command { Get-OfficeInfo } -Path $OfficeDir
-            Run-Command { param($user) Get-OutlookProfile -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Run-Command { param($user) Get-OutlookAddin -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Run-Command { param($user) Get-AutodiscoverConfig -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Run-Command { param($user) Get-SocialConnectorConfig -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Run-Command { Get-ClickToRunConfiguration } -Path $OfficeDir
-            Run-Command { param($user) Get-IMProvider -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Run-Command { param($user) Get-AlternateId -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Run-Command { param($user) Get-UseOnlineContent -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Run-Command { param($user) Get-OfficeIdentity -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Invoke-ScriptBlock { Get-OfficeInfo } -Path $OfficeDir
+            Invoke-ScriptBlock { param($user) Get-OutlookProfile -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Invoke-ScriptBlock { param($user) Get-OutlookAddin -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Invoke-ScriptBlock { param($user) Get-AutodiscoverConfig -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Invoke-ScriptBlock { param($user) Get-SocialConnectorConfig -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Invoke-ScriptBlock { Get-ClickToRunConfiguration } -Path $OfficeDir
+            Invoke-ScriptBlock { param($user) Get-IMProvider -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Invoke-ScriptBlock { param($user) Get-AlternateId -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Invoke-ScriptBlock { param($user) Get-UseOnlineContent -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Invoke-ScriptBlock { param($user) Get-OfficeIdentity -User $user } -ArgumentList $targetUser -Path $OfficeDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 60
-            Run-Command { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
-            Run-Command { param($user, $OfficeDir) Save-CachedOutlookConfig -User $user -Path $(Join-Path $OfficeDir 'Cached OutlookConfig') } -ArgumentList $targetUser, $OfficeDir
-            Run-Command { param($user, $OfficeDir) Save-DLP -User $user -Path $(Join-Path $OfficeDir 'DLP') } -ArgumentList $targetUser, $OfficeDir
+            Invoke-ScriptBlock { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
+            Invoke-ScriptBlock { param($user, $OfficeDir) Save-CachedOutlookConfig -User $user -Path $(Join-Path $OfficeDir 'Cached OutlookConfig') } -ArgumentList $targetUser, $OfficeDir
+            Invoke-ScriptBlock { param($user, $OfficeDir) Save-DLP -User $user -Path $(Join-Path $OfficeDir 'DLP') } -ArgumentList $targetUser, $OfficeDir
 
             Write-Progress -Activity $activity -Status $status -PercentComplete 80
-            Run-Command { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir
+            Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir
 
             if ($targetUser) {
                 $targetUser | Export-Clixml -Path (Join-Path $OSDir 'User.xml')
@@ -7546,7 +7545,7 @@ function Collect-OutlookInfo {
 
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
             $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
-            Run-Command { param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user } -ArgumentList $targetUser, $MSIPCDir
+            Invoke-ScriptBlock { param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user } -ArgumentList $targetUser, $MSIPCDir
             Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
 
             if ($osConfigurationTask) {
@@ -7595,7 +7594,7 @@ function Collect-OutlookInfo {
 
             # Save process list again after traces
             if ($Component.Count -gt 1) {
-                Run-Command { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir
+                Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir
             }
         }
 
