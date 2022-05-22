@@ -1076,25 +1076,20 @@ function Compress-Folder {
         }
 
         $files = @(
-            $Filter |  & {
-                # Apply filename filters if any. Note: Even if Filter is null, the pipeline will run (unlike foreach keyword)
-                process {
-                    Get-ChildItem -LiteralPath $Path -File -Recurse -Force -Filter $_
-                }
-            } | & {
-                # Apply DateTime filters
-                process {
-                    $file = $_
+            foreach ($filt in $Filter) {
+                Get-ChildItem -LiteralPath $Path -File -Recurse -Force -Filter $filt | & {
+                    param ([Parameter(ValueFromPipeline)]$file)
+                    process {
+                        if ($FromDateTime -and $file.LastWriteTime -lt $FromDateTime) {
+                            return
+                        }
 
-                    if ($FromDateTime -and $file.LastWriteTime -lt $FromDateTime) {
-                        return
+                        if ($ToDateTime -and $file.LastWriteTime -gt $ToDateTime) {
+                            return
+                        }
+
+                        $file
                     }
-
-                    if ($ToDateTime -and $file.LastWriteTime -gt $ToDateTime) {
-                        return
-                    }
-
-                    $file
                 }
             }
         )
@@ -2293,8 +2288,6 @@ function Get-UserRegistryRoot {
         if (-not ($userRegRoot -and (Test-Path "Registry::$userRegRoot"))) {
             Write-Error "Cannot find $userRegRoot."
             return
-            # Write-Log "Cannot find $userRegRoot. Falling back to HKCU"
-            # $userRegRoot = 'HKCU'
         }
     }
     else {
@@ -2460,7 +2453,7 @@ function Save-OfficeRegistry {
 function Save-OSConfiguration {
     [CmdletBinding()]
     param (
-        [parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true)]
         $Path
     )
 
@@ -2468,7 +2461,7 @@ function Save-OSConfiguration {
         New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
     }
 
-    $commands = @(
+    & {
         @{ScriptBlock = { Get-WmiObject -Class Win32_ComputerSystem }; FileName = 'Win32_ComputerSystem.xml' }
         @{ScriptBlock = { Get-WmiObject -Class Win32_OperatingSystem }; FileName = 'Win32_OperatingSystem.xml' }
         @{ScriptBlock = { Get-WinHttpDefaultProxy } }
@@ -2482,10 +2475,10 @@ function Save-OSConfiguration {
         # this is just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
         @{ScriptBlock = { whoami.exe /USER }; FileName = 'whoami.txt' }
-    )
-
-    foreach ($command in $commands) {
-        Run-Command @command -Path $Path
+    } | & {
+        process {
+            Run-Command @_ -Path $Path
+        }
     }
 }
 
@@ -2496,6 +2489,12 @@ function Save-OSConfigurationMT {
         $Path
     )
 
+    # If this command is run by itself (not from Collect-OutlookInfo), need to create a runspace pool.
+    if (-not $Script:runspacePool) {
+        Open-TaskRunspace
+        $runspaceOpened = $true
+    }
+    
     if (-not (Test-Path $Path)) {
         New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
     }
@@ -2513,12 +2512,16 @@ function Save-OSConfigurationMT {
 
     Write-Verbose "waiting for tasks..."
     $tasks | Receive-Task -AutoRemoveTask
+
+    if ($runspaceOpened) {
+        Close-TaskRunspace
+    }
 }
 
 function Save-NetworkInfo {
     [CmdletBinding()]
     param (
-        [parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true)]
         $Path
     )
 
@@ -2527,7 +2530,7 @@ function Save-NetworkInfo {
     }
 
     # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
-    $commands = @(
+    & {
         @{ScriptBlock = { Get-NetAdapter -IncludeHidden } }
         @{ScriptBlock = { Get-NetAdapterAdvancedProperty } }
         @{ScriptBlock = { Get-NetAdapterBinding -IncludeHidden } }
@@ -2559,12 +2562,13 @@ function Save-NetworkInfo {
         @{ScriptBlock = { netsh advfirewall consec show rule name=all verbose } }
         @{ScriptBlock = { netsh advfirewall monitor show firewall rule name=all } }
         @{ScriptBlock = { netsh advfirewall monitor show consec rule name=all } }
-    )
-
-    foreach ($command in $commands) {
-        Run-Command @command -Path $Path
+    } | & {
+        process {
+            Run-Command @_ -Path $Path
+        }
     }
 }
+
 
 <#
 .DESCRIPTION
@@ -2590,6 +2594,7 @@ function Run-Command {
     try {
         # To redirect error, call operator (&) is used, instead of $ScriptBlock.InvokeReturnAsIs().
         $err = $($result = & $ScriptBlock @ArgumentList) 2>&1
+
         foreach ($e in $err) {
             Write-Log "{$ScriptBlock} had a non-terminating error. $e" -ErrorRecord $e
         }
@@ -2605,55 +2610,58 @@ function Run-Command {
         return
     }
 
+    if (-not $Path) {
+        $result
+        return
+    }
+
     # If Path is given, save the result.
-    if ($Path) {
-        $exportAsXml = $true
+    $exportAsXml = $true
 
-        if ($FileName) {
-            if ([IO.Path]::GetExtension($FileName) -ne '.xml') {
-                $exportAsXml = $false
-            }
-        }
-        else {
-            # Decide the filename & export method based on the command type
-            $sb = $ScriptBlock.ToString()
-            $Command = ([RegEx]::Match($sb, '\w+-\w+')).Value
-            if (-not $Command) {
-                $Command = $sb
-            }
-
-            $Command = $Command.Trim()
-            if ($Command.IndexOf(' ') -ge 0) {
-                $commandName = $Command.SubString(0, $Command.IndexOf(' '))
-            }
-            else {
-                $commandName = $Command
-            }
-
-            $cmd = Get-Command $commandName -ErrorAction SilentlyContinue
-            if ($cmd.CommandType -eq 'Application') {
-                # To be more strict, I could use [System.IO.Path]::GetInvalidFileNameChars(). But it's ok for now.
-                $FileName = $Command.Replace('/', '-') + ".txt"
-                $exportAsXml = $false
-            }
-            else {
-                $FileName = $commandName.SubString($commandName.IndexOf('-') + 1) + ".xml"
-            }
-        }
-
-        if (-not (Test-Path $Path)) {
-            New-Item $Path -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
-        }
-
-        if ($exportAsXml) {
-            $result | Export-Clixml -LiteralPath (Join-Path $Path $FileName)
-        }
-        else {
-            $result | Set-Content -LiteralPath (Join-Path $Path $FileName)
+    if ($FileName) {
+        if ([IO.Path]::GetExtension($FileName) -ne '.xml') {
+            $exportAsXml = $false
         }
     }
     else {
-        $result
+        # Decide the filename & export method based on the command type
+        $sb = $ScriptBlock.ToString()
+        $Command = ([RegEx]::Match($sb, '\w+-\w+')).Value
+
+        if (-not $Command) {
+            $Command = $sb
+        }
+
+        $Command = $Command.Trim()
+
+        if ($Command.IndexOf(' ') -ge 0) {
+            $commandName = $Command.SubString(0, $Command.IndexOf(' '))
+        }
+        else {
+            $commandName = $Command
+        }
+
+        $cmd = Get-Command $commandName -ErrorAction SilentlyContinue
+
+        if ($cmd.CommandType -eq 'Application') {
+            # To be more strict, I could use [System.IO.Path]::GetInvalidFileNameChars(). But it's ok for now.
+            $FileName = $Command.Replace('/', '-') + ".txt"
+            $exportAsXml = $false
+        }
+        else {
+            $FileName = $commandName.SubString($commandName.IndexOf('-') + 1) + ".xml"
+        }
+    }
+
+    if (-not (Test-Path $Path)) {
+        New-Item $Path -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
+    }
+
+    if ($exportAsXml) {
+        $result | Export-Clixml -LiteralPath (Join-Path $Path $FileName)
+    }
+    else {
+        $result | Set-Content -LiteralPath (Join-Path $Path $FileName)
     }
 }
 
@@ -3241,13 +3249,14 @@ function Get-OutlookProfile {
 
     $defaultProfile = $null
 
-    Get-ChildItem (Join-Path $userRegRoot 'Software\Microsoft\Office\') -ErrorAction SilentlyContinue | & {
-        param ([ref] $defaultProfile)
+    Join-Path $userRegRoot 'Software\Microsoft\Office\' `
+    | Get-ChildItem -ErrorAction SilentlyContinue | & {
+        param ([ref] $defaultProfile, [Parameter(ValueFromPipeline)]$key)
         process {
-            $key = $_
             if ($key.Name -match '\d\d\.0') {
                 if (-not $defaultProfile.Value) {
-                    $defaultProfile.Value = Join-Path $key.PSPath 'Outlook' | Get-ItemProperty -Name 'DefaultProfile' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultProfile'
+                    $defaultProfile.Value = Join-Path $key.PSPath 'Outlook' | Get-ItemProperty -Name 'DefaultProfile' -ErrorAction SilentlyContinue `
+                    | Select-Object -ExpandProperty 'DefaultProfile'
                 }
 
                 Get-ChildItem (Join-Path $key.PSPath '\Outlook\Profiles') -ErrorAction SilentlyContinue
@@ -3256,9 +3265,8 @@ function Get-OutlookProfile {
             $key.Close()
         }
     } ([ref] $defaultProfile) | & {
+        param([Parameter(ValueFromPipeline)]$prof)
         process {
-            $prof = $_
-
             $accountStore = Join-Path $prof.PSPath '*' | Get-ItemProperty -Name $CLSID_OlkMail -ErrorAction SilentlyContinue | Select-Object -First 1
             $olkMailBytes = $accountStore.$CLSID_OlkMail
             $accountCount = $olkMailBytes.Count / 4
@@ -3462,19 +3470,22 @@ function Get-CachedAutodiscoverLocation {
     }
 
     $ver = ($officeInfo.Version.Split('.')[0] -as [int]).ToString('00.0')
+    $ForcePSTPath = 'ForcePSTPath'
 
-    foreach ($keyPath in @("SOFTWARE\Policies\Microsoft\Office\$ver\Outlook", "SOFTWARE\Microsoft\Office\$ver\Outlook")) {
-        $forcePstPath = Get-ItemProperty $(Join-Path $userRegRoot $keyPath) -Name 'ForcePSTPath' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'ForcePSTPath'
-        if ($forcePstPath) {
+    & {
+        "SOFTWARE\Policies\Microsoft\Office\$ver\Outlook"
+        "SOFTWARE\Microsoft\Office\$ver\Outlook"
+    } `
+    | Join-Path -Path $userRegRoot -ChildPath { $_ } `
+    | Get-ItemProperty -Name $ForcePSTPath -ErrorAction SilentlyContinue | & {
+        process {
             [PSCustomObject]@{
-                Name = 'ForcePSTPath'
-                Path = [System.Environment]::ExpandEnvironmentVariables($forcePstPath)
+                Name = $ForcePSTPath
+                Path = [System.Environment]::ExpandEnvironmentVariables($_.$ForcePSTPath)
             }
-
-            # If ForcePSTPath is found in the policy key, no need to check the rest.
-            break
         }
-    }
+    } `
+    | Select-Object -First 1  # If ForcePSTPath is found in the policy key, no need to check the rest.
 }
 
 <#
@@ -3495,40 +3506,22 @@ function Save-CachedAutodiscover {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
 
-    foreach ($cachePath in @(Get-CachedAutodiscoverLocation -User $User)) {
-        Write-Log "Searching $($cachePath.Name) $($cachePath.Path)"
-        # Get Autodiscover XML files and copy them to Path
-        try {
-            if (-not (Test-Path $cachePath.Path)) {
-                Write-Verbose "Skipping $($cachePath.Path) because the path does not exist."
-                continue
-            }
+    Get-CachedAutodiscoverLocation -User $User | & {
+        # Copy Autodiscover XML files to Path
+        param ([Parameter(ValueFromPipeline)]$cachePath)
+        process {
+            Write-Log "Searching $($cachePath.Name) $($cachePath.Path)"
 
             # Use recurse only for the path under LOCALAPPDATA.
-            Get-ChildItem $cachePath.Path -Filter '*Autod*.xml' -Force -Recurse:$($cachePath.Name -eq 'UnderLocalAppData') | Copy-Item -Destination $Path -PassThru | & {
-                # Remove Hidden attribute
-                process {
-                    $file = $_
-
-                    if ((Get-ItemProperty $file.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
-                        try {
-                            # Unfortunately, this does not work before PowerShell V5.
-                            (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
-                            return
-                        }
-                        catch {
-                            # ignore error
-                        }
-
-                        # This could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
-                        Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
-                    }
-                }
+            try {
+                Get-ChildItem $cachePath.Path -Filter '*Autod*.xml' -Force -Recurse:$($cachePath.Name -eq 'UnderLocalAppData') -ErrorAction SilentlyContinue `
+                | Copy-Item -Destination $Path -PassThru `
+                | Remove-HiddenAttribute
             }
-        }
-        catch {
-            # Just in case Copy-Item throws a terminating error.
-            Write-Error -ErrorRecord $_
+            catch {
+                # Just in case Copy-Item throws a terminating error.
+                Write-Error -ErrorRecord $_
+            }
         }
     }
 }
@@ -3545,10 +3538,12 @@ function Remove-CachedAutodiscover {
     )
 
     Get-CachedAutodiscoverLocation -User $User | & {
+        param ([Parameter(ValueFromPipeline)]$cachePath)
         process {
-            Get-ChildItem -LiteralPath $_.Path -Filter '*Autod*.xml' -Force -Recurse:($_.Name -eq 'UnderLocalAppData')
+            Get-ChildItem -LiteralPath $cachePath.Path -Filter '*Autod*.xml' -Force -Recurse:($cachePath.Name -eq 'UnderLocalAppData') `
+            | Remove-Item
         }
-    } | Remove-Item -Force
+    }
 }
 
 <#
@@ -3565,46 +3560,52 @@ function Save-CachedOutlookConfig {
         [string]$User
     )
 
+    $LocalAppData = 'Local AppData'
+    $sourcePath = Get-UserShellFolder -User $User -ShellFolderName $LocalAppData | Join-Path -ChildPath 'Microsoft\Outlook\'
+
+    if (-not $sourcePath) {
+        Write-Error "Cannot find $LocalAppData for $User."
+        return
+    }
+
     if (-not (Test-Path $Path)) {
         New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
     }
 
     $Path = Resolve-Path $Path
-    $sourcePath = $null
-
-    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
-        $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
-    }
-
-    if (-not $sourcePath) {
-        Write-Error "Cannot find LocalAppData for $User."
-        return
-    }
 
     # Get OutlookConfig & OPX json files and copy them to Path
     try {
-        Get-ChildItem $sourcePath -Filter '*Config*.json' -Force -Recurse -ErrorAction SilentlyContinue | Copy-Item -Destination $Path -PassThru | & {
-            process {
-                $file = $_
-
-                try {
-                    if ((Get-ItemProperty $file.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
-                        (Get-ItemProperty $file.FullName).Attributes -= 'Hidden'
-                        return
-                    }
-                }
-                catch {
-                    # ignore
-                }
-
-                # This could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
-                Set-ItemProperty $file.Fullname -Name Attributes -Value ((Get-ItemProperty $file.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
-            }
-        }
-    }
+        Get-ChildItem $sourcePath -Filter '*Config*.json' -Force -Recurse -ErrorAction SilentlyContinue `
+        | Copy-Item -Destination $Path -PassThru `
+        | Remove-HiddenAttribute
+    } 
     catch {
         # Just in case Copy-Item throws a terminating error.
         Write-Error -ErrorRecord $_
+    }
+}
+
+function Remove-HiddenAttribute {
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        $File
+    )
+
+    process {
+        try {
+            if ((Get-ItemProperty $File.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
+                (Get-ItemProperty $File.FullName).Attributes -= 'Hidden'
+                return
+            }
+        }
+        catch {
+            # ignore
+        }
+
+        # This could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
+        Set-ItemProperty $File.Fullname -Name Attributes -Value ((Get-ItemProperty $File.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
     }
 }
 
@@ -3769,12 +3770,12 @@ function Get-OfficeModuleInfo {
             Get-ChildItem -Path $_ -Filter '*.dll' -Recurse -ErrorAction SilentlyContinue
         }
     } | & {
+        # Apply filters if any
         process {
             if ($CancellationToken.IsCancellationRequested) {
                 return
             }
 
-            # Apply filters if any
             if ($Filters.Count -eq 0) {
                 $_
                 return
@@ -6799,15 +6800,18 @@ function Get-AlternateId {
         return
     }
 
-    $authNPath = Join-Path $userRegRoot 'Software\Microsoft\AuthN'
-    $domainHint = Get-ItemProperty $authNPath -Name 'DomainHint' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DomainHint'
+    $domainHint = Join-Path $userRegRoot 'Software\Microsoft\AuthN' `
+    | Get-ItemProperty -Name 'DomainHint' -ErrorAction SilentlyContinue `
+    | Select-Object -ExpandProperty 'DomainHint'
 
-    $identityPath = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity'
-    $enableAlternateIdSupport = Get-ItemProperty $identityPath -Name 'EnableAlternateIdSupport' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'EnableAlternateIdSupport'
+    $enableAlternateIdSupport = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity' `
+    | Get-ItemProperty -Name 'EnableAlternateIdSupport' -ErrorAction SilentlyContinue `
+    | Select-Object -ExpandProperty 'EnableAlternateIdSupport'
 
     if ($domainHint) {
-        $domainZonePath = Join-Path $userRegRoot "Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\Domains\$domainHint"
-        $domainZone = Get-ItemProperty $domainZonePath -ErrorAction SilentlyContinue | Select-Object -Property * -ExcludeProperty PS*
+        $domainZone = Join-Path $userRegRoot "Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\Domains\$domainHint" `
+        | Get-ItemProperty -ErrorAction SilentlyContinue `
+        | Select-Object -Property '*' -ExcludeProperty 'PS*'
     }
 
     [PSCustomObject]@{
@@ -6840,7 +6844,10 @@ function Get-UseOnlineContent {
     & {
         "Software\Microsoft\Office\$major.0\Common\Internet"
         "Software\Policies\Microsoft\office\$major.0\common\Internet"
-    } | Join-Path -Path $userRegRoot -ChildPath { $_ } | Get-ItemProperty -Name 'UseOnlineContent' -ErrorAction SilentlyContinue
+    }`
+    | Join-Path -Path $userRegRoot -ChildPath { $_ } `
+    | Get-ItemProperty -Name 'UseOnlineContent' -ErrorAction SilentlyContinue `
+    | Select-Object -Property '*' -ExcludeProperty 'PSParentPath', 'PSChildName', 'PSProvider'
 }
 
 function Get-AutodiscoverConfig {
@@ -6863,10 +6870,13 @@ function Get-AutodiscoverConfig {
 
     $major = $officeInfo.Version.Split('.')[0]
 
-    foreach ($_ in @("Software\Microsoft\Office\$major.0\Outlook\AutoDiscover", "Software\Policies\Microsoft\Office\$major.0\Outlook\AutoDiscover")) {
-        $path = Join-Path $userRegRoot $_
-        Get-ItemProperty $path -Name Exclude*, Prefer* -ErrorAction SilentlyContinue | Select-Object -Property * -ExcludeProperty PSParentPath, PSChildName, PSProvider
-    }
+    & {
+        "Software\Microsoft\Office\$major.0\Outlook\AutoDiscover"
+        "Software\Policies\Microsoft\Office\$major.0\Outlook\AutoDiscover"
+    } `
+    | Join-Path -Path $userRegRoot -ChildPath { $_ } `
+    | Get-ItemProperty -Name 'Exclude*', 'Prefer*' -ErrorAction SilentlyContinue `
+    | Select-Object -Property '*' -ExcludeProperty 'PSParentPath', 'PSChildName', 'PSProvider'
 }
 
 function Get-SocialConnectorConfig {
@@ -6881,10 +6891,13 @@ function Get-SocialConnectorConfig {
         return
     }
 
-    foreach ($_ in @('Software\Microsoft\Office\Outlook\SocialConnector', 'Software\Policies\Microsoft\Office\Outlook\SocialConnector')) {
-        $path = Join-Path $userRegRoot $_
-        Get-ItemProperty $path -ErrorAction SilentlyContinue
-    }
+    & {
+        'Software\Microsoft\Office\Outlook\SocialConnector'
+        'Software\Policies\Microsoft\Office\Outlook\SocialConnector'
+    } `
+    | Join-Path -Path $userRegRoot -ChildPath { $_ } `
+    | Get-ItemProperty -Name 'DownloadDetailsFromAd' -ErrorAction SilentlyContinue `
+    | Select-Object -Property '*' -ExcludeProperty 'PSParentPath', 'PSChildName', 'PSProvider'
 }
 
 <#
