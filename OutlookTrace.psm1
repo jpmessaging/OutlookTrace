@@ -1118,7 +1118,7 @@ function Compress-Folder {
             $zipStream = New-Object System.IO.FileStream -ArgumentList $zipFilePath, ([IO.FileMode]::Open)
             $zipArchive = New-Object System.IO.Compression.ZipArchive -ArgumentList $zipStream, ([IO.Compression.ZipArchiveMode]::Create)
             $count = 0
-            
+
             $progressInterval = 10
             $prevProgress = - $progressInterval
             $activity = "Creating a zip file $zipFilePath"
@@ -2494,7 +2494,7 @@ function Save-OSConfigurationMT {
         Open-TaskRunspace
         $runspaceOpened = $true
     }
-    
+
     if (-not (Test-Path $Path)) {
         New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
     }
@@ -3578,7 +3578,7 @@ function Save-CachedOutlookConfig {
         Get-ChildItem $sourcePath -Filter '*Config*.json' -Force -Recurse -ErrorAction SilentlyContinue `
         | Copy-Item -Destination $Path -PassThru `
         | Remove-HiddenAttribute
-    } 
+    }
     catch {
         # Just in case Copy-Item throws a terminating error.
         Write-Error -ErrorRecord $_
@@ -3770,26 +3770,27 @@ function Get-OfficeModuleInfo {
         }
     } | & {
         # Apply filters if any
+        param ([Parameter(ValueFromPipeline)]$file)
         process {
             if ($CancellationToken.IsCancellationRequested) {
                 return
             }
 
             if ($Filters.Count -eq 0) {
-                $_
+                $file
                 return
             }
 
             foreach ($filter in $Filters) {
-                if ($_.Name -match $filter) {
-                    $_
+                if ($file.Name -match $filter) {
+                    $file
                     break
                 }
             }
         }
     } | & {
+        param ([Parameter(ValueFromPipeline)]$file)
         process {
-            $file = $_
             if ($file.VersionInfo.FileVersionRaw) {
                 $fileVersion = $file.VersionInfo.FileVersionRaw
             }
@@ -4948,7 +4949,7 @@ function Remove-WerDumpKey {
             Remove-ItemProperty $localDumpsKey -Name 'CustomDumpFlags', 'DumpType', 'DumpFolder'
         }
 
-        if ($null -eq (Get-ChildItem $localDumpsKey | Select-Object -First 1)) {
+        if (-not (Test-Path (Join-Path $localDumpsKey '*'))) {
             Write-Log "Removing $localDumpsKey because it has no subkeys."
             Remove-Item $localDumpsKey
         }
