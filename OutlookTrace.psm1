@@ -1076,20 +1076,24 @@ function Compress-Folder {
         }
 
         $files = @(
-            foreach ($filt in $Filter) {
-                Get-ChildItem -LiteralPath $Path -File -Recurse -Force -Filter $filt | & {
-                    param ([Parameter(ValueFromPipeline)]$file)
-                    process {
-                        if ($FromDateTime -and $file.LastWriteTime -lt $FromDateTime) {
-                            return
-                        }
-
-                        if ($ToDateTime -and $file.LastWriteTime -gt $ToDateTime) {
-                            return
-                        }
-
-                        $file
+            $Filter |  & {
+                # Apply filename filters if any. Note: Even if Filter is null, the pipeline will run (unlike foreach keyword)
+                param ([Parameter(ValueFromPipeline)]$filter)
+                process {
+                    Get-ChildItem -LiteralPath $Path -File -Recurse -Force -Filter $filter
+                }
+            } | & {
+                param ([Parameter(ValueFromPipeline)]$file)
+                process {
+                    if ($FromDateTime -and $file.LastWriteTime -lt $FromDateTime) {
+                        return
                     }
+
+                    if ($ToDateTime -and $file.LastWriteTime -gt $ToDateTime) {
+                        return
+                    }
+
+                    $file
                 }
             }
         )
@@ -1117,14 +1121,17 @@ function Compress-Folder {
 
             $zipStream = New-Object System.IO.FileStream -ArgumentList $zipFilePath, ([IO.FileMode]::Open)
             $zipArchive = New-Object System.IO.Compression.ZipArchive -ArgumentList $zipStream, ([IO.Compression.ZipArchiveMode]::Create)
-            $count = 0
 
             $progressInterval = 10
             $prevProgress = - $progressInterval
             $activity = "Creating a zip file $zipFilePath"
 
+            [long]$totalBytes = $files | Measure-Object -Property 'Length' -Sum | Select-Object -ExpandProperty 'Sum'
+            [long]$currentBytes = 0
+
             foreach ($file in $files) {
-                $progress = 100 * $count / $files.Count
+                $progress = 100 * $currentBytes / $totalBytes
+
                 if ($progress -ge $prevProgress + $progressInterval) {
                     Write-Progress -Activity $activity -Status "Please wait" -PercentComplete $progress
                     $prevProgress = $progress
@@ -1138,7 +1145,7 @@ function Compress-Folder {
                     $zipEntryStream = $zipEntry.Open()
                     $fileStream.CopyTo($zipEntryStream)
 
-                    ++$count
+                    $currentBytes += $file.Length
                 }
                 catch {
                     Write-Error -Message "Failed to add $($file.FullName). $_" -Exception $_.Exception
