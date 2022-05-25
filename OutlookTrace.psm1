@@ -6701,20 +6701,20 @@ function Get-OfficeIdentity {
     $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 -and $_.LastSwitchedTime } | Sort-Object 'LastSwitchedTime' | Select-Object -Last 1
 
     if ($activeIdentity) {
-        Write-Log "Found active identity based on active profile."
+        Write-Log "Found active identity $($activeIdentity.EmailAddress) based on active profile."
     }
     else {
         # If there is no active profile, then pick one with LiveId, OrgId, or ADAL
         $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 -and ($IdpMapping[$_.IdP] -eq 'LiveId' -or $IdpMapping[$_.IdP] -eq 'OrgId' -or $IdpMapping[$_.IdP] -eq 'ADAL') } | Select-Object -First 1
 
         if ($activeIdentity) {
-            Write-Log "Found active identity based on IdP $($IdpMapping[$_.IdP])."
+            Write-Log "Found active identity $($activeIdentity.EmailAddress) based on IdP $($IdpMapping[$_.IdP])."
         }
         else {
             $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 } | Select-Object -First 1
 
             if ($activeIdentity) {
-                Write-Log "Found active identity based on not SignedOut."
+                Write-Log "Found active identity $($activeIdentity.EmailAddress) based on not SignedOut."
             }
             else {
                 Write-Log "There is no active identity."
