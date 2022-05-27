@@ -409,6 +409,11 @@ namespace Win32
             Type nlmType = Type.GetTypeFromCLSID(new Guid(CLSID_NetworkListManager));
             INetworkCostManager ncm = Activator.CreateInstance(nlmType) as INetworkCostManager;
 
+            if (ncm == null)
+            {
+                throw new InvalidOperationException("Failed to obtain INetworkCostManager");
+            }
+
             try
             {
                 NLM_CONNECTION_COST cost = NLM_CONNECTION_COST.NLM_CONNECTION_COST_UNKNOWN;
@@ -1839,7 +1844,9 @@ function Stop-NetshTrace {
         Stop-EtwSession -SessionName $SessionName -ErrorAction SilentlyContinue
     }
 
-    Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
+    if ($reportMode -ne 'None') {
+        Write-Progress -Activity "Stopping netsh trace" -Status "Done" -Completed
+    }
 }
 
 function Get-EtwSession {
@@ -2461,7 +2468,9 @@ function Save-OSConfiguration {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
-        $Path
+        $Path,
+        [Parameter(Mandatory = $true)]
+        $User
     )
 
     if (-not (Test-Path $Path)) {
@@ -2479,7 +2488,10 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-JoinInformation } }
         @{ScriptBlock = { Get-DeviceJoinStatus }; FileName = 'DeviceJoinStatus.txt' }
         @{ScriptBlock = { Get-WebView2 } }
-        # this is just for troubleshooting.
+        @{ScriptBlock = { param($user) Get-WinInetProxy -User $user }; ArgumentList = $User }
+        @{ScriptBlock = { param($user) Get-ProxyAutoConfig -User $user }; ArgumentList = $User }
+
+        # These are just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
         @{ScriptBlock = { whoami.exe /USER }; FileName = 'whoami.txt' }
     } | & {
@@ -2559,6 +2571,8 @@ function Save-NetworkInfo {
         # @{ScriptBlock = {Get-PnpDevice | Get-PnpDeviceProperty -KeyName DEVPKEY_Device_InstanceId,DEVPKEY_Device_DevNodeStatus,DEVPKEY_Device_ProblemCode}}
         @{ScriptBlock = { Get-NetIPInterface } }
         @{ScriptBlock = { Get-NetConnectionProfile } }
+        @{ScriptBlock = { Get-NetFirewallProfile } }
+        @{ScriptBlock = { Show-NetFirewallRule } }
         @{ScriptBlock = { ipconfig /all } }
 
         # Dump Windows Firewall config
@@ -5075,17 +5089,21 @@ function Start-WfpTrace {
         [Parameter(Mandatory = $true)]
         $Path,
         [Parameter(Mandatory = $true)]
-        [int]$IntervalSeconds,
-        [TimeSpan]$MaxDuration = [TimeSpan]::FromHours(1)  # Just for safety, make sure to stop after a period
+        [TimeSpan]$Interval,
+        [TimeSpan]$MaxDuration = [TimeSpan]::FromHours(1)  # Just for safety, make sure to stop after a certaion period
     )
+
+    if (-not (Test-RunAsAdministrator)) {
+        Write-Error "Please run as administrator"
+        return
+    }
 
     if (-not (Test-Path $Path)) {
         New-Item -ItemType directory $Path -ErrorAction Stop | Out-Null
     }
+
     $Path = Resolve-Path $Path
 
-    # Start WFP trace
-    # TODO: This does not return the control sometimes. Figure out why.
     if ($env:PROCESSOR_ARCHITEW6432) {
         $netshexe = Join-Path $env:SystemRoot 'SysNative\netsh.exe'
     }
@@ -5093,32 +5111,51 @@ function Start-WfpTrace {
         $netshexe = Join-Path $env:SystemRoot 'System32\netsh.exe'
     }
 
-    $filePath = Join-Path $Path 'wfp'
+    # Dump some wfp show commands.
+    $now = Get-Date -Format 'yyyyMMdd_HHmmss'
+
+    $stateFile = Join-Path $Path "wfpstate_$now.xml"
+    & $netshexe wfp show state file=$stateFile | Out-Null
+
+    $bootTimePolicyFile = Join-Path $Path "btpol_$now.xml"
+    & $netshexe wfp show boottimepolicy file=$bootTimePolicyFile | Out-Null
+
+    $filterFilePath = Join-Path $Path "filters_$now.xml"
+    & $netshexe wfp show filters file=$filterFilePath verbose=on | Out-Null
+
     Write-Log "Starting WFP trace"
+    $filePath = Join-Path $Path 'wfp'
     Start-Process $netshexe -ArgumentList "wfp capture start cab=OFF file=`"$filePath`"" -WindowStyle Hidden
 
     Write-Log "Starting a WFP job"
+
     $job = Start-Job -ScriptBlock {
-        param($Path, $IntervalSeconds, $MaxDuration)
+        param($Path, $Interval, $MaxDuration)
+
+        if ($env:PROCESSOR_ARCHITEW6432) {
+            $netshexe = Join-Path $env:SystemRoot 'SysNative\netsh.exe'
+        }
+        else {
+            $netshexe = Join-Path $env:SystemRoot 'System32\netsh.exe'
+        }
 
         $expiration = [DateTime]::Now.Add($MaxDuration)
 
         while ($true) {
-            if ([DateTime]::Now -gt $expiration) {
-                Write-Output "WfpTrace expired after $MaxDuration"
-                break
+            $now = [DateTime]::Now
+
+            if ($now -gt $expiration) {
+                "WfpTrace job was expired at $($expiration.ToString('HH:mm:ss')) after $MaxDuration"
+                return
             }
 
-            # dump filters
-            $filterFilePath = Join-Path $Path "filters_$(Get-Date -Format 'yyyyMMdd_HHmmss').xml"
-            netsh wfp show filters file=$filterFilePath verbose=on | Out-Null
-
             # dump netevents
-            $eventFilePath = Join-Path $Path "netevents_$(Get-Date -Format 'yyyyMMdd_HHmmss').xml"
-            netsh wfp show netevents file="$eventFilePath" <#timewindow=$IntervalSeconds#> | Out-Null
-            Start-Sleep -Seconds $IntervalSeconds
+            $eventFilePath = Join-Path $Path "netevents_$($now.ToString('yyyyMMdd_HHmmss')).xml"
+            & $netshexe wfp show netevents file="$eventFilePath" timewindow=$($Interval.TotalSeconds) | Out-Null
+
+            Start-Sleep -Seconds $Interval.TotalSeconds
         }
-    } -ArgumentList $Path, $IntervalSeconds, $MaxDuration
+    } -ArgumentList $Path, $Interval, $MaxDuration
 
     $job
 }
@@ -5142,7 +5179,7 @@ function Stop-WfpTrace {
 
     Write-Log "Stopping a WFP job"
     Stop-Job -Job $WfpJob
-    Remove-Job -Job $WfpJob
+    Receive-Job -Job $wfpJob -Wait -AutoRemoveJob | Write-Log
 }
 
 <#
@@ -6236,7 +6273,7 @@ function Start-ProcessMonitoring {
             return
         }
 
-        Start-Sleep -Seconds $Interval.Seconds
+        Start-Sleep -Seconds $Interval.TotalSeconds
     }
 }
 
@@ -7026,7 +7063,7 @@ function Collect-OutlookInfo {
                 $targetUser = $currentLogonUser
             }
             else {
-                Write-Error "Found multiple logon users ($($logonUsers.Count) users). Please specify the target user by `"-User`" parameter."
+                Write-Error "Found multiple logon users ($($logonUsers.Count) users$(if ($logonUsers.Count -le 3) { "; $($logonUsers.Name -join ',')" })). Please specify the target user by `"-User`" parameter."
                 return
             }
         }
@@ -7127,14 +7164,15 @@ function Collect-OutlookInfo {
             $MSIPCDir = Join-Path $ConfigDir 'MSIPC'
             $EventDir = Join-Path $ConfigDir 'EventLog'
 
-            $activity = "Saving configuration"
-            $status = "Please wait"
-            Write-Progress -Activity $activity -Status $status -PercentComplete 0
+            $PSDefaultParameterValues['Write-Progress:Activity'] = 'Saving configuration'
+            $PSDefaultParameterValues['Write-Progress:Status'] = 'Please wait'
+
+            Write-Progress -PercentComplete 0
 
             # First start tasks that might take a while.
 
             # MSInfo32 takes a long time. Currently disabled.
-            # $msinfo32Task = Start-Task -Command 'Save-MSInfo32' -Parameters @{Path = $OSDir}
+            # $msinfo32Task = Start-Task { param($path) Save-MSInfo32 -Path $path } -ArgumentList $OSDir
 
             Write-Log "Starting officeModuleInfoTask."
             $officeModuleInfoTaskCts = New-Object System.Threading.CancellationTokenSource
@@ -7143,18 +7181,15 @@ function Collect-OutlookInfo {
             Write-Log "Starting networkInfoTask."
             $networkInfoTask = Start-Task { param($path) Save-NetworkInfo -Path $path } -ArgumentList $NetworkDir
 
-            Write-Progress -Activity $activity -Status $status -PercentComplete 20
+            Write-Progress -PercentComplete 20
 
             Write-Log "Starting officeRegistryTask."
             $officeRegistryTask = Start-Task { param($path, $user) Save-OfficeRegistry -Path $path -User $user } -ArgumentList $RegistryDir, $targetUser
 
             Write-Log "Starting osConfigurationTask."
-            $osConfigurationTask = Start-Task { param($path) Save-OSConfiguration -Path $path } -ArgumentList $OSDir
+            $osConfigurationTask = Start-Task { param($path, $user) Save-OSConfiguration -Path $path -User $user } -ArgumentList $OSDir, $targetUser
 
-            Invoke-ScriptBlock { param($user) Get-WinInetProxy -User $user } -ArgumentList $targetUser -Path $OSDir
-            Invoke-ScriptBlock { param($user) Get-ProxyAutoConfig -User $user } -ArgumentList $targetUser -Path $OSDir
-
-            Write-Progress -Activity $activity -Status $status -PercentComplete 40
+            Write-Progress -PercentComplete 40
 
             Invoke-ScriptBlock { Get-OfficeInfo } -Path $OfficeDir
             Invoke-ScriptBlock { param($user) Get-OutlookProfile -User $user } -ArgumentList $targetUser -Path $OfficeDir
@@ -7167,27 +7202,33 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($user) Get-UseOnlineContent -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Invoke-ScriptBlock { param($user) Get-OfficeIdentity -User $user } -ArgumentList $targetUser -Path $OfficeDir
 
-            Write-Progress -Activity $activity -Status $status -PercentComplete 60
+            Write-Progress -PercentComplete 60
+
             Invoke-ScriptBlock { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
             Invoke-ScriptBlock { param($user, $OfficeDir) Save-CachedOutlookConfig -User $user -Path $(Join-Path $OfficeDir 'Cached OutlookConfig') } -ArgumentList $targetUser, $OfficeDir
             Invoke-ScriptBlock { param($user, $OfficeDir) Save-DLP -User $user -Path $(Join-Path $OfficeDir 'DLP') } -ArgumentList $targetUser, $OfficeDir
 
-            Write-Progress -Activity $activity -Status $status -PercentComplete 80
+            Write-Progress -PercentComplete 80
+
             Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir
 
             if ($targetUser) {
                 $targetUser | Export-Clixml -Path (Join-Path $OSDir 'User.xml')
             }
 
-            # The user might start & stop Outlook while tracing. In order to capture Outlook's instance, run a task to check Outlook.exe periodically until it finds an instance.
+            # The user might start & stop Outlook while tracing. In order to capture Outlook's instances, run a task to check Outlook.exe periodically.
             Write-Log "Starting outlookMonitorTask."
             $outlookMonitorTaskCts = New-Object System.Threading.CancellationTokenSource
             $outlookMonitorTask = Start-Task { param ($path, $name, $cancelToken) Start-ProcessMonitoring -Path $path -Name $name -CancelToken $cancelToken } -ArgumentList $OSDir, @('Outlook', 'Fiddler*'), $outlookMonitorTaskCts.Token
 
-            Write-Progress -Activity $activity -Status 'Done' -Completed
+            Write-Progress -Completed
         }
 
+        $PSDefaultParameterValues['Write-Progress:Activity'] = 'Starting traces'
+
         if ($Component -contains 'Fiddler') {
+            Write-Progress -Status 'Starting Fiddler'
+
             if ($targetUser.Sid -eq $currentUser.Sid) {
                 Start-FiddlerCap -Path $Path -ErrorAction Stop | Out-Null
                 Write-Warning "FiddlerCap has started. Please manually configure and start capture."
@@ -7202,7 +7243,8 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Netsh') {
-            Write-Progress -Activity "Starting Netsh trace" -Status "Please wait" -PercentComplete -1
+            Write-Progress -Status 'Starting Netsh trace'
+
             # When netsh trace is run for the first time, it does not capture packets (even with "capture=yes").
             # To workaround, netsh is started and stopped immediately.
             $tempNetshName = 'netsh_test'
@@ -7211,11 +7253,11 @@ function Collect-OutlookInfo {
             Remove-Item (Join-Path $tempPath $tempNetshName) -Recurse -Force -ErrorAction SilentlyContinue
 
             Start-NetshTrace -Path (Join-Path $tempPath 'Netsh') -RerpotMode $NetshReportMode
-            Write-Progress -Activity "Starting Netsh trace" -Completed
             $netshTraceStarted = $true
         }
 
         if ($Component -contains 'Outlook') {
+            Write-Progress -Status 'Starting Outlook trace'
             # Stop a lingering session if any.
             Stop-OutlookTrace -ErrorAction SilentlyContinue
             Start-OutlookTrace -Path (Join-Path $tempPath 'Outlook')
@@ -7223,6 +7265,8 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'PSR') {
+            Write-Progress -Status 'Starting PSR'
+
             # Start PSR as a task and restart after some time until canceled.
             # This task creates PSR_***.mht in $psrPath. When LogFileMode is 'Circular', only files writen within the last 1 hour will be kept.
             $psrCts = New-Object System.Threading.CancellationTokenSource
@@ -7297,6 +7341,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'WAM') {
+            Write-Progress -Status 'Starting WAM trace'
             Enable-WamEventLog -ErrorAction SilentlyContinue
             Stop-WamTrace -ErrorAction SilentlyContinue
             Start-WamTrace -Path (Join-Path $tempPath 'WAM') -ErrorAction Stop
@@ -7304,23 +7349,25 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Procmon') {
+            Write-Progress -Status 'Starting Procmon'
             $procmonResult = Start-Procmon -Path (Join-Path $tempPath 'Procmon') -ProcmonSearchPath $Path -ErrorAction Stop
             $procmonStared = $true
         }
 
         if ($Component -contains 'WFP') {
-            $wfpJob = Start-WfpTrace -Path (Join-Path $tempPath 'WFP') -IntervalSeconds 15
+            Write-Progress -Status 'Starting WFP trace'
+            $wfpJob = Start-WfpTrace -Path (Join-Path $tempPath 'WFP') -Interval ([TimeSpan]::FromSeconds(15))
             $wfpStarted = $true
         }
 
         if ($Component -contains 'Performance') {
-            Write-Progress -Activity "Starting performance trace" -Status "Please wait" -PercentComplete -1
+            Write-Progress -Status 'Starting performance trace'
             Start-PerfTrace -Path (Join-Path $tempPath 'Performance')
-            Write-Progress -Activity "Starting performance trace" -Completed
             $perfStarted = $true
         }
 
         if ($Component -contains 'WPR') {
+            Write-Progress -Status 'Starting WPR trace'
             Start-Wpr -Path (Join-Path $tempPath 'WPR') -ErrorAction Stop
             $wprStarted = $true
         }
@@ -7352,6 +7399,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'HungDump') {
+            Write-Progress -Status 'Starting HungDump monitoring'
             $hungDumpCts = New-Object System.Threading.CancellationTokenSource
             $monitorStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
             Write-Log "Starting hungMonitorTask. HungMonitorTarget: $HungMonitorTarget, HungTimeoutSecond: $HungTimeoutSecond."
@@ -7431,9 +7479,14 @@ function Collect-OutlookInfo {
             $ttdStarted = $true
         }
 
+        Write-Progress -Completed
+
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted) {
             Write-Log "Waiting for the user to stop"
-            Read-Host 'Hit enter to stop'
+
+            # Read-Host is not used here because it'd block background tasks.
+            Write-Host 'Hit enter to stop: ' -NoNewline
+            $host.UI.ReadLine() | Out-Null
         }
     }
     catch {
@@ -7444,10 +7497,11 @@ function Collect-OutlookInfo {
     }
     finally {
         Write-Log "Stopping traces"
-        Write-Progress -Activity 'Stopping traces' -Status "Please wait." -PercentComplete -1
+        $PSDefaultParameterValues['Write-Progress:Activity'] = 'Stopping traces'
 
         if ($ttdStarted) {
-            Write-Progress -Activity 'Stopping TTD trace' -Status "Please wait." -PercentComplete -1
+            Write-Progress -Status 'Stopping TTD trace'
+
             $($stopResult = Stop-TTD $ttd) 2>&1 | Write-Log
             Write-Log "Stop-TTD Message: $($stopResult.Message)"
 
@@ -7456,7 +7510,7 @@ function Collect-OutlookInfo {
             if (-not $ttd.TargetProcess.HasExited) {
                 Write-Log "Waiting for the user to shutdown Outlook."
                 Write-Host "TTD Tracing is stopped. Please shutdown Outlook" -ForegroundColor Green
-                Write-Progress -Activity 'Stopping traces' -Status "Please shutdown Outlook." -PercentComplete -1
+                Write-Progress -Status 'Stopping TTD trace. Please shutdown Outlook.'
 
                 # Wait for Outlook to be stopped. Nudge the user once in a while.
                 while ($true) {
@@ -7473,22 +7527,25 @@ function Collect-OutlookInfo {
 
             Write-Log "Outlook ExitCode: $($ttd.TargetProcess.ExitCode), ExitTime: $(if ($ttd.TargetProcess.ExitTime) {$ttd.TargetProcess.ExitTime.ToString('o')}), ElapsedTime: $($ttd.TargetProcess.ExitTime - $ttd.TargetProcess.StartTime)"
             $ttd.Dispose()
-            Write-Progress -Activity 'Stopping TTD trace' -Status "Done" -Completed
         }
 
         if ($netshTraceStarted) {
+            Write-Progress -Status 'Stopping Netsh trace'
             Stop-NetshTrace
         }
 
         if ($outlookTraceStarted) {
+            Write-Progress -Status 'Stopping Outlook trace'
             Stop-OutlookTrace
         }
 
         if ($ldapTraceStarted) {
+            Write-Progress -Status 'Stopping LDAP trace'
             Stop-LDAPTrace -TargetProcess 'Outlook.exe'
         }
 
         if ($capiTraceStarted) {
+            Write-Progress -Status 'Stopping CAPI trace'
             Disable-EventLog 'Microsoft-Windows-CAPI2/Operational'
             Stop-CAPITrace
         }
@@ -7498,11 +7555,13 @@ function Collect-OutlookInfo {
         }
 
         if ($wamTraceStarted) {
+            Write-Progress -Status 'Stopping WAM trace'
             Disable-WamEventLog -ErrorAction SilentlyContinue
             Stop-WamTrace
         }
 
         if ($procmonStared) {
+            Write-Progress -Status 'Stopping Procmon'
             Stop-Procmon
             # Remove procmon
             # if ($procmonResult -and $procmonResult.ProcmonZipDownloaded) {
@@ -7511,6 +7570,7 @@ function Collect-OutlookInfo {
         }
 
         if ($wfpStarted) {
+            Write-Progress -Status 'Stopping WFP trace'
             Stop-WfpTrace $wfpJob
         }
 
@@ -7519,9 +7579,8 @@ function Collect-OutlookInfo {
         }
 
         if ($wprStarted) {
-            Write-Progress -Activity 'Stopping WPR' -Status "Please wait." -PercentComplete -1
+            Write-Progress -Status 'Stopping WPR trace'
             Stop-Wpr -Path (Join-Path $tempPath 'WPR')
-            Write-Progress -Activity 'Stopping WPR' -Completed
         }
 
         if ($hungDumpStarted) {
@@ -7542,44 +7601,39 @@ function Collect-OutlookInfo {
             $(Receive-Task $psrTask -AutoRemoveTask) 2>&1 | Write-Log
         }
 
-        Write-Progress -Activity 'Stopping traces' -Status "Please wait." -Completed
-
         # Wait for the tasks started earlier and save the event logs
         if ($Component -contains 'Configuration') {
             if ($outlookMonitorTask) {
+                Write-Progress -Status 'Stopping monitor task'
                 $outlookMonitorTaskCts.Cancel()
                 $($outlookMonitorTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
             }
 
-            Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -PercentComplete -1
+            Write-Progress -Status 'Saving event logs'
             $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
             Invoke-ScriptBlock { param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user } -ArgumentList $targetUser, $MSIPCDir
-            Write-Progress -Activity 'Saving event logs.' -Status 'Please wait.' -Completed
 
             if ($osConfigurationTask) {
-                Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -PercentComplete -1
+                Write-Progress -Status 'Saving OS configuration'
                 $($osConfigurationTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
-                Write-Progress -Activity 'Saving OS configuration' -Status "Please wait." -Completed
                 Write-Log "osConfigurationTask is complete."
             }
 
             if ($officeRegistryTask) {
-                Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -PercentComplete -1
+                Write-Progress -Status 'Saving Office Registry'
                 $($officeRegistryTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
-                Write-Progress -Activity 'Saving Office Registry' -Status "Please wait." -Completed
                 Write-Log "officeRegistryTask is complete."
             }
 
             if ($networkInfoTask) {
-                Write-Progress -Activity 'Saving network info' -Status "Please wait." -PercentComplete -1
+                Write-Progress -Status 'Saving network info'
                 $($networkInfoTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
-                Write-Progress -Activity 'Saving network info' -Status "Please wait." -Completed
                 Write-Log "networkInfoTask is complete."
             }
 
             if ($officeModuleInfoTask) {
+                Write-Progress -Status "Saving Office module info"
                 [TimeSpan]$timeout = [TimeSpan]::FromSeconds(30)
-                Write-Progress -Activity 'Saving Office module info' -Status "Please wait up to $timeout" -PercentComplete -1
 
                 if (Wait-Task $officeModuleInfoTask -Timeout $timeout) {
                     Write-Log "officeModuleInfoTask is complete before timeout."
@@ -7590,18 +7644,17 @@ function Collect-OutlookInfo {
                 }
 
                 $($officeModuleInfoTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
-                Write-Progress -Activity 'Saving Office module info' -Status 'Please wait.' -Completed
                 Write-Log "officeRegistryTask is complete."
             }
 
             if ($msinfo32Task) {
-                Write-Progress -Activity 'Saving MSInfo32' -Status 'Please wait.' -PercentComplete -1
+                Write-Progress -Status 'Saving MSInfo32'
                 $($msinfo32Task | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
-                Write-Progress -Activity 'Saving MSInfo32' -Status 'Please wait.' -Completed
             }
 
             # Save process list again after traces
             if ($Component.Count -gt 1) {
+                Write-Progress -Status 'Saving process list'
                 Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir
             }
         }
@@ -7611,6 +7664,7 @@ function Collect-OutlookInfo {
             Write-Log "Page Heap disabled."
         }
 
+        Write-Progress -Completed
         Close-TaskRunspace
         Close-Log
     }
@@ -7626,11 +7680,7 @@ function Collect-OutlookInfo {
     Rename-Item $archive.ArchivePath -NewName "$archiveName$([IO.Path]::GetExtension($archive.ArchivePath))"
 
     if (Test-Path $tempPath) {
-        # Removing temp files might take a while. Do it in a background.
-        $job = Start-Job -ScriptBlock {
-            Remove-Item $using:tempPath -Recurse -Force
-        }
-        Write-Verbose "Temporary folder `"$tempPath`" will be removed by a background job (Job ID: $($job.Id))"
+        Start-Job { param($path) Remove-Item $path -Recurse -Force } -ArgumentList $tempPath | Out-Null
     }
 
     Write-Host "The collected data is `"$(Join-Path $Path "$archiveName$([IO.Path]::GetExtension($archive.ArchivePath))")`"" -ForegroundColor Green
