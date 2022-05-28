@@ -7378,11 +7378,15 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Dump') {
+            # Close the progress bar for now.
+            Write-Progress -Completed
+
             # Ask a user when she/he wants to save a dump file
             while ($true) {
-                $userInput = Read-Host "Hit enter to save a process dump of Outlook. To quit, enter q"
+                Write-Host "Hit enter to save a process dump of Outlook. To quit, enter q: " -NoNewline
+                $userInput = $host.UI.ReadLine()
 
-                if ($userInput.ToLower() -eq 'q') {
+                if ($userInput.ToLower().Trim() -eq 'q') {
                     break
                 }
 
