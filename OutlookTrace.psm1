@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-05-27'
+$Version = 'v2022-06-07'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -1081,7 +1081,7 @@ function Compress-Folder {
         }
 
         $files = @(
-            $Filter |  & {
+            $Filter | & {
                 # Apply filename filters if any. Note: Even if Filter is null, the pipeline will run (unlike foreach keyword)
                 param ([Parameter(ValueFromPipeline)]$filter)
                 process {
@@ -3561,7 +3561,7 @@ function Remove-CachedAutodiscover {
         param ([Parameter(ValueFromPipeline)]$cachePath)
         process {
             Get-ChildItem -LiteralPath $cachePath.Path -Filter '*Autod*.xml' -Force -Recurse:($cachePath.Name -eq 'UnderLocalAppData') `
-            | Remove-Item
+            | Remove-Item -Force
         }
     }
 }
