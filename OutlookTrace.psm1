@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-06-08'
+$Version = 'v2022-06-14'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -2487,7 +2487,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-InstalledUpdate } }
         @{ScriptBlock = { Get-JoinInformation } }
         @{ScriptBlock = { Get-DeviceJoinStatus }; FileName = 'DeviceJoinStatus.txt' }
-        @{ScriptBlock = { Get-WebView2 } }
+        @{ScriptBlock = { param($user) Get-WebView2 -User $user }; ArgumentList = $User }
         @{ScriptBlock = { param($user) Get-WinInetProxy -User $user }; ArgumentList = $User }
         @{ScriptBlock = { param($user) Get-ProxyAutoConfig -User $user }; ArgumentList = $User }
         @{ScriptBlock = { Get-ImageFileExecutionOptions } }
@@ -6036,14 +6036,21 @@ function Get-ClickToRunConfiguration {
 function Get-WebView2 {
     [CmdletBinding(PositionalBinding = $false)]
     param (
+        $User
     )
 
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
     # See https://docs.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution
-    @(
+    & {
         'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
         'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-        'Registry::HKEY_CURRENT_USER\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-    ) | Get-ItemProperty -ErrorAction SilentlyContinue
+        Join-Path $userRegRoot 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+    } | Get-ItemProperty -ErrorAction SilentlyContinue
 }
 
 function Get-DeviceJoinStatus {
@@ -6737,14 +6744,17 @@ function Get-OfficeIdentity {
     }
 
     # Find the one with the latest LastSwitchedTime if any.
-    $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 -and $_.LastSwitchedTime } | Sort-Object 'LastSwitchedTime' | Select-Object -Last 1
+    $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 -and $_.LastSwitchedTime } `
+    | Sort-Object 'LastSwitchedTime' -Descending | Select-Object -First 1
 
     if ($activeIdentity) {
         Write-Log "Found active identity $($activeIdentity.EmailAddress) based on active profile."
     }
     else {
         # If there is no active profile, then pick one with LiveId, OrgId, or ADAL
-        $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 -and ($IdpMapping[$_.IdP] -eq 'LiveId' -or $IdpMapping[$_.IdP] -eq 'OrgId' -or $IdpMapping[$_.IdP] -eq 'ADAL') } | Select-Object -First 1
+        $activeIdentity = $identities `
+        | Where-Object { $_.SignedOut -ne 1 -and ($IdpMapping[$_.IdP] -eq 'LiveId' -or $IdpMapping[$_.IdP] -eq 'OrgId' -or $IdpMapping[$_.IdP] -eq 'ADAL') } `
+        | Select-Object -First 1
 
         if ($activeIdentity) {
             Write-Log "Found active identity $($activeIdentity.EmailAddress) based on IdP $($IdpMapping[$_.IdP])."
@@ -6893,7 +6903,7 @@ function Get-UseOnlineContent {
     }`
     | Join-Path -Path $userRegRoot -ChildPath { $_ } `
     | Get-ItemProperty -Name 'UseOnlineContent' -ErrorAction SilentlyContinue `
-    | Select-Object -Property '*' -ExcludeProperty 'PSParentPath', 'PSChildName', 'PSProvider'
+    | Split-ItemProperty
 }
 
 function Get-AutodiscoverConfig {
@@ -6919,10 +6929,42 @@ function Get-AutodiscoverConfig {
     & {
         "Software\Microsoft\Office\$major.0\Outlook\AutoDiscover"
         "Software\Policies\Microsoft\Office\$major.0\Outlook\AutoDiscover"
+        "Software\Microsoft\Exchange"
+        "Software\Policies\Microsoft\Exchange"
     } `
     | Join-Path -Path $userRegRoot -ChildPath { $_ } `
-    | Get-ItemProperty -Name 'Exclude*', 'Prefer*' -ErrorAction SilentlyContinue `
-    | Select-Object -Property '*' -ExcludeProperty 'PSParentPath', 'PSChildName', 'PSProvider'
+    | Get-ItemProperty -Name 'Exclude*', 'Prefer*', '*Autodiscover*' -ErrorAction SilentlyContinue `
+    | Split-ItemProperty
+}
+
+<#
+.SYNOPSIS
+Take an output of Get-ItemProperty and split its properties into objects with Name, Value, and Path.
+#>
+function Split-ItemProperty {
+    [CmdletBinding()]
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [PSCustomObject]$Property,
+        [string[]]$ExcludeProperty = @('PSPath', 'PSParentPath', 'PSChildName', 'PSProvider')
+    )
+
+    process {
+        $Property | Get-Member -MemberType NoteProperty | & {
+            param([Parameter(ValueFromPipeline = $true)]$memberDefinition)
+            process {
+                if ($memberDefinition.Name -in $ExcludeProperty) {
+                    return
+                }
+
+                [PSCustomObject]@{
+                    Name  = $memberDefinition.Name
+                    Value = $Property."$($memberDefinition.Name)"
+                    Path  = $Property.PSPath.SubString(36) # 36 == "Microsoft.PowerShell.Core\Registry::".Length
+                }
+            }
+        }
+    }
 }
 
 function Get-SocialConnectorConfig {
@@ -6943,7 +6985,7 @@ function Get-SocialConnectorConfig {
     } `
     | Join-Path -Path $userRegRoot -ChildPath { $_ } `
     | Get-ItemProperty -Name 'DownloadDetailsFromAd' -ErrorAction SilentlyContinue `
-    | Select-Object -Property '*' -ExcludeProperty 'PSParentPath', 'PSChildName', 'PSProvider'
+    | Split-ItemProperty
 }
 
 function Get-ImageFileExecutionOptions {
@@ -6951,7 +6993,7 @@ function Get-ImageFileExecutionOptions {
     param()
 
     Get-ItemProperty 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\*' `
-    | Select-Object -Property '*' -ExcludeProperty 'PSParentPath', 'PSProvider'
+    | Select-Object -Property @{N = 'ImageName'; E = { $_.PSChildName } }, '*', @{N = 'Path'; E = { $_.PSPath.SubString(36) } } -ExcludeProperty 'PSParentPath', 'PSProvider', 'PSPath', 'PSChildName'
 }
 
 function Get-SessionManager {
