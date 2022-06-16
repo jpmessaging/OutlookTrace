@@ -6951,7 +6951,7 @@ function Split-ItemProperty {
     )
 
     process {
-        $Property | Get-Member -MemberType NoteProperty | & {
+        $Property | Get-Member -MemberType NoteProperty, Property | & {
             param([Parameter(ValueFromPipeline = $true)]$memberDefinition)
             process {
                 if ($memberDefinition.Name -in $ExcludeProperty) {
@@ -6961,7 +6961,7 @@ function Split-ItemProperty {
                 [PSCustomObject]@{
                     Name  = $memberDefinition.Name
                     Value = $Property."$($memberDefinition.Name)"
-                    Path  = $Property.PSPath.SubString(36) # 36 == "Microsoft.PowerShell.Core\Registry::".Length
+                    Path  = $Property.PSPath.SubString($Property.PSPath.IndexOf('::') + 2) # e.g. "Microsoft.PowerShell.Core\Registry::", "Microsoft.PowerShell.Core\FileSystem::"
                 }
             }
         }
