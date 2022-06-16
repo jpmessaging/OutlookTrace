@@ -2492,6 +2492,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { param($user) Get-ProxyAutoConfig -User $user }; ArgumentList = $User }
         @{ScriptBlock = { Get-ImageFileExecutionOptions } }
         @{ScriptBlock = { Get-SessionManager } }
+        @{ScriptBlock = { Get-WinSystemLocale } }
 
         # These are just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
