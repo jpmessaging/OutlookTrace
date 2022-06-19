@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-06-14'
+$Version = 'v2022-06-18'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -2989,9 +2989,8 @@ function Get-ProxyAutoConfig {
     }
 
     Get-WinInetProxy -User $User | & {
+        param([Parameter(ValueFromPipeline)]$proxy)
         process {
-            $proxy = $_
-
             if ($proxy.AutoDetect) {
                 [Win32.SafeGlobalFreeString]$wpadUrl = $null
 
@@ -3287,7 +3286,7 @@ function Get-OutlookProfile {
 
             $key.Close()
         }
-    } ([ref] $defaultProfile) | & {
+    } -defaultProfile ([ref] $defaultProfile) | & {
         param([Parameter(ValueFromPipeline)]$prof)
         process {
             $accountStore = Join-Path $prof.PSPath '*' | Get-ItemProperty -Name $CLSID_OlkMail -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -5943,10 +5942,9 @@ function Get-OutlookAddin {
         'Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\Office\Outlook\AddIns'
         Join-Path $userRegRoot 'Software\Microsoft\Office\Outlook\Addins'
     ) | Get-ChildItem -ErrorAction SilentlyContinue | & {
+        param([Parameter(ValueFromPipeline)]$addin)
         begin { $cache = @{} }
         process {
-            $addin = $_
-
             try {
                 $props = @{}
                 $props['Path'] = $addin.Name
@@ -5978,29 +5976,30 @@ function Get-OutlookAddin {
                     $props['CLSID'] = $clsid.String
 
                     # Check InprocServer32, LocalServer32, RemoteServer32
-                    @('InprocServer32', 'LocalServer32', 'RemoteServer32') | & {
+                    # e.g. "...\CLSID\{C15AC6D0-15EE-49B3-9B2A-948320426B88}\InprocServer32"
+                    & { 'InprocServer32'; 'LocalServer32'; 'RemoteServer32' } | & {
+                        param([Parameter(ValueFromPipeline)]$comServerType)
                         process {
                             # The order of keys matters here for speed.
                             # Checking sub key of HKEY_CLASSES_ROOT\CLSID\ & HKEY_CLASSES_ROOT\WOW6432Node\CLSID\ are quite slow when the path does not exist (> 100 ms). Thus they are checked later.
-                            @(
+                            & {
                                 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\'
                                 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID'
                                 'Registry::HKEY_CLASSES_ROOT\CLSID\'
                                 'Registry::HKEY_CLASSES_ROOT\WOW6432Node\CLSID\'
-                            ) | & {
-                                param ($subPath) # e.g. "{C15AC6D0-15EE-49B3-9B2A-948320426B88}\InprocServer32"
+                            }`
+                            | Join-Path -ChildPath $props['CLSID'] `
+                            | Join-Path -ChildPath $comServerType `
+                            | Get-ItemProperty -ErrorAction SilentlyContinue | & {
+                                param([Parameter(ValueFromPipeline)]$comSpec)
                                 process {
-                                    $comSpec = Get-ItemProperty (Join-Path $_ $subPath) -ErrorAction SilentlyContinue
-
-                                    if ($comSpec) {
-                                        $props['Location'] = $comSpec.'(default)'
-                                        $props['ThreadingModel'] = $comSpec.ThreadingModel
-                                        $props['CodeBase'] = $comSpec.CodeBase
-                                        # Stop the pipeline
-                                        $true
-                                    }
+                                    $props['Location'] = $comSpec.'(default)'
+                                    $props['ThreadingModel'] = $comSpec.ThreadingModel
+                                    $props['CodeBase'] = $comSpec.CodeBase
+                                    # Stop the pipeline
+                                    $true
                                 }
-                            } (Join-Path $props['CLSID'] $_)
+                            }
                         }
                     } | Select-Object -First 1 | Out-Null
                 }
@@ -6867,8 +6866,27 @@ function Get-AlternateId {
 
     if ($domainHint) {
         $domainZone = Join-Path $userRegRoot "Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\Domains\$domainHint" `
+        | Get-ChildItem `
         | Get-ItemProperty -ErrorAction SilentlyContinue `
-        | Select-Object -Property '*' -ExcludeProperty 'PS*'
+        | & {
+            process {
+                $hostName = "$($_.PSChildName).$domainHint"
+                $property = $_ | Split-ItemProperty | Select-Object -First 1
+                $zoneId = $property.Value
+
+                $zoneDisplayName = Join-Path $userRegRoot "Software\Microsoft\Windows\CurrentVersion\Internet Settings\Zones" `
+                | Join-Path -ChildPath $zoneId `
+                | Get-ItemProperty -Name 'DisplayName' -ErrorAction SilentlyContinue `
+                | Select-Object -ExpandProperty 'DisplayName'
+
+                [PSCustomObject]@{
+                    HostName        = $hostName
+                    Protocol        = $property.Name
+                    ZoneId          = $property.Value
+                    ZoneDisplayName = $zoneDisplayName
+                }
+            }
+        }
     }
 
     [PSCustomObject]@{
