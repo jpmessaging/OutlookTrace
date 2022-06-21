@@ -7068,7 +7068,7 @@ function Collect-OutlookInfo {
         # Skip running autoupdate of this script.
         [switch]$SkipAutoUpdate,
         # PSR recycle interval.
-        [TimeSpan]$PsrRecycleInterval = [Timespa]::FromMinutes(10),
+        [TimeSpan]$PsrRecycleInterval = [Timespan]::FromMinutes(10),
         # Target user whose configuration is collected. By default, it's the logon user (Note: Not necessarily the current user running the script).
         [string]$User,
         # Number of seconds used to detect a hung window when "HungDump" is requested in Component.
