@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-06-18'
+$Version = 'v2022-06-20'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -643,7 +643,7 @@ function Open-Log {
         if ($AutoFlush) {
             $Script:logWriter.AutoFlush = $true
         }
-        $Script:logWriter.WriteLine("date-time,thread_relative_delta(ms),thread,function,info")
+        $Script:logWriter.WriteLine("date-time,thread_relative_delta,thread,function,info")
     }
     catch {
         Write-Error -ErrorRecord $_
@@ -697,7 +697,8 @@ function Write-Log {
         # Format as CSV:
         $sb = New-Object System.Text.StringBuilder
         $sb.Append($currentTimeFormatted).Append(',') | Out-Null
-        $sb.Append($delta.TotalMilliseconds).Append(',') | Out-Null
+        # $sb.Append($delta.TotalMilliseconds).Append(',') | Out-Null
+        $sb.Append($delta).Append(',') | Out-Null
         $sb.Append([System.Threading.Thread]::CurrentThread.ManagedThreadId).Append(',') | Out-Null
         $sb.Append($caller).Append(',') | Out-Null
         $sb.Append('"').Append($Message.Replace('"', "'")).Append('"') | Out-Null
@@ -1911,21 +1912,24 @@ function Start-PSR {
     }
 
     $outputFile = Join-Path $Path -ChildPath $FileName
-    if ($ShowGUI) {
-        & psr /start /maxsc $maxScreenshotCount /maxlogsize 10 /output $outputFile /exitonsave 1 /noarc 1
-    }
-    else {
-        & psr /start /maxsc $maxScreenshotCount /maxlogsize 10 /output $outputFile /exitonsave 1 /gui 0 /noarc 1
-    }
 
-    # PSR doesn't return anything even on failure. Check if process is spawned.
-    $process = Get-Process -Name psr -ErrorAction SilentlyContinue
+    $psrArgs = @(
+        '/start', "/maxsc $maxScreenshotCount", "/maxlogsize 10", "/output `"$outputFile`"", "/exitonsave 1", "/noarc 1"
+
+        if (-not $ShowGUI) {
+            '/gui 0'
+        }
+    )
+
+    $process = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList $args -PassThru } -ArgumentList $psrArgs `
+    | Receive-Job -Wait -AutoRemoveJob
+
     if (-not $process) {
         Write-Error "PSR failed to start"
         return
     }
 
-    Write-Log "PSR started $(if ($ShowGUI) {'with UI'} else {'without UI'}). PID: $($process.Id), maxScreenshotCount: $maxScreenshotCount"
+    Write-Log "PSR (PID: $($process.Id)) started $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
 }
 
 function Stop-PSR {
@@ -1939,13 +1943,18 @@ function Stop-PSR {
         return
     }
 
-    Write-Log "Stopping PSR (PID: $($currentInstance.Id))."
-    $stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru
+    # "psr /stop" creates a new instance of psr.exe and it stops the instance currently running.
+    $stopInstance = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList '/stop' -PassThru } `
+    | Receive-Job -Wait -AutoRemoveJob
 
     $(Wait-Process -InputObject $currentInstance) 2>&1 | Write-Log
-
-    Write-Log "PSR instance is stopped"
+    Write-Log "PSR (PID: $($currentInstance.Id)) is stopped"
     $currentInstance.Dispose()
+
+    if (-not (Get-Process -Id $stopInstance.Id -ErrorAction SilentlyContinue)) {
+        # Stop instance has exited already. Nothing to do.
+        return
+    }
 
     # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hung.
     # The existing instance is supposed to signal an event and 'psr /stop' instance is waiting for this event to be signaled. But it seems this does not happen when there were no clicks.
@@ -1954,16 +1963,11 @@ function Stop-PSR {
         $PSR_CLEANUP_COMPLETED = '{CD3E5009-5C9D-4E9B-B5B6-CAE1D8799AE3}'
         $h = [System.Threading.EventWaitHandle]::OpenExisting($PSR_CLEANUP_COMPLETED)
         $h.Set() | Out-Null
-        Write-Log "PSR_CLEANUP_COMPLETED was manually signaled."
-        Wait-Process -InputObject $stopInstance
+        Write-Log "PSR_CLEANUP_COMPLETED was manually signaled"
+        Wait-Process -Id $stopInstance.Id
     }
     catch {
-        # ignore
-    }
-    finally {
-        if ($stopInstance) {
-            $stopInstance.Dispose()
-        }
+        Write-Log -ErrorRecord $_
     }
 }
 
@@ -7063,8 +7067,8 @@ function Collect-OutlookInfo {
         [switch]$AutoFlush,
         # Skip running autoupdate of this script.
         [switch]$SkipAutoUpdate,
-        # PSR recycle interval in minutes.
-        [int]$PsrRecycleIntervalMin = 10,
+        # PSR recycle interval.
+        [TimeSpan]$PsrRecycleInterval = [Timespa]::FromMinutes(10),
         # Target user whose configuration is collected. By default, it's the logon user (Note: Not necessarily the current user running the script).
         [string]$User,
         # Number of seconds used to detect a hung window when "HungDump" is requested in Component.
@@ -7352,13 +7356,13 @@ function Collect-OutlookInfo {
             $psrPath = Join-Path $tempPath 'PSR'
             $psrStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
 
-            Write-Log "Starting a PSR task. PsrRecycleIntervalMin: $PsrRecycleIntervalMin"
+            Write-Log "Starting a PSR task. PsrRecycleInterval: $PsrRecycleInterval"
 
             $psrTask = Start-Task -ScriptBlock {
                 param(
                     [string]$path,
                     [System.Threading.CancellationToken]$cancelToken,
-                    [int]$waitDurationMS,
+                    [TimeSpan]$waitInterval,
                     $psrStartedEvent,
                     [bool]$circular
                 )
@@ -7366,7 +7370,7 @@ function Collect-OutlookInfo {
                 while ($true) {
                     Start-PSR -Path $path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')"
                     $psrStartedEvent.Set() | Out-Null
-                    $canceled = $cancelToken.WaitHandle.WaitOne($waitDurationMS)
+                    $canceled = $cancelToken.WaitHandle.WaitOne($waitInterval)
                     Stop-PSR
 
                     if ($canceled) {
@@ -7397,7 +7401,7 @@ function Collect-OutlookInfo {
                         }
                     }
                 }
-            } -ArgumentList $psrPath, $psrCts.Token, ($PsrRecycleIntervalMin * 60 * 1000), $psrStartedEvent, ($LogFileMode -eq 'Circular')
+            } -ArgumentList $psrPath, $psrCts.Token, $PsrRecycleInterval, $psrStartedEvent, ($LogFileMode -eq 'Circular')
 
             $psrStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan) | Out-Null
             $psrStarted = $true
@@ -7680,6 +7684,7 @@ function Collect-OutlookInfo {
         }
 
         if ($psrStarted) {
+            Write-Progress -Status "Stopping PSR"
             $psrCts.Cancel()
             $(Receive-Task $psrTask -AutoRemoveTask) 2>&1 | Write-Log
         }
