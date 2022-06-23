@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-06-20'
+$Version = 'v2022-06-23'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -1882,7 +1882,8 @@ function Start-PSR {
         [parameter(Mandatory = $true)]
         $Path,
         $FileName = "PSR.mht",
-        [switch]$ShowGUI
+        [switch]$ShowGUI,
+        [switch]$UseJob
     )
 
     if (-not (Test-Path $Path -ErrorAction Stop)) {
@@ -1921,8 +1922,13 @@ function Start-PSR {
         }
     )
 
-    $process = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList $args -PassThru } -ArgumentList $psrArgs `
-    | Receive-Job -Wait -AutoRemoveJob
+    if ($UseJob) {
+        $process = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList $args -PassThru } -ArgumentList $psrArgs `
+        | Receive-Job -Wait -AutoRemoveJob
+    }
+    else {
+        $process = Start-Process 'psr' -ArgumentList $psrArgs -PassThru
+    }
 
     if (-not $process) {
         Write-Error "PSR failed to start"
@@ -1934,7 +1940,9 @@ function Start-PSR {
 
 function Stop-PSR {
     [CmdletBinding()]
-    param ()
+    param (
+        [switch]$UseJob
+    )
 
     $currentInstance = Get-Process -Name psr -ErrorAction SilentlyContinue
 
@@ -1944,15 +1952,20 @@ function Stop-PSR {
     }
 
     # "psr /stop" creates a new instance of psr.exe and it stops the instance currently running.
-    $stopInstance = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList '/stop' -PassThru } `
-    | Receive-Job -Wait -AutoRemoveJob
+    if ($UseJob) {
+        $stopInstance = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList '/stop' -PassThru } `
+        | Receive-Job -Wait -AutoRemoveJob
+    }
+    else {
+        $stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru 
+    }
 
-    $(Wait-Process -InputObject $currentInstance) 2>&1 | Write-Log
+    Wait-Process -Id $currentInstance.Id -ErrorAction SilentlyContinue
     Write-Log "PSR (PID: $($currentInstance.Id)) is stopped"
     $currentInstance.Dispose()
 
     if (-not (Get-Process -Id $stopInstance.Id -ErrorAction SilentlyContinue)) {
-        # Stop instance has exited already. Nothing to do.
+        # Stop instance has exited already. There's nothing more to do.
         return
     }
 
@@ -1964,7 +1977,7 @@ function Stop-PSR {
         $h = [System.Threading.EventWaitHandle]::OpenExisting($PSR_CLEANUP_COMPLETED)
         $h.Set() | Out-Null
         Write-Log "PSR_CLEANUP_COMPLETED was manually signaled"
-        Wait-Process -Id $stopInstance.Id
+        Wait-Process -Id $stopInstance.Id -ErrorAction SilentlyContinue
     }
     catch {
         Write-Log -ErrorRecord $_
@@ -7186,7 +7199,7 @@ function Collect-OutlookInfo {
 
     # Start logging.
     Open-Log -Path (Join-Path $tempPath 'Log.txt') -AutoFlush:$AutoFlush -ErrorAction Stop
-    Write-Log "Script Version: $Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString()))"
+    Write-Log "Script Version: $Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString())); PID: $pid"
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
     Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin: $runAsAdmin"
@@ -7368,10 +7381,10 @@ function Collect-OutlookInfo {
                 )
 
                 while ($true) {
-                    Start-PSR -Path $path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')"
+                    Start-PSR -Path $path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')" -UseJob
                     $psrStartedEvent.Set() | Out-Null
                     $canceled = $cancelToken.WaitHandle.WaitOne($waitInterval)
-                    Stop-PSR
+                    Stop-PSR -UseJob
 
                     if ($canceled) {
                         Write-Log "PSR task cancellation is acknowledged."
