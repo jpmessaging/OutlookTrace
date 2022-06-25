@@ -1899,7 +1899,7 @@ function Start-PSR {
     # For Win7, maxsc is 100
     $maxScreenshotCount = 100
 
-    $win32os = Get-WmiObject win32_operatingsystem
+    $win32os = Get-WmiObject Win32_OperatingSystem
     $osMajor = $win32os.Version.Split(".")[0] -as [int]
     $osMinor = $win32os.Version.Split(".")[1] -as [int]
 
@@ -1936,6 +1936,10 @@ function Start-PSR {
     }
 
     Write-Log "PSR (PID: $($process.Id)) started $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
+
+    if ($process.Dispose) {
+        $process.Dispose()
+    }
 }
 
 function Stop-PSR {
@@ -1964,15 +1968,15 @@ function Stop-PSR {
     Write-Log "PSR (PID: $($currentInstance.Id)) is stopped"
     $currentInstance.Dispose()
 
-    if (-not (Get-Process -Id $stopInstance.Id -ErrorAction SilentlyContinue)) {
-        # Stop instance has exited already. There's nothing more to do.
-        return
-    }
-
-    # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hung.
-    # The existing instance is supposed to signal an event and 'psr /stop' instance is waiting for this event to be signaled. But it seems this does not happen when there were no clicks.
-    # So to avoid this, the following code manually signal the handle so that 'psr /stop' shuts down.
     try {
+        # Cannot use HasExited on stopInstance here, because when UseJob is used the returned object is a PSObject, not a System.Diagnostics.Process.
+        if (-not (Get-Process -Id $stopInstance.Id -ErrorAction SilentlyContinue | & { process { $_.Dispose(); $true } })) {
+            return
+        }
+
+        # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hung.
+        # The existing instance is supposed to signal an event and 'psr /stop' instance is waiting for this event to be signaled. But it seems this does not happen when there were no clicks.
+        # So to avoid this, the following code manually signal the handle so that 'psr /stop' shuts down.
         $PSR_CLEANUP_COMPLETED = '{CD3E5009-5C9D-4E9B-B5B6-CAE1D8799AE3}'
         $h = [System.Threading.EventWaitHandle]::OpenExisting($PSR_CLEANUP_COMPLETED)
         $h.Set() | Out-Null
@@ -1981,6 +1985,11 @@ function Stop-PSR {
     }
     catch {
         Write-Log -ErrorRecord $_
+    }
+    finally {
+        if ($stopInstance.Dispose) {
+            $stopInstance.Dispose()
+        }
     }
 }
 
@@ -7494,7 +7503,8 @@ function Collect-OutlookInfo {
                 Write-Progress -Activity "Saving a process dump of Outlook." -Status "Please wait." -PercentComplete -1
                 $dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $process.Id
                 Write-Progress -Activity "Saving a process dump of Outlook." -Status "Done" -Completed
-                Write-Log "Saved dump file: $($dumpResult.DumpFile)"
+                Write-Log "Saved a dump file: $($dumpResult.DumpFile)"
+                $process.Dispose()
             }
         }
 
