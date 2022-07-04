@@ -1717,8 +1717,10 @@ function Start-NetshTrace {
     $Path = Resolve-Path $Path
 
     # Use "InternetClient_dbg" for Win10
-    $win32os = Get-WmiObject win32_operatingsystem
-    $osMajor = $win32os.Version.Split(".")[0] -as [int]
+    $win32OS = Get-CimInstance Win32_OperatingSystem
+    $osMajor = $win32OS.Version.Split(".")[0] -as [int]
+    $win32OS.Dispose()
+
     if ($osMajor -ge 10) {
         $scenario = "InternetClient_dbg"
     }
@@ -1899,9 +1901,10 @@ function Start-PSR {
     # For Win7, maxsc is 100
     $maxScreenshotCount = 100
 
-    $win32os = Get-WmiObject Win32_OperatingSystem
-    $osMajor = $win32os.Version.Split(".")[0] -as [int]
-    $osMinor = $win32os.Version.Split(".")[1] -as [int]
+    $win32OS = Get-CimInstance Win32_OperatingSystem
+    $osMajor = $win32OS.Version.Split(".")[0] -as [int]
+    $osMinor = $win32OS.Version.Split(".")[1] -as [int]
+    $win32OS.Dispose()
 
     if ($osMajor -gt 6 -or ($osMajor -eq 6 -and $osMinor -ge 3)) {
         $maxScreenshotCount = 300
@@ -1961,7 +1964,7 @@ function Stop-PSR {
         | Receive-Job -Wait -AutoRemoveJob
     }
     else {
-        $stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru 
+        $stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru
     }
 
     Wait-Process -Id $currentInstance.Id -ErrorAction SilentlyContinue
@@ -2239,8 +2242,9 @@ function Resolve-User {
     # Note: WMI Win32_UserAccount can be very slow. I'm avoiding here.
     # Get-WmiObject -Class Win32_UserAccount -Filter "Name = '$userName'"
 
+    $sid = $account = $null
+
     # Is is SID?
-    $sid = $account = $nul
     try {
         $sid = New-Object System.Security.Principal.SecurityIdentifier($Identity)
         $account = $sid.Translate([System.Security.Principal.NTAccount])
@@ -2287,22 +2291,27 @@ function Get-LogonUser {
     param()
 
     # Find unique users of explorer.exe instances.
-    Get-WmiObject Win32_Process -Filter "Name = 'explorer.exe'" | & {
+    Get-CimInstance Win32_Process -Filter 'Name = "explorer.exe"' | & {
+        param([Parameter(ValueFromPipeline)]$win32Process)
         begin { $usersCache = @{} }
+
         process {
-            $owner = $_.GetOwner()
+            try {
+                $owner = Invoke-CimMethod -InputObject $win32Process -MethodName GetOwnerSid
 
-            # Without admin privilege, owner info other than self can be empty.
-            if (-not $owner.User) {
-                Write-Verbose "Cannot obtain the owner of explorer (PID $($_.ProcessID)). Probably you are runnning without admin privilege."
-                return
+                # Without admin privilege, owner info other than self can be empty.
+                if (-not $owner.Sid) {
+                    Write-Verbose "Cannot obtain the owner of explorer (PID $($win32Process.ProcessID)). Probably you are runnning without admin privilege."
+                    return
+                }
+
+                if (-not $usersCache.ContainsKey($owner.Sid)) {
+                    $usersCache.Add($owner.Sid, $null)
+                    Resolve-User $owner.Sid
+                }
             }
-
-            $user = "$($owner.Domain)\$($owner.User)"
-
-            if (-not $usersCache.ContainsKey($user)) {
-                $usersCache.Add($user, $null)
-                Resolve-User $user
+            finally {
+                $win32Process.Dispose()
             }
         }
     }
@@ -2504,8 +2513,8 @@ function Save-OSConfiguration {
     }
 
     & {
-        @{ScriptBlock = { Get-WmiObject -Class Win32_ComputerSystem }; FileName = 'Win32_ComputerSystem.xml' }
-        @{ScriptBlock = { Get-WmiObject -Class Win32_OperatingSystem }; FileName = 'Win32_OperatingSystem.xml' }
+        @{ScriptBlock = { Get-CimInstance -Class Win32_ComputerSystem }; FileName = 'Win32_ComputerSystem.xml' }
+        @{ScriptBlock = { Get-CimInstance -Class Win32_OperatingSystem }; FileName = 'Win32_OperatingSystem.xml' }
         @{ScriptBlock = { Get-WinHttpDefaultProxy } }
         @{ScriptBlock = { Get-NLMConnectivity } }
         @{ScriptBlock = { Get-MeteredNetworkCost } }
@@ -2711,6 +2720,15 @@ function Invoke-ScriptBlock {
     }
     else {
         $result | Set-Content -LiteralPath (Join-Path $Path $FileName)
+    }
+
+    # Dispose if necessary
+    $result | & {
+        process {
+            if ($_.Dispose) {
+                $_.Dispose()
+            }
+        }
     }
 }
 
@@ -4588,10 +4606,12 @@ function Start-TTD {
     if (-not $OnLaunch) {
         # Find out the new process instantiated by tttracer.exe. This might take a bit.
         # The new process starts as a child process of tttracer.exe.
+        $targetName = [IO.Path]::GetFileNameWithoutExtension($Executable)
         $maxRetry = 3
         foreach ($i in 1..$maxRetry) {
-            if ($newProcess = Get-WmiObject Win32_Process -Filter "Name='$targetName.exe' AND ParentProcessId='$($process.Id)'") {
+            if ($newProcess = Get-CimInstance Win32_Process -Filter "Name='$targetName.exe' AND ParentProcessId='$($process.Id)'") {
                 $targetProcess = Get-Process -Id $newProcess.ProcessId
+                $newProcess.Dispose()
                 break
             }
 
@@ -6240,25 +6260,41 @@ function Save-Process {
         New-Item -ItemType Directory -Path $Path -ErrorAction Stop | Out-Null
     }
 
-    Write-Log "Saving Win32_Process"
+    $outFileName = "Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml"
 
-    Get-WmiObject -Class Win32_Process | & {
+    Get-CimInstance Win32_Process | & {
+        param([Parameter(ValueFromPipeline)]$win32Process)
         process {
-            $processName = [IO.Path]::GetFileNameWithoutExtension($_.ProcessName)
+            $processName = [IO.Path]::GetFileNameWithoutExtension($win32Process.ProcessName)
+
+            # For processes specified in Name parameter, save its Owner & Environment Variables.
             if ($Name | Where-Object { $processName -like $_ } | Select-Object -First 1) {
                 try {
                     # GetOwner() could fail if the process has exited. Not likely, but be defensive here.
-                    $owner = $_.GetOwner()
-                    $_ | Add-Member -MemberType NoteProperty -Name 'User' -Value "$($owner.Domain)\$($owner.User)"
+                    $owner = Invoke-CimMethod -InputObject $win32Process -MethodName GetOwner
+                    $win32Process | Add-Member -MemberType NoteProperty -Name 'User' -Value "$($owner.Domain)\$($owner.User)"
+
+                    $ownerSid = Invoke-CimMethod -InputObject $win32Process -MethodName GetOwnerSid | Select-Object -ExpandProperty Sid
+                    $win32Process | Add-Member -MemberType NoteProperty -Name 'UserSid' -Value $ownerSid
+
+                    # Add Environment variables
+                    if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
+                        $win32Process | Add-Member -MemberType NoteProperty -Name 'EnvironmentVariables' -Value $proc.StartInfo.EnvironmentVariables
+                        $proc.Dispose()
+                    }
                 }
                 catch {
                     # Ignore
+                    Write-Error -ErrorRecord $_
                 }
             }
 
-            $_
+            $win32Process
+            $win32Process.Dispose()
         }
-    } | Export-Clixml -Path (Join-Path $Path "Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml")
+    } | Export-Clixml -Path (Join-Path $Path $outFileName)
+
+    Write-Log "Win32_Process saved as $outFileName"
 }
 
 function Start-ProcessMonitoring {
@@ -7130,8 +7166,9 @@ function Collect-OutlookInfo {
     }
 
     if ($Component -contains 'TTD' -and -not (Get-Command 'tttracer.exe' -ErrorAction SilentlyContinue)) {
-        $os = Get-WmiObject -Class 'Win32_OperatingSystem'
-        Write-Error "tttracer is not available on this machine. $($os.Caption) ($($os.Version))."
+        $win32OS = Get-CimInstance -Class 'Win32_OperatingSystem'
+        Write-Error "tttracer is not available on this machine. $($win32OS.Caption) ($($win32OS.Version))."
+        $win32OS.Dispose()
         return
     }
 
@@ -7542,7 +7579,7 @@ function Collect-OutlookInfo {
                     }
 
                     Write-Log "hungMonitorTask has found $name (PID $id). Starting hung window monitoring."
-                    $(Save-HungDump -Path $path -ProcessId $id -DumpCount $dumpCount -CancellationToken $cancelToken) 2>&1 | Write-Log
+                    $(Save-HungDump -Path $path -ProcessId $id -DumpCount $dumpCount -TimeoutSecond $timeout -CancellationToken $cancelToken) 2>&1 | Write-Log
                 }
             } -ArgumentList (Join-Path $tempPath 'HungDump'), $HungTimeoutSecond, $maxDumpFileCount, $hungDumpCts.Token, $HungMonitorTarget, $monitorStartedEvent
 
