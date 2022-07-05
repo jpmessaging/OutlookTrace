@@ -2197,7 +2197,16 @@ function Get-InstalledUpdate {
         foreach ($item in $items) {
             # Raw installedOn includes 0x0e20 (0x200E Left-to-Right char). Remove them.
             $installedOnRaw = $appUpdates.GetDetailsOf($item, 12)
-            $installedOn = New-Object string -ArgumentList (, $($installedOnRaw.ToCharArray() | Where-Object { $_ -lt 128 }))
+            $installedOn = $null
+
+            if ($installedOnRaw) {
+                try {
+                    $installedOn = New-Object string -ArgumentList (, $($installedOnRaw.ToCharArray() | Where-Object { $_ -lt 128 }))
+                }
+                catch {
+                    Write-Error -ErrorRecord $_
+                }
+            }
 
             # https://docs.microsoft.com/en-us/windows/win32/shell/folder-getdetailsof
             [PSCustomObject]@{
@@ -2208,6 +2217,7 @@ function Get-InstalledUpdate {
                 URL         = $appUpdates.GetDetailsOf($item, 7)
                 InstalledOn = $installedOn
             }
+
             [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($item) | Out-Null
         }
     }
@@ -2215,6 +2225,7 @@ function Get-InstalledUpdate {
         if ($appUpdates) {
             [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($appUpdates) | Out-Null
         }
+
         if ($shell) {
             [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($shell) | Out-Null
         }
