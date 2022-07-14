@@ -1652,7 +1652,7 @@ function Start-OutlookTrace {
 
     Set-Content -LiteralPath $providerFile -Value $providers -Encoding Ascii -ErrorAction Stop
 
-    # Configure log file mode, filename, and max file size if ncessary.
+    # Configure log file mode, filename, and max file size if necessary.
     switch ($LogFileMode) {
         'NewFile' {
             $mode = @([Win32.Logman+Mode]::EVENT_TRACE_USE_GLOBAL_SEQUENCE, [Win32.Logman+Mode]::EVENT_TRACE_FILE_MODE_NEWFILE) -join ','
@@ -1918,7 +1918,7 @@ function Start-PSR {
     $outputFile = Join-Path $Path -ChildPath $FileName
 
     $psrArgs = @(
-        '/start', "/maxsc $maxScreenshotCount", "/maxlogsize 10", "/output `"$outputFile`"", "/exitonsave 1", "/noarc 1"
+        '/start', '/maxsc', $maxScreenshotCount, '/maxlogsize', '10', '/output', $outputFile, '/exitonsave', '1', '/noarc', '1'
 
         if (-not $ShowGUI) {
             '/gui 0'
@@ -2446,6 +2446,8 @@ function Save-OfficeRegistry {
         # HKLM
         'HKLM\Software\Microsoft\Office'
         'HKLM\Software\WOW6432Node\Microsoft\Office'
+        'HKLM\Software\Microsoft\MSIPC'
+        'HKLM\Software\WOW6432Node\Microsoft\MSIPC'
 
         # Policies
         'HKCU\Software\Policies'
