@@ -1708,7 +1708,7 @@ function Start-NetshTrace {
         $Path,
         $FileName = 'nettrace-winhttp-webio.etl',
         [ValidateSet('None', 'Mini', 'Full')]
-        $RerpotMode = 'None'
+        $ReportMode = 'None'
     )
 
     if (-not (Test-Path $Path)) {
@@ -1760,13 +1760,13 @@ function Start-NetshTrace {
     # In order to suppress generating a minireport (i.e. C:\Windows\System32\gatherNetworkInfo.vbs), set MiniReportEnabled to 0 before netsh trace stop.
     # * You could set "report=disabled", but if you want the mini report specifically (not Full report), you need to manually configure the registry value.
     $netshRegPath = 'HKCU:\System\CurrentControlSet\Control\NetTrace\Session\'
-    switch ($RerpotMode) {
+    switch ($ReportMode) {
         'None' { Set-ItemProperty -Path $netshRegPath -Name 'MiniReportEnabled' -Type DWord -Value 0; break }
         'Mini' { Set-ItemProperty -Path $netshRegPath -Name 'MiniReportEnabled' -Type DWord -Value 1; break }
         'Full' { Set-ItemProperty -Path $netshRegPath -Name 'ReportEnabled' -Type DWord -Value 1; break }
     }
 
-    Write-Log "RerpotMode $RerpotMode is configured."
+    Write-Log "ReportMode $ReportMode is configured."
 }
 
 function Stop-NetshTrace {
@@ -6386,7 +6386,7 @@ function Invoke-AutoUpdate {
             $release = Invoke-RestMethod -Uri $GitHubUri -UseDefaultCredentials -ErrorAction Stop
 
             if ($Version -ge $release.name) {
-                $message = "Skipped because the current script ($Version) is newer than GitHub's latest release ($($release.name))."
+                $message = "Skipped because the current script ($Version) is newer than or equal to GitHub's latest release ($($release.name))."
             }
             else {
                 Write-Verbose "Downloading the latest script."
@@ -7403,11 +7403,11 @@ function Collect-OutlookInfo {
             # When netsh trace is run for the first time, it does not capture packets (even with "capture=yes").
             # To workaround, netsh is started and stopped immediately.
             $tempNetshName = 'netsh_test'
-            Start-NetshTrace -Path (Join-Path $tempPath $tempNetshName) -FileName "$tempNetshName.etl" -RerpotMode 'None' -ErrorAction SilentlyContinue
+            Start-NetshTrace -Path (Join-Path $tempPath $tempNetshName) -FileName "$tempNetshName.etl" -ReportMode 'None' -ErrorAction SilentlyContinue
             Stop-NetshTrace -ErrorAction SilentlyContinue
             Remove-Item (Join-Path $tempPath $tempNetshName) -Recurse -Force -ErrorAction SilentlyContinue
 
-            Start-NetshTrace -Path (Join-Path $tempPath 'Netsh') -RerpotMode $NetshReportMode
+            Start-NetshTrace -Path (Join-Path $tempPath 'Netsh') -ReportMode $NetshReportMode
             $netshTraceStarted = $true
         }
 
