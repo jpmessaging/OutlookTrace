@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-07-13'
+$Version = 'v2022-07-15'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -4726,6 +4726,7 @@ function Stop-TTD {
 
 function Attach-TTD {
     [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
     param(
         # Folder to save to.
         [Parameter(Mandatory = $true)]
@@ -6819,7 +6820,7 @@ function Get-OfficeIdentity {
     }
 
     # Find the one with the latest LastSwitchedTime if any.
-    $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 -and $_.LastSwitchedTime } `
+    $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 -and $_.LastSwitchedTime -and $_.LastSwitchedTime -ne '1601-01-01T00:01:00Z' } `
     | Sort-Object 'LastSwitchedTime' -Descending | Select-Object -First 1
 
     if ($activeIdentity) {
@@ -6832,7 +6833,7 @@ function Get-OfficeIdentity {
         | Select-Object -First 1
 
         if ($activeIdentity) {
-            Write-Log "Found active identity $($activeIdentity.EmailAddress) based on IdP $($IdpMapping[$_.IdP])."
+            Write-Log "Found active identity $($activeIdentity.EmailAddress) based on IdP $($IdpMapping[$activeIdentity.IdP])."
         }
         else {
             $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 } | Select-Object -First 1
@@ -7112,6 +7113,7 @@ function Get-SessionManager {
 #>
 function Collect-OutlookInfo {
     [CmdletBinding(SupportsShouldProcess = $true, PositionalBinding = $false)]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
     param (
         # Folder to place collected data
         [Parameter(Mandatory = $true, Position = 0)]
@@ -7505,7 +7507,7 @@ function Collect-OutlookInfo {
 
         if ($Component -contains 'Procmon') {
             Write-Progress -Status 'Starting Procmon'
-            $procmonResult = Start-Procmon -Path (Join-Path $tempPath 'Procmon') -ProcmonSearchPath $Path -ErrorAction Stop
+            Start-Procmon -Path (Join-Path $tempPath 'Procmon') -ProcmonSearchPath $Path -ErrorAction Stop | Out-Null
             $procmonStared = $true
         }
 
