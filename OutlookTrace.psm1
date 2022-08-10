@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-07-18'
+$Version = 'v2022-08-09'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -6778,6 +6778,23 @@ function Get-RegistryChildItem {
     $root
 }
 
+function Get-OfficeIdentityConfig {
+    [CmdletBinding()]
+    param(
+        [string]$User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity' `
+    | Get-ItemProperty -ErrorAction SilentlyContinue `
+    | Select-Object -Property '*' -ExcludeProperty 'PSParentPath', 'PSChildName', 'PSProvider'
+}
+
 function Get-OfficeIdentity {
     [CmdletBinding()]
     param(
@@ -7357,6 +7374,7 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($user) Get-IMProvider -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Invoke-ScriptBlock { param($user) Get-AlternateId -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Invoke-ScriptBlock { param($user) Get-UseOnlineContent -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            Invoke-ScriptBlock { param($user) Get-OfficeIdentityConfig -User $user } -ArgumentList $targetUser -Path $OfficeDir
             Invoke-ScriptBlock { param($user) Get-OfficeIdentity -User $user } -ArgumentList $targetUser -Path $OfficeDir
 
             Write-Progress -PercentComplete 60
@@ -7373,10 +7391,12 @@ function Collect-OutlookInfo {
                 $targetUser | Export-Clixml -Path (Join-Path $OSDir 'User.xml')
             }
 
-            # The user might start & stop Outlook while tracing. In order to capture Outlook's instances, run a task to check Outlook.exe periodically.
-            Write-Log "Starting outlookMonitorTask."
-            $outlookMonitorTaskCts = New-Object System.Threading.CancellationTokenSource
-            $outlookMonitorTask = Start-Task { param ($path, $name, $cancelToken) Start-ProcessMonitoring -Path $path -Name $name -CancelToken $cancelToken } -ArgumentList $OSDir, @('Outlook', 'Fiddler*'), $outlookMonitorTaskCts.Token
+            if ($Component.Count -gt 1) {
+                # The user might start & stop Outlook while tracing. In order to capture Outlook's instances, run a task to check Outlook.exe periodically.
+                Write-Log "Starting outlookMonitorTask."
+                $outlookMonitorTaskCts = New-Object System.Threading.CancellationTokenSource
+                $outlookMonitorTask = Start-Task { param ($path, $name, $cancelToken) Start-ProcessMonitoring -Path $path -Name $name -CancelToken $cancelToken } -ArgumentList $OSDir, @('Outlook', 'Fiddler*'), $outlookMonitorTaskCts.Token
+            }
 
             Write-Progress -Completed
         }
@@ -7642,6 +7662,7 @@ function Collect-OutlookInfo {
         }
 
         Write-Progress -Completed
+        $waitStart = Get-Date
 
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted) {
             Write-Log "Waiting for the user to stop"
@@ -7658,7 +7679,8 @@ function Collect-OutlookInfo {
         throw
     }
     finally {
-        Write-Log "Stopping traces"
+        Write-Log "Stopping traces. Wait duration: $((Get-Date) - $waitStart)"
+
         $PSDefaultParameterValues['Write-Progress:Activity'] = 'Stopping traces'
 
         if ($ttdStarted) {
@@ -7835,7 +7857,7 @@ function Collect-OutlookInfo {
     $archiveName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
 
     if ($SkipArchive) {
-        Rename-Item -LiteralPath $tempPath -NewName $archiveName
+        Start-Job { param($tempPath, $archiveName) Rename-Item -LiteralPath $tempPath -NewName $archiveName } -ArgumentList $tempPath, $archiveName | Out-Null
         return
     }
 
@@ -7871,4 +7893,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Collect-OutlookInfo
