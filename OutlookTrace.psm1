@@ -3346,6 +3346,7 @@ function Get-OutlookProfile {
     } -defaultProfile ([ref] $defaultProfile) | & {
         param([Parameter(ValueFromPipeline)]$prof)
         process {
+            $profileName = $prof.PSChildName
             $accountStore = Join-Path $prof.PSPath '*' | Get-ItemProperty -Name $CLSID_OlkMail -ErrorAction SilentlyContinue | Select-Object -First 1
             $olkMailBytes = $accountStore.$CLSID_OlkMail
             $accountCount = $olkMailBytes.Count / 4
@@ -3366,6 +3367,7 @@ function Get-OutlookProfile {
                         $acct.IsDefaultAccount = $true
                     }
 
+                    $acct.Profile = $profileName
                     $acct
                 }
             )
@@ -3374,9 +3376,9 @@ function Get-OutlookProfile {
 
             [PSCustomObject]@{
                 User                          = $User
-                Name                          = $prof.PSChildName
+                Name                          = $profileName
                 Path                          = $prof.Name
-                IsDefault                     = $prof.PSChildName -eq $defaultProfile
+                IsDefault                     = $profileName -eq $defaultProfile
                 Accounts                      = $accounts
                 DefaultAccountType            = $defaultAccount.AccountType
                 CachedMode                    = $defaultAccount.CachedMode
@@ -3399,6 +3401,7 @@ function Get-Pop3Account {
     $SmtpDefaultPort = 25
 
     [PSCustomObject]@{
+        Profile              = $null
         AccountName          = $Account.'Account Name'
         AccountType          = 'POP3'
         IsDefaultAccount     = $false
@@ -3426,6 +3429,7 @@ function Get-Imap4Account {
     $SmtpDefaultPort = 25
 
     [PSCustomObject]@{
+        Profile              = $null
         AccountName          = $Account.'Account Name'
         AccountType          = 'IMAP4'
         IsDefaultAccount     = $false
@@ -3503,6 +3507,7 @@ function Get-MapiAccount {
     }
 
     [PSCustomObject]@{
+        Profile                       = $null
         AccountName                   = $Account.'Account Name'
         AccountType                   = 'MAPI'
         IsDefaultAccount              = $false
