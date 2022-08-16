@@ -5452,31 +5452,48 @@ function Save-MSIPC {
     param (
         [Parameter(Mandatory = $true)]
         $Path,
-        $User
+        $User, 
+        # Copy the entire "MSIPC" folder
+        [switch]$All
     )
 
     # MSIPC info is in %LOCALAPPDATA%\Microsoft\MSIPC
     if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
-        $msipcPath = Join-Path $localAppdata 'Microsoft\MSIPC\Logs\*'
+        $msipcPath = Join-Path $localAppdata 'Microsoft\MSIPC\'
     }
     else {
         return
     }
 
-    # Just copy *.ipclog files
-    $filter = '*.ipclog'
+    # Copy "MSIPC" folder and its subfolders.
+    if ($All) {
+        try {
+            Copy-Item $msipcPath -Destination $Path -Recurse -Force
+        }
+        catch {
+            Write-Error -ErrorRecord $_
+        }
 
-    if (-not (Test-Path $msipcPath -Filter $filter)) {
-        Write-Log "There are no files matching '$filter' in $(Split-Path $msipcPath)."
         return
     }
 
-    if (-not (Test-Path $Path)) {
-        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+    # Just copy *.ipclog files
+    $filter = '*.ipclog'
+    $msipcLogPath = Join-Path $msipcPath '\Logs\*'
+    $destination = Join-Path $Path 'Logs'
+
+    if (-not (Test-Path $msipcLogPath -Filter $filter)) {
+        Write-Log "There are no files matching '$filter' in $(Split-Path $msipcLogPath)"
+        return
+    }
+
+    # Because copying only contents of a folder, need to create a destination folder first.
+    if (-not (Test-Path $destination)) {
+        New-Item -ItemType Directory $destination -ErrorAction Stop | Out-Null
     }
 
     try {
-        Copy-Item -Path $msipcPath -Filter $filter -Destination $Path
+        Copy-Item -Path $msipcLogPath -Filter $filter -Destination $destination
     }
     catch {
         Write-Error -ErrorRecord $_
@@ -7801,7 +7818,7 @@ function Collect-OutlookInfo {
 
             Write-Progress -Status 'Saving event logs'
             $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
-            Invoke-ScriptBlock { param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user } -ArgumentList $targetUser, $MSIPCDir
+            Invoke-ScriptBlock { param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user -All } -ArgumentList $targetUser, $MSIPCDir
 
             if ($osConfigurationTask) {
                 Write-Progress -Status 'Saving OS configuration'
