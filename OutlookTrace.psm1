@@ -5465,10 +5465,14 @@ function Save-MSIPC {
         return
     }
 
-    # Copy "MSIPC" folder and its subfolders.
+    # Copy "MSIPC" folder and its subfolders, except ".lock" files.
     if ($All) {
         try {
-            Copy-Item $msipcPath -Destination $Path -Recurse -Force
+            if (-not (Test-Path $Path)) {
+                New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+            }
+
+            Join-Path $msipcPath '*' | Copy-Item -Exclude '*.lock' -Destination $Path -Recurse -Force
         }
         catch {
             Write-Error -ErrorRecord $_
@@ -5487,7 +5491,7 @@ function Save-MSIPC {
         return
     }
 
-    # Because copying only contents of a folder, need to create a destination folder first.
+    # Because copying only contents of a folder, need to create the destination folder first.
     if (-not (Test-Path $destination)) {
         New-Item -ItemType Directory $destination -ErrorAction Stop | Out-Null
     }
@@ -5501,16 +5505,15 @@ function Save-MSIPC {
 }
 
 <#
-Save DLP policy files
+Save Outlook policy nudge files
 #>
-function Save-DLP {
+function Save-PolicyNudge {
     [CmdletBinding(PositionalBinding = $false)]
     param (
         [Parameter(Mandatory = $true)]
         # Destination folder path to save to
         [string]$Path,
-        [string]
-        $User
+        [string]$User
     )
 
     # Get the path to %LOCALAPPDATA%\Microsoft\Outlook.
@@ -5535,6 +5538,73 @@ function Save-DLP {
 
     try {
         Copy-Item -Path $sourcePath -Filter $fileNameFilter -Destination $Path
+    }
+    catch {
+        Write-Error -ErrorRecord $_
+    }
+}
+
+
+<#
+.SYNOPSIS
+    Save $env:LOCALAPPDATA\Microsoft\Office\CLP
+#>
+function Save-CLP {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        # Destination folder path to save to
+        [string]$Path,
+        [string]$User
+    )
+
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+
+    if (-not $localAppdata) {
+        Write-Error "Cannot find LocalAppData folder for User $User."
+        return
+    }
+
+    $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Office\CLP'
+
+    if (-not (Test-Path $sourcePath)) {
+        Write-Log "Cannot find $sourcePath."
+        return
+    }
+
+    try {
+        Copy-Item $sourcePath -Destination $Path -Recurse
+    }
+    catch {
+        Write-Error -ErrorRecord $_
+    }
+}
+
+function Save-DLP {
+    [CmdletBinding(PositionalBinding = $false)]
+    param (
+        [Parameter(Mandatory = $true)]
+        # Destination folder path to save to
+        [string]$Path,
+        [string]$User
+    )
+
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+
+    if (-not $localAppdata) {
+        Write-Error "Cannot find LocalAppData folder for User $User."
+        return
+    }
+
+    $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Office\DLP'
+
+    if (-not (Test-Path $sourcePath)) {
+        Write-Log "Cannot find $sourcePath."
+        return
+    }
+
+    try {
+        Copy-Item $sourcePath -Destination $Path -Recurse
     }
     catch {
         Write-Error -ErrorRecord $_
@@ -7403,7 +7473,9 @@ function Collect-OutlookInfo {
 
             Invoke-ScriptBlock { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
             Invoke-ScriptBlock { param($user, $OfficeDir) Save-CachedOutlookConfig -User $user -Path $(Join-Path $OfficeDir 'Cached OutlookConfig') } -ArgumentList $targetUser, $OfficeDir
+            Invoke-ScriptBlock { param($user, $OfficeDir) Save-PolicyNudge -User $user -Path $(Join-Path $OfficeDir 'PolicyNudge') } -ArgumentList $targetUser, $OfficeDir
             Invoke-ScriptBlock { param($user, $OfficeDir) Save-DLP -User $user -Path $(Join-Path $OfficeDir 'DLP') } -ArgumentList $targetUser, $OfficeDir
+            Invoke-ScriptBlock { param($user, $OfficeDir) Save-CLP -User $user -Path $(Join-Path $OfficeDir 'CLP') } -ArgumentList $targetUser, $OfficeDir
 
             Write-Progress -PercentComplete 80
 
