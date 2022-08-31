@@ -7262,17 +7262,12 @@ function Collect-OutlookInfo {
         [switch]$EnablePageHeap
     )
 
-    $runAsAdmin = $false
-    if (Test-RunAsAdministrator) {
-        $runAsAdmin = $true
-    }
+    $runAsAdmin = Test-RunAsAdministrator
 
     # Explicitly check admin rights depending on the request.
-    if ($Component -contains 'Outlook' -or $Component -contains 'Netsh' -or $Component -contains 'CAPI' -or $Component -contains 'LDAP' -or $Component -contains 'WAM' -or $Component -contains 'WPR' -or $Component -contains 'CrashDump' -or $EnablePageHeap) {
-        if (-not $runAsAdmin) {
-            Write-Warning "Please run as administrator."
-            return
-        }
+    if (-not $runAsAdmin -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump' -or $EnablePageHeap)) {
+        Write-Warning "Please run as administrator."
+        return
     }
 
     if ($env:PROCESSOR_ARCHITEW6432 -and $PSVersionTable.PSVersion.Major -eq 2) {
