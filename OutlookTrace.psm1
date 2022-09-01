@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-08-30'
+$Version = 'v2022-08-31'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -2541,6 +2541,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-ImageFileExecutionOptions } }
         @{ScriptBlock = { Get-SessionManager } }
         @{ScriptBlock = { Get-WinSystemLocale } }
+        @{ScriptBlock = { cmdkey /list } }
 
         # These are just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
@@ -3463,6 +3464,7 @@ function Get-MapiAccount {
 
     # Profile properties
     $PR_DISPLAY_NAME = '001f3001'
+    $PR_EMSMDB_IDENTITY_UNIQUEID = '001f3d1d'
     $PR_PROFILE_CONFIG_FLAGS = '00036601'
     $PR_PROFILE_CONFIG_FLAGS_EX = '1003666e'
 
@@ -3478,12 +3480,18 @@ function Get-MapiAccount {
         2 = 'MAPI'
     }
 
-    $props = Join-Path $prof $emsmdbSectionUid | Get-ItemProperty -Name $PR_DISPLAY_NAME, $PR_PROFILE_CONFIG_FLAGS, $PR_PROFILE_CONFIG_FLAGS_EX -ErrorAction SilentlyContinue
+    $props = Join-Path $prof $emsmdbSectionUid | Get-ItemProperty -Name $PR_DISPLAY_NAME, $PR_EMSMDB_IDENTITY_UNIQUEID, $PR_PROFILE_CONFIG_FLAGS, $PR_PROFILE_CONFIG_FLAGS_EX -ErrorAction SilentlyContinue
 
     $displayName = $null
 
     if ($props.$PR_DISPLAY_NAME) {
         $displayName = [System.Text.encoding]::Unicode.GetString($props.$PR_DISPLAY_NAME)
+    }
+
+    $identityUniqueId = $null
+
+    if ($props.$PR_EMSMDB_IDENTITY_UNIQUEID) {
+        $identityUniqueId = [System.Text.encoding]::Unicode.GetString($props.$PR_EMSMDB_IDENTITY_UNIQUEID)
     }
 
     $flags = 0
@@ -3509,6 +3517,7 @@ function Get-MapiAccount {
     [PSCustomObject]@{
         Profile                       = $null
         AccountName                   = $Account.'Account Name'
+        IdentityUniqueId              = $identityUniqueId
         AccountType                   = 'MAPI'
         IsDefaultAccount              = $false
         DisplayName                   = $displayName
