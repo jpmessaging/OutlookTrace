@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-09-01'
+$Version = 'v2022-09-15'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -696,12 +696,11 @@ function Write-Log {
 
         # Format as CSV:
         $sb = New-Object System.Text.StringBuilder
-        $sb.Append($currentTimeFormatted).Append(',') | Out-Null
-        # $sb.Append($delta.TotalMilliseconds).Append(',') | Out-Null
-        $sb.Append($delta).Append(',') | Out-Null
-        $sb.Append([System.Threading.Thread]::CurrentThread.ManagedThreadId).Append(',') | Out-Null
-        $sb.Append($caller).Append(',') | Out-Null
-        $sb.Append('"').Append($Message.Replace('"', "'")).Append('"') | Out-Null
+        $null = $sb.Append($currentTimeFormatted).Append(',')
+        $null = $sb.Append($delta).Append(',')
+        $null = $sb.Append([System.Threading.Thread]::CurrentThread.ManagedThreadId).Append(',')
+        $null = $sb.Append($caller).Append(',')
+        $null = $sb.Append('"').Append($Message.Replace('"', "'")).Append('"')
 
         # Protect from concurrent write
         [System.Threading.Monitor]::Enter($Script:logWriter)
@@ -857,17 +856,17 @@ function Start-Task {
 
     switch -Wildcard ($PSCmdlet.ParameterSetName) {
         'Command' {
-            $ps.AddCommand($Command) | Out-Null
+            $null = $ps.AddCommand($Command)
             foreach ($key in $Parameters.Keys) {
-                $ps.AddParameter($key, $Parameters[$key]) | Out-Null
+                $null = $ps.AddParameter($key, $Parameters[$key])
             }
             break
         }
 
         'Script' {
-            $ps.AddScript($ScriptBlock) | Out-Null
+            $null = $ps.AddScript($ScriptBlock)
             foreach ($p in $ArgumentList) {
-                $ps.AddArgument($p) | Out-Null
+                $null = $ps.AddArgument($p)
             }
             break
         }
@@ -1123,7 +1122,7 @@ function Compress-Folder {
         $zipStream = $zipArchive = $null
 
         try {
-            New-Item $zipFilePath -ItemType file | Out-Null
+            $null = New-Item $zipFilePath -ItemType file
 
             $zipStream = New-Object System.IO.FileStream -ArgumentList $zipFilePath, ([IO.FileMode]::Open)
             $zipArchive = New-Object System.IO.Compression.ZipArchive -ArgumentList $zipStream, ([IO.Compression.ZipArchiveMode]::Create)
@@ -1258,7 +1257,7 @@ function Compress-Folder {
 
             # Copy filtered files to a temporary folder
             $tempPath = Join-Path $env:TEMP ([IO.Path]::GetRandomFileName().Substring(0, 8))
-            New-Item $tempPath -ItemType Directory | Out-Null
+            $null = New-Item $tempPath -ItemType Directory
 
             foreach ($file in $files) {
                 $dest = $tempPath
@@ -1266,7 +1265,7 @@ function Compress-Folder {
                 if ($subPath) {
                     $dest = Join-Path $tempPath $subPath
                     if (-not (Test-Path -LiteralPath $dest)) {
-                        New-Item -ItemType Directory -Path $dest | Out-Null
+                        $null = New-Item -ItemType Directory -Path $dest
                     }
                 }
 
@@ -1332,7 +1331,7 @@ function Compress-Folder {
             Remove-Item -LiteralPath $tempPath -Force -Recurse
         }
 
-        [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($shellApp) | Out-Null
+        $null = [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($shellApp)
 
         New-Object PSCustomObject -Property @{
             ArchivePath = $archivePath
@@ -1515,7 +1514,7 @@ function Enable-EventLog {
         [string]$EventName
     )
 
-    $(wevtutil.exe set-log $EventName /enabled:true /retention:false /quiet:true | Out-Null) 2>&1 | ForEach-Object {
+    $($null = wevtutil.exe set-log $EventName /enabled:true /retention:false /quiet:true) 2>&1 | ForEach-Object {
         Write-Error -ErrorRecord $_
     }
 }
@@ -1527,7 +1526,7 @@ function Disable-EventLog {
         [string]$EventName
     )
 
-    $(wevtutil.exe set-log $EventName /enabled:false /retention:false /quiet:true | Out-Null) 2>&1 | ForEach-Object {
+    $($null = wevtutil.exe set-log $EventName /enabled:false /retention:false /quiet:true) 2>&1 | ForEach-Object {
         Write-Error -ErrorRecord $_
     }
 }
@@ -1567,7 +1566,7 @@ function Start-WamTrace {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
     $Path = Resolve-Path $Path
 
@@ -1617,7 +1616,7 @@ function Stop-WamTrace {
     )
 
     Write-Log "Stopping $SessionName"
-    Stop-EtwSession $SessionName | Out-Null
+    $null = Stop-EtwSession $SessionName
 }
 
 function Start-OutlookTrace {
@@ -1634,7 +1633,7 @@ function Start-OutlookTrace {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
     $Path = Resolve-Path $Path
@@ -1698,7 +1697,7 @@ function Stop-OutlookTrace {
     )
 
     Write-Log "Stopping $SessionName"
-    Stop-EtwSession $SessionName | Out-Null
+    $null = Stop-EtwSession $SessionName
 }
 
 function Start-NetshTrace {
@@ -1712,7 +1711,7 @@ function Start-NetshTrace {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
     $Path = Resolve-Path $Path
 
@@ -1741,7 +1740,7 @@ function Start-NetshTrace {
     }
 
     Write-Log "Clearing dns cache"
-    & ipconfig /flushdns | Out-Null
+    $null = & ipconfig.exe /flushdns
 
     Write-Log "Starting a netsh trace."
     $traceFile = Join-Path $Path -ChildPath $FileName
@@ -1889,7 +1888,7 @@ function Start-PSR {
     )
 
     if (-not (Test-Path $Path -ErrorAction Stop)) {
-        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+        $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
     $Path = Resolve-Path $Path
 
@@ -1982,7 +1981,7 @@ function Stop-PSR {
         # So to avoid this, the following code manually signal the handle so that 'psr /stop' shuts down.
         $PSR_CLEANUP_COMPLETED = '{CD3E5009-5C9D-4E9B-B5B6-CAE1D8799AE3}'
         $h = [System.Threading.EventWaitHandle]::OpenExisting($PSR_CLEANUP_COMPLETED)
-        $h.Set() | Out-Null
+        $null = $h.Set()
         Write-Log "PSR_CLEANUP_COMPLETED was manually signaled"
         Wait-Process -Id $stopInstance.Id -ErrorAction SilentlyContinue
     }
@@ -2016,7 +2015,7 @@ function Save-EventLog {
     }
 
     if (-not (Test-Path $Path -ErrorAction Stop)) {
-        New-Item -ItemType directory $Path | Out-Null
+        $null = New-Item -ItemType directory $Path
     }
     $Path = Resolve-Path $Path
 
@@ -2167,7 +2166,7 @@ function Save-MicrosoftUpdate {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType directory -ErrorAction Stop
     }
 
     $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
@@ -2218,16 +2217,16 @@ function Get-InstalledUpdate {
                 InstalledOn = $installedOn
             }
 
-            [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($item) | Out-Null
+            $null = [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($item)
         }
     }
     finally {
         if ($appUpdates) {
-            [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($appUpdates) | Out-Null
+            $null = [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($appUpdates)
         }
 
         if ($shell) {
-            [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($shell) | Out-Null
+            $null = [System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($shell)
         }
     }
 }
@@ -2428,7 +2427,7 @@ function Save-OfficeRegistry {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType directory -ErrorAction Stop
     }
 
     $registryKeys = @(
@@ -2503,7 +2502,7 @@ function Save-OfficeRegistry {
         Write-Log "Saving $key to $filePath"
         $err = $(Invoke-Command {
                 $ErrorActionPreference = 'Continue'
-                & $regexe export $key $filePath | Out-Null
+                $null = & $regexe export $key $filePath
             }) 2>&1
 
         if ($LASTEXITCODE -ne 0) {
@@ -2522,7 +2521,7 @@ function Save-OSConfiguration {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType directory -ErrorAction Stop
     }
 
     & {
@@ -2568,7 +2567,7 @@ function Save-OSConfigurationMT {
     }
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType directory -ErrorAction Stop
     }
 
     $tasks = @(
@@ -2598,7 +2597,7 @@ function Save-NetworkInfo {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType directory -ErrorAction Stop
     }
 
     # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
@@ -2727,7 +2726,7 @@ function Invoke-ScriptBlock {
     }
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction SilentlyContinue
     }
 
     if ($exportAsXml) {
@@ -2755,7 +2754,7 @@ function Save-NetworkInfoMT {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType directory -ErrorAction Stop
     }
 
     # Path must be resolved before it's used as an argument to Start-Task.
@@ -2960,7 +2959,7 @@ function MarshalString {
     }
 
     # Don't use [Runtime.InteropServices.Marshal]::FreeHGlobal($Ptr) here because it uses LocalFree(), not GlobalFree().
-    [Win32.Kernel32]::GlobalFree($Ptr) | Out-Null
+    $null = [Win32.Kernel32]::GlobalFree($Ptr)
 }
 
 
@@ -3049,34 +3048,55 @@ function Get-ProxyAutoConfig {
 
     Get-WinInetProxy -User $User | & {
         param([Parameter(ValueFromPipeline)]$proxy)
+        begin {
+            # Cache PAC URLs that are already tried.
+            $urlCache = @{}
+        }
+
         process {
             if ($proxy.AutoDetect) {
                 [Win32.SafeGlobalFreeString]$wpadUrl = $null
 
                 if ([Win32.WinHttp]::WinHttpDetectAutoProxyConfigUrl([Win32.WinHttp+AutoDetectType] 'WINHTTP_AUTO_DETECT_TYPE_DHCP, WINHTTP_AUTO_DETECT_TYPE_DNS_A', [ref]$wpadUrl)) {
-                    $pac = Get-PAC $wpadUrl.ToString()
-                    $pac.Add('IsWpad', $true)
-                    $pac.Add('User', $proxy.User)
-                    [PSCustomObject]$pac
+                    $pacUrl = $wpadUrl.ToString().ToLowerInvariant()
+
+                    if ($urlCache.ContainsKey($pacUrl)) {
+                        Write-Log "Skipped $pacUrl because it's already tried."
+                    }
+                    else {
+                        $urlCache.Add($pacUrl, $true)
+                        $pac = Get-PAC $pacUrl
+                        $pac.Add('IsWpad', $true)
+                        $pac.Add('User', $proxy.User)
+                        [PSCustomObject]$pac
+                    }
                 }
                 else {
                     $ec = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
                     $winhttpEc = $ec -as [Win32.WinHttp+Error]
 
                     if ($winhttpEc) {
-                        Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $winhttpEc ($($winhttpEc.value__))"
+                        Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $winhttpEc ($($winhttpEc.value__)) for connection $($proxy.Connection)"
                     }
                     else {
-                        Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $ec"
+                        Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $ec for connection $($proxy.Connection)"
                     }
                 }
             }
 
             if ($proxy.AutoConfigUrl) {
-                $pac = Get-PAC $proxy.AutoConfigUrl
-                $pac.Add('IsWpad', $false)
-                $pac.Add('User', $proxy.User)
-                [PSCustomObject]$pac
+                $pacUrl = $proxy.AutoConfigUrl.ToLowerInvariant()
+
+                if ($urlCache.ContainsKey($pacUrl)) {
+                    Write-Log "Skipped $pacUrl because it's already tried."
+                }
+                else {
+                    $urlCache.Add($pacUrl, $true)
+                    $pac = Get-PAC $pacUrl
+                    $pac.Add('IsWpad', $false)
+                    $pac.Add('User', $proxy.User)
+                    [PSCustomObject]$pac
+                }
             }
         }
     }
@@ -3331,12 +3351,12 @@ function Get-OutlookProfile {
     $defaultProfile = $null
 
     Join-Path $userRegRoot 'Software\Microsoft\Office\' `
-    | Get-ChildItem -ErrorAction SilentlyContinue | & {
-        param ([ref] $defaultProfile, [Parameter(ValueFromPipeline)]$key)
+    | Get-ChildItem -ErrorAction SilentlyContinue | . {
+        param ([Parameter(ValueFromPipeline)]$key)
         process {
             if ($key.Name -match '\d\d\.0') {
-                if (-not $defaultProfile.Value) {
-                    $defaultProfile.Value = Join-Path $key.PSPath 'Outlook' | Get-ItemProperty -Name 'DefaultProfile' -ErrorAction SilentlyContinue `
+                if (-not $defaultProfile) {
+                    $defaultProfile = Join-Path $key.PSPath 'Outlook' | Get-ItemProperty -Name 'DefaultProfile' -ErrorAction SilentlyContinue `
                     | Select-Object -ExpandProperty 'DefaultProfile'
                 }
 
@@ -3345,7 +3365,7 @@ function Get-OutlookProfile {
 
             $key.Close()
         }
-    } -defaultProfile ([ref] $defaultProfile) | & {
+    } | & {
         param([Parameter(ValueFromPipeline)]$prof)
         process {
             $profileName = $prof.PSChildName
@@ -3367,14 +3387,13 @@ function Get-OutlookProfile {
 
                     if ($i -eq 0) {
                         $acct.IsDefaultAccount = $true
+                        $defaultAccount = $acct
                     }
 
                     $acct.Profile = $profileName
                     $acct
                 }
             )
-
-            $defaultAccount = $accounts | Where-Object { $_.IsDefaultAccount } | Select-Object -First 1
 
             [PSCustomObject]@{
                 User                          = $User
@@ -3597,7 +3616,7 @@ function Save-CachedAutodiscover {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
     Get-CachedAutodiscoverLocation -User $User | & {
@@ -3663,7 +3682,7 @@ function Save-CachedOutlookConfig {
     }
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
     $Path = Resolve-Path $Path
@@ -3740,7 +3759,7 @@ function Start-LdapTrace {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType directory -ErrorAction Stop
     }
 
     $Path = Resolve-Path $Path
@@ -3753,10 +3772,10 @@ function Start-LdapTrace {
     # Create a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing
     $keypath = "HKLM:\SYSTEM\CurrentControlSet\Services\ldap\tracing"
     if (-not (Test-Path $keypath)) {
-        New-Item (Split-Path $keypath) -Name 'tracing' -ErrorAction SilentlyContinue | Out-Null
+        $null = New-Item (Split-Path $keypath) -Name 'tracing' -ErrorAction SilentlyContinue
     }
 
-    New-Item $keypath -Name $TargetProcess -ErrorAction SilentlyContinue | Out-Null
+    $null = New-Item $keypath -Name $TargetProcess -ErrorAction SilentlyContinue
     $key = Get-Item (Join-Path $keypath -ChildPath $TargetProcess)
 
     if (!$key) {
@@ -3810,7 +3829,7 @@ function Stop-LdapTrace {
     )
 
     Write-Log "Stopping $SessionName"
-    Stop-EtwSession $SessionName | Out-Null
+    $null = Stop-EtwSession $SessionName
 
     # Remove a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing (ignore any errors)
 
@@ -3820,7 +3839,7 @@ function Stop-LdapTrace {
     }
 
     $keypath = "HKLM:\SYSTEM\CurrentControlSet\Services\ldap\tracing\$TargetProcess"
-    Remove-Item $keypath -ErrorAction SilentlyContinue | Out-Null
+    $null = Remove-Item $keypath -ErrorAction SilentlyContinue
 }
 
 function Get-OfficeModuleInfo {
@@ -3914,9 +3933,9 @@ function Save-OfficeModuleInfo {
         [Threading.CancellationToken]$CancellationToken
     )
 
-    New-Item $Path -ItemType Directory -ErrorAction SilentlyContinue | Out-Null
+    $null = New-Item $Path -ItemType Directory -ErrorAction SilentlyContinue
 
-    $PSBoundParameters.Remove('Path') | Out-Null
+    $null = $PSBoundParameters.Remove('Path')
     Get-OfficeModuleInfo @PSBoundParameters | Export-Clixml -LiteralPath (Join-Path $Path "$($MyInvocation.MyCommand.Noun).xml")
 }
 
@@ -3935,7 +3954,7 @@ function Start-SavingOfficeModuleInfo_PSJob {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+        $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
 
     $Path = Resolve-Path $Path
@@ -4064,7 +4083,7 @@ function Stop-SavingOfficeModuleInfo_PSJob {
 
         # Signal the event and close
         try {
-            $namedEvent.Set() | Out-Null
+            $null = $namedEvent.Set()
             $namedEvent.Close()
             Write-Log "Event (Handle: $($namedEvent.Handle)) was closed."
         }
@@ -4073,7 +4092,7 @@ function Stop-SavingOfficeModuleInfo_PSJob {
         }
 
         # Let the job finish
-        Wait-Job -Job $job | Out-Null
+        $null = Wait-Job -Job $job
         Stop-Job -Job $job
         # Receive-Job -Job $job
         Remove-Job -Job $job
@@ -4089,7 +4108,7 @@ function Save-MSInfo32 {
     )
 
     if (-not (Test-Path $Path -ErrorAction Stop)) {
-        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+        $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
 
     $filePath = Join-Path $Path -ChildPath "$($env:COMPUTERNAME).nfo"
@@ -4127,7 +4146,7 @@ function Start-CapiTrace {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType directory -ErrorAction Stop
     }
     $Path = Resolve-Path $Path
 
@@ -4175,7 +4194,7 @@ function Stop-CapiTrace {
     )
 
     Write-Log "Stopping $SessionName"
-    Stop-EtwSession $SessionName | Out-Null
+    $null = Stop-EtwSession $SessionName
 }
 
 function Start-FiddlerCap {
@@ -4188,7 +4207,7 @@ function Start-FiddlerCap {
     )
 
     if (-not (Test-Path $Path -ErrorAction Stop)) {
-        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+        $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
 
     $Path = Resolve-Path $Path
@@ -4310,7 +4329,7 @@ function Start-Procmon {
     }
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
     $Path = Resolve-Path $Path
@@ -4352,7 +4371,7 @@ function Start-Procmon {
         }
 
         if (-not (Test-Path $procmonFolderPath)) {
-            New-Item $procmonFolderPath -ItemType Directory -ErrorAction Stop | Out-Null
+            $null = New-Item $procmonFolderPath -ItemType Directory -ErrorAction Stop
         }
 
         if (Test-Path $procmonZipFile) {
@@ -4517,16 +4536,16 @@ function Start-TcoTrace {
     Write-Log "Using $keypath."
 
     if (-not (Test-Path $keypath)) {
-        New-Item $keypath -ErrorAction Stop | Out-Null
+        $null = New-Item $keypath -ErrorAction Stop
     }
 
     Write-Log "Starting a TCO trace by setting up $keypath"
-    New-ItemProperty $keypath -Name 'TCOTrace' -PropertyType DWORD -Value 7 -ErrorAction SilentlyContinue | Out-Null
-    New-ItemProperty $keypath -Name 'MsoHttpVerbose' -PropertyType DWORD -Value 1 -ErrorAction SilentlyContinue | Out-Null
+    $null = New-ItemProperty $keypath -Name 'TCOTrace' -PropertyType DWORD -Value 7 -ErrorAction SilentlyContinue
+    $null = New-ItemProperty $keypath -Name 'MsoHttpVerbose' -PropertyType DWORD -Value 1 -ErrorAction SilentlyContinue
 
     # If failed, throw a terminating error
-    Get-ItemProperty $keypath -Name 'TCOTrace' -ErrorAction Stop | Out-Null
-    Get-ItemProperty $keypath -Name 'MsoHttpVerbose' -ErrorAction Stop | Out-Null
+    $null = Get-ItemProperty $keypath -Name 'TCOTrace' -ErrorAction Stop
+    $null = Get-ItemProperty $keypath -Name 'MsoHttpVerbose' -ErrorAction Stop
 }
 
 function Stop-TcoTrace {
@@ -4538,7 +4557,7 @@ function Stop-TcoTrace {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
     $Path = Resolve-Path $Path
 
@@ -4555,8 +4574,8 @@ function Stop-TcoTrace {
     }
 
     Write-Log "Stopping a TCO trace by removing TCOTrace & MsoHttpVerbose from $keypath"
-    Remove-ItemProperty $keypath -Name 'TCOTrace' -ErrorAction SilentlyContinue | Out-Null
-    Remove-ItemProperty $keypath -Name 'MsoHttpVerbose' -ErrorAction SilentlyContinue | Out-Null
+    $null = Remove-ItemProperty $keypath -Name 'TCOTrace' -ErrorAction SilentlyContinue
+    $null = Remove-ItemProperty $keypath -Name 'MsoHttpVerbose' -ErrorAction SilentlyContinue
 
     # TCO Trace logs are in %TEMP%
     foreach ($item in @(Get-ChildItem -Path "$env:TEMP\*" -Include "office.log", "*.exe.log")) {
@@ -4605,7 +4624,7 @@ function Start-TTD {
     }
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
     $stdout = Join-Path $Path 'stdout.txt'
@@ -4727,7 +4746,7 @@ function Stop-TTD {
 
     # Wait for the tttracer to exit.
     # Wait-Process writes a non-terminating error when the process has exited. Ignore this error.
-    $(Wait-Process -InputObject $tttracerProcess -ErrorAction SilentlyContinue) 2>&1 | Out-Null
+    $null = $(Wait-Process -InputObject $tttracerProcess -ErrorAction SilentlyContinue) 2>&1
 
     [PSCustomObject]@{
         ExitCode = $exitCode  # This is the exit code of "tttracer -stop"
@@ -4766,7 +4785,7 @@ function Attach-TTD {
     }
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
     # Form the output file name.
@@ -4960,7 +4979,7 @@ function Add-WerDumpKey {
     }
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
     $Path = (Resolve-Path $Path -ErrorAction Stop).Path
@@ -4968,7 +4987,7 @@ function Add-WerDumpKey {
     # Create a key 'LocalDumps' under HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps, if it doesn't exist
     $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
     if (-not (Test-Path (Join-Path $werKey 'LocalDumps'))) {
-        New-Item $werKey -Name 'LocalDumps' -ErrorAction Stop | Out-Null
+        $null = New-Item $werKey -Name 'LocalDumps' -ErrorAction Stop
     }
 
     $localDumpsKey = Join-Path $werKey 'LocalDumps'
@@ -4984,7 +5003,7 @@ function Add-WerDumpKey {
         $targetKey = Join-Path $localDumpsKey $TargetProcess
 
         if (-not (Test-Path $targetKey)) {
-            New-Item $localDumpsKey -Name $TargetProcess -ErrorAction Stop | Out-Null
+            $null = New-Item $localDumpsKey -Name $TargetProcess -ErrorAction Stop
         }
     }
     else {
@@ -4995,9 +5014,9 @@ function Add-WerDumpKey {
     Write-Log "Setting up $targetKey with CustomDumpFlags:0x61826, DumpType:0, DumpFolder:$Path"
     # -Force will overwrite existing value
     # 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4)| MiniDumpWithFullMemory (2)
-    New-ItemProperty $targetKey -Name 'CustomDumpFlags' -Value 0x00061826 -Force -ErrorAction Stop | Out-Null
-    New-ItemProperty $targetKey -Name 'DumpType' -Value 0 -PropertyType DWORD -Force -ErrorAction Stop | Out-Null
-    New-ItemProperty $targetKey -Name 'DumpFolder' -Value $Path -PropertyType String -Force -ErrorAction Stop | Out-Null
+    $null = New-ItemProperty $targetKey -Name 'CustomDumpFlags' -Value 0x00061826 -Force -ErrorAction Stop
+    $null = New-ItemProperty $targetKey -Name 'DumpType' -Value 0 -PropertyType DWORD -Force -ErrorAction Stop
+    $null = New-ItemProperty $targetKey -Name 'DumpFolder' -Value $Path -PropertyType String -Force -ErrorAction Stop
 
     # Rename DW Installed keys to "_Installed" in order to disable it temporarily
     $pcHealth = @(
@@ -5090,10 +5109,10 @@ function Disable-DWWin {
     $imageKeyPath = Join-Path $IFEO $dwwin
 
     if (-not (Test-Path $imageKeyPath)) {
-        New-Item $IFEO -Name $dwwin | Out-Null
+        $null = New-Item $IFEO -Name $dwwin
     }
 
-    New-ItemProperty $imageKeyPath -Name 'Debugger' -Value ([Guid]::NewGuid().ToString()) | Out-Null
+    $null = New-ItemProperty $imageKeyPath -Name 'Debugger' -Value ([Guid]::NewGuid().ToString())
 }
 
 function Enable-DWWin {
@@ -5127,11 +5146,11 @@ function Enable-PageHeap {
     $imageKeyPath = Join-Path $IFEO $ProcessName
 
     if (-not (Test-Path $imageKeyPath)) {
-        New-Item $IFEO -Name $ProcessName | Out-Null
+        $null = New-Item $IFEO -Name $ProcessName
     }
 
     foreach ($kvp in @(@{Name = 'GlobalFlag'; Value = 0x2000000 }, @{Name = 'PageHeapFlags'; Value = 3 })) {
-        New-ItemProperty $imageKeyPath -Name $kvp.Name -Value $kvp.Value | Out-Null
+        $null = New-ItemProperty $imageKeyPath -Name $kvp.Name -Value $kvp.Value
     }
 }
 
@@ -5176,7 +5195,7 @@ function Start-WfpTrace {
     }
 
     if (-not (Test-Path $Path)) {
-        New-Item -ItemType directory $Path -ErrorAction Stop | Out-Null
+        $null = New-Item -ItemType directory $Path -ErrorAction Stop
     }
 
     $Path = Resolve-Path $Path
@@ -5192,13 +5211,13 @@ function Start-WfpTrace {
     $now = Get-Date -Format 'yyyyMMdd_HHmmss'
 
     $stateFile = Join-Path $Path "wfpstate_$now.xml"
-    & $netshexe wfp show state file=$stateFile | Out-Null
+    $null = & $netshexe wfp show state file=$stateFile
 
     $bootTimePolicyFile = Join-Path $Path "btpol_$now.xml"
-    & $netshexe wfp show boottimepolicy file=$bootTimePolicyFile | Out-Null
+    $null = & $netshexe wfp show boottimepolicy file=$bootTimePolicyFile
 
     $filterFilePath = Join-Path $Path "filters_$now.xml"
-    & $netshexe wfp show filters file=$filterFilePath verbose=on | Out-Null
+    $null = & $netshexe wfp show filters file=$filterFilePath verbose=on
 
     Write-Log "Starting WFP trace"
     $filePath = Join-Path $Path 'wfp'
@@ -5228,7 +5247,7 @@ function Start-WfpTrace {
 
             # dump netevents
             $eventFilePath = Join-Path $Path "netevents_$($now.ToString('yyyyMMdd_HHmmss')).xml"
-            & $netshexe wfp show netevents file="$eventFilePath" timewindow=$($Interval.TotalSeconds) | Out-Null
+            $null = & $netshexe wfp show netevents file="$eventFilePath" timewindow=$($Interval.TotalSeconds)
 
             Start-Sleep -Seconds $Interval.TotalSeconds
         }
@@ -5252,7 +5271,7 @@ function Stop-WfpTrace {
         $netshexe = Join-Path $env:SystemRoot 'System32\netsh.exe'
     }
 
-    & $netshexe wfp capture stop | Out-Null
+    $null = & $netshexe wfp capture stop
 
     Write-Log "Stopping a WFP job"
     Stop-Job -Job $WfpJob
@@ -5292,14 +5311,14 @@ function Save-Dump {
     }
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
     $Path = Resolve-Path $Path
 
     $wow64 = $false
     if (-not $SkipWow64Check) {
         # Check if the target process is WOW6432 (i.e. 32bit on 64bit OS)
-        [Win32.Kernel32]::IsWow64Process($process.SafeHandle, [ref]$wow64) | Out-Null
+        $null = [Win32.Kernel32]::IsWow64Process($process.SafeHandle, [ref]$wow64)
     }
 
     if ($wow64) {
@@ -5319,7 +5338,7 @@ function Save-Dump {
         try {
             $psProcess = New-Object System.Diagnostics.Process
             $psProcess.StartInfo = $startInfo
-            $psProcess.Start() | Out-Null
+            $null = $psProcess.Start()
 
             $psProcess.WaitForExit()
             $stdOut = $psProcess.StandardOutput.ReadToEnd()
@@ -5462,7 +5481,7 @@ function Save-MSIPC {
     param (
         [Parameter(Mandatory = $true)]
         $Path,
-        $User, 
+        $User,
         # Copy the entire "MSIPC" folder
         [switch]$All
     )
@@ -5479,7 +5498,7 @@ function Save-MSIPC {
     if ($All) {
         try {
             if (-not (Test-Path $Path)) {
-                New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+                $null = New-Item -ItemType Directory $Path -ErrorAction Stop
             }
 
             Join-Path $msipcPath '*' | Copy-Item -Exclude '*.lock' -Destination $Path -Recurse -Force
@@ -5502,7 +5521,7 @@ function Save-MSIPC {
 
     # Because copying only contents of a folder, need to create the destination folder first.
     if (-not (Test-Path $destination)) {
-        New-Item -ItemType Directory $destination -ErrorAction Stop | Out-Null
+        $null = New-Item -ItemType Directory $destination -ErrorAction Stop
     }
 
     try {
@@ -5544,7 +5563,7 @@ function Save-PolicyNudge {
     }
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
     try {
@@ -5671,7 +5690,7 @@ function New-LogCallback {
     }
 
     $proxy = New-Object LogCallbackProxy
-    Register-ObjectEvent -InputObject $proxy -EventName Logging -Action $Callback -MessageData $ArgumentList | Out-Null
+    $null = Register-ObjectEvent -InputObject $proxy -EventName Logging -Action $Callback -MessageData $ArgumentList
 
     $proxy.Callback
 }
@@ -5760,12 +5779,12 @@ function Get-Token {
     $builder = [Microsoft.Identity.Client.PublicClientApplicationBuilder]::Create($ClientId).WithAuthority((New-Object System.Uri "https://login.microsoftonline.com/$TenantId/"), <#validateAuthority#> $false)
 
     if ($RedirectUri) {
-        $builder.WithRedirectUri($RedirectUri) | Out-Null
+        $null = $builder.WithRedirectUri($RedirectUri)
     }
     else {
         # WithDefaultRedirectUri() makes the redirect_uri "https://login.microsoftonline.com/common/oauth2/nativeclient".
         # Without it, redirect_uri would be "urn:ietf:wg:oauth:2.0:oob".
-        $builder.WithDefaultRedirectUri() | Out-Null
+        $null = $builder.WithDefaultRedirectUri()
     }
 
     $writer = $null
@@ -5778,7 +5797,7 @@ function Get-Token {
         # Add a CSV header line
         $writer.WriteLine("datetime,level,containsPii,message");
 
-        $builder.WithLogging(
+        $null = $builder.WithLogging(
             # Microsoft.Identity.Client.LogCallback
             (New-LogCallback {
                 param([Microsoft.Identity.Client.LogLevel]$level, [string]$message, [bool]$containsPii)
@@ -5788,7 +5807,7 @@ function Get-Token {
             [Microsoft.Identity.Client.LogLevel]::Verbose,
             $true, # enablePiiLogging
             $false # enableDefaultPla`tformLogging
-        ) | Out-Null
+        )
     }
 
     $publicClient = $builder.Build()
@@ -6140,7 +6159,7 @@ function Get-OutlookAddin {
 
                     # Check InprocServer32, LocalServer32, RemoteServer32
                     # e.g. "...\CLSID\{C15AC6D0-15EE-49B3-9B2A-948320426B88}\InprocServer32"
-                    & { 'InprocServer32'; 'LocalServer32'; 'RemoteServer32' } | & {
+                    $null = & { 'InprocServer32'; 'LocalServer32'; 'RemoteServer32' } | & {
                         param([Parameter(ValueFromPipeline)]$comServerType)
                         process {
                             # The order of keys matters here for speed.
@@ -6164,7 +6183,7 @@ function Get-OutlookAddin {
                                 }
                             }
                         }
-                    } | Select-Object -First 1 | Out-Null
+                    } | Select-Object -First 1
                 }
                 elseif ($manifest = $addin.GetValue('Manifest')) {
                     # A managed addin does not have CLSID. Check "Manifest" instead.
@@ -6241,7 +6260,7 @@ function Start-GatherNetworkInfo {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item -ItemType Directory -Path $Path -ErrorAction Stop | Out-Null
+        $null = New-Item -ItemType Directory -Path $Path -ErrorAction Stop
     }
 
     Invoke-Command {
@@ -6289,7 +6308,7 @@ function Start-PerfTrace {
     )
 
     if (-not (Test-Path -LiteralPath $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
     $Path = Resolve-Path $Path
 
@@ -6374,7 +6393,7 @@ function Save-Process {
     )
 
     if (-not (Test-Path $Path)) {
-        New-Item -ItemType Directory -Path $Path -ErrorAction Stop | Out-Null
+        $null = New-Item -ItemType Directory -Path $Path -ErrorAction Stop
     }
 
     $outFileName = "Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml"
@@ -6543,7 +6562,7 @@ function Start-Wpr {
 
     if ($PSBoundParameters.ContainsKey('Path')) {
         if (-not (Test-Path $Path)) {
-            New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+            $null = New-Item $Path -ItemType Directory -ErrorAction Stop
         }
 
         $Path = Resolve-Path $Path
@@ -6558,10 +6577,10 @@ function Start-Wpr {
             $Path = $Path.Remove($Path.Length - 1)
         }
 
-        $errs = $(wpr.exe -start GeneralProfile -start CPU -start Network -filemode -RecordTempTo $Path | Out-Null) 2>&1
+        $errs = $($null = wpr.exe -start GeneralProfile -start CPU -start Network -filemode -RecordTempTo $Path) 2>&1
     }
     else {
-        $errs = $(wpr.exe -start GeneralProfile -start CPU -start Network -filemode | Out-Null) 2>&1
+        $errs = $($null = wpr.exe -start GeneralProfile -start CPU -start Network -filemode) 2>&1
     }
 
     $errorMsg = $errs | ForEach-Object { $msg = $_.Exception.Message.Trim(); if ($msg) { $msg } }
@@ -6586,7 +6605,7 @@ function Stop-Wpr {
     }
 
     if (-not (Test-Path $Path)) {
-        New-Item $Path -ItemType Directory -ErrorAction Stop | Out-Null
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
     $Path = Resolve-Path $Path
@@ -6695,15 +6714,15 @@ function Get-IMProvider {
     }
     finally {
         if ($punk -ne [IntPtr]::Zero) {
-            [System.Runtime.InteropServices.Marshal]::Release($punk) | Out-Null
+            $null = [System.Runtime.InteropServices.Marshal]::Release($punk)
         }
 
         if ($pIUCOfficeIntegration -ne [IntPtr]::Zero) {
-            [System.Runtime.InteropServices.Marshal]::Release($pIUCOfficeIntegration) | Out-Null
+            $null = [System.Runtime.InteropServices.Marshal]::Release($pIUCOfficeIntegration)
         }
 
         if ($imProvider) {
-            [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($imProvider) | Out-Null
+            $null = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($imProvider)
         }
     }
 
@@ -6764,7 +6783,7 @@ function Invoke-WamSignOut {
         # https://devblogs.microsoft.com/dotnet/asynchronous-programming-for-windows-store-apps-net-is-up-to-the-task/
         $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and !$_.IsGenericMethod })[0]
         $netTask = $asTask.Invoke($null, @($WinRtAction))
-        $netTask.Wait(-1) | Out-Null
+        $null = $netTask.Wait(-1)
     }
 
     function Await($WinRtTask, $ResultType) {
@@ -6772,7 +6791,7 @@ function Invoke-WamSignOut {
         $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
         $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
         $netTask = $asTask.Invoke($null, @($WinRtTask))
-        $netTask.Wait(-1) | Out-Null
+        $null = $netTask.Wait(-1)
         $netTask.Result
     }
 
@@ -7148,7 +7167,7 @@ function Get-AutodiscoverConfig {
         "Software\Policies\Microsoft\Exchange"
     } `
     | Join-Path -Path $userRegRoot -ChildPath { $_ } `
-    | Get-ItemProperty -Name 'Exclude*', 'Prefer*', '*Autodiscover*' -ErrorAction SilentlyContinue `
+    | Get-ItemProperty -Name 'Exclude*', 'Prefer*', '*Autodiscover*', 'ZeroConfigExchange*' -ErrorAction SilentlyContinue `
     | Split-ItemProperty
 }
 
@@ -7288,7 +7307,7 @@ function Collect-OutlookInfo {
     # MS Office must be installed to collect Outlook, TCO, or TTD.
     # This is just a fail fast. Start-OutlookTrace/TCOTrace fail anyway.
     if ($Component -contains 'Outlook' -or $Component -contains 'TCO' -or $Component -contains 'TTD') {
-        $err = $(Get-OfficeInfo -ErrorAction Continue | Out-Null) 2>&1
+        $err = $($null = Get-OfficeInfo -ErrorAction Continue) 2>&1
         if ($err) {
             Write-Error "Component `"Outlook`" and/or `"TCO`" is specified, but installation of Microsoft Office is not found. $err"
             return
@@ -7342,7 +7361,7 @@ function Collect-OutlookInfo {
     }
 
     if (-not (Test-Path $Path -ErrorAction Stop)) {
-        New-Item -ItemType Directory $Path -ErrorAction Stop | Out-Null
+        $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
 
     if (-not $SkipAutoUpdate) {
@@ -7371,7 +7390,7 @@ function Collect-OutlookInfo {
     # Create a temporary folder to store data.
     $Path = Resolve-Path -LiteralPath $Path
     $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
-    New-Item $tempPath -ItemType directory -ErrorAction Stop | Out-Null
+    $null = New-Item $tempPath -ItemType directory -ErrorAction Stop
 
     # Start logging.
     Open-Log -Path (Join-Path $tempPath 'Log.txt') -AutoFlush:$AutoFlush -ErrorAction Stop
@@ -7386,7 +7405,7 @@ function Collect-OutlookInfo {
     foreach ($paramName in $PSBoundParameters.Keys) {
         $var = Get-Variable $paramName -ErrorAction SilentlyContinue
         if ($var) {
-            $sb.Append("$($var.Name):$($var.Value -join ', '); ") | Out-Null
+            $null = $sb.Append("$($var.Name):$($var.Value -join ', '); ")
         }
     }
     Write-Log "Parameters $($sb.ToString())"
@@ -7507,7 +7526,7 @@ function Collect-OutlookInfo {
             Write-Progress -Status 'Starting Fiddler'
 
             if ($targetUser.Sid -eq $currentUser.Sid) {
-                Start-FiddlerCap -Path $Path -ErrorAction Stop | Out-Null
+                $null = Start-FiddlerCap -Path $Path -ErrorAction Stop
                 Write-Warning "FiddlerCap has started. Please manually configure and start capture."
             }
             else {
@@ -7563,7 +7582,7 @@ function Collect-OutlookInfo {
 
                 while ($true) {
                     Start-PSR -Path $path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')" -UseJob
-                    $psrStartedEvent.Set() | Out-Null
+                    $null = $psrStartedEvent.Set()
                     $canceled = $cancelToken.WaitHandle.WaitOne($waitInterval)
                     Stop-PSR -UseJob
 
@@ -7597,7 +7616,7 @@ function Collect-OutlookInfo {
                 }
             } -ArgumentList $psrPath, $psrCts.Token, $PsrRecycleInterval, $psrStartedEvent, ($LogFileMode -eq 'Circular')
 
-            $psrStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan) | Out-Null
+            $null = $psrStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan)
             $psrStarted = $true
         }
 
@@ -7627,7 +7646,7 @@ function Collect-OutlookInfo {
 
         if ($Component -contains 'Procmon') {
             Write-Progress -Status 'Starting Procmon'
-            Start-Procmon -Path (Join-Path $tempPath 'Procmon') -ProcmonSearchPath $Path -ErrorAction Stop | Out-Null
+            $null = Start-Procmon -Path (Join-Path $tempPath 'Procmon') -ProcmonSearchPath $Path -ErrorAction Stop
             $procmonStared = $true
         }
 
@@ -7692,7 +7711,7 @@ function Collect-OutlookInfo {
             $hungMonitorTask = Start-Task -ScriptBlock {
                 param($path, $timeout, $dumpCount, $cancelToken, $name, $monitorStartedEvent)
 
-                $monitorStartedEvent.Set() | Out-Null
+                $null = $monitorStartedEvent.Set()
 
                 # The target process may restart while being monitored. Keep monitoring until canceled (via hungDumpCts).
                 while ($true) {
@@ -7718,7 +7737,7 @@ function Collect-OutlookInfo {
                 }
             } -ArgumentList (Join-Path $tempPath 'HungDump'), $HungTimeoutSecond, $maxDumpFileCount, $hungDumpCts.Token, $HungMonitorTarget, $monitorStartedEvent
 
-            $monitorStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan) | Out-Null
+            $null = $monitorStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan)
             $hungDumpStarted = $true
         }
 
@@ -7769,7 +7788,7 @@ function Collect-OutlookInfo {
 
             # Read-Host is not used here because it'd block background tasks.
             Write-Host 'Hit enter to stop: ' -NoNewline
-            $host.UI.ReadLine() | Out-Null
+            $null = $host.UI.ReadLine()
         }
     }
     catch {
@@ -7957,7 +7976,7 @@ function Collect-OutlookInfo {
     $archiveName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
 
     if ($SkipArchive) {
-        Start-Job { param($tempPath, $archiveName) Rename-Item -LiteralPath $tempPath -NewName $archiveName } -ArgumentList $tempPath, $archiveName | Out-Null
+        $null = Start-Job { param($tempPath, $archiveName) Rename-Item -LiteralPath $tempPath -NewName $archiveName } -ArgumentList $tempPath, $archiveName
         return
     }
 
@@ -7965,7 +7984,7 @@ function Collect-OutlookInfo {
     Rename-Item $archive.ArchivePath -NewName "$archiveName$([IO.Path]::GetExtension($archive.ArchivePath))"
 
     if (Test-Path $tempPath) {
-        Start-Job { param($path) Remove-Item $path -Recurse -Force } -ArgumentList $tempPath | Out-Null
+        $null = Start-Job { param($path) Remove-Item $path -Recurse -Force } -ArgumentList $tempPath
     }
 
     Write-Host "The collected data is `"$(Join-Path $Path "$archiveName$([IO.Path]::GetExtension($archive.ArchivePath))")`"" -ForegroundColor Green
