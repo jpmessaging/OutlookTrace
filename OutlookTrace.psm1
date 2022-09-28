@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2022-09-15'
+$Version = 'v2022-09-28'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -2443,16 +2443,19 @@ function Save-OfficeRegistry {
         'HKCU\Software\Microsoft\AuthN' # for Alternate Login ID. https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/configuring-alternate-login-id
 
         # HKLM
-        'HKLM\Software\Microsoft\Office'
-        'HKLM\Software\WOW6432Node\Microsoft\Office'
-        'HKLM\Software\Microsoft\MSIPC'
-        'HKLM\Software\WOW6432Node\Microsoft\MSIPC'
+        'HKLM\SOFTWARE\Microsoft\Office'
+        'HKLM\SOFTWARE\WOW6432Node\Microsoft\Office'
+        'HKLM\SOFTWARE\Microsoft\MSIPC'
+        'HKLM\SOFTWARE\WOW6432Node\Microsoft\MSIPC'
+        'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp'
+        'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp'
+        'HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols'
 
         # Policies
         'HKCU\Software\Policies'
         'HKCU\Software\Wow6432Node\Policies'
-        'HKLM\Software\Policies'
-        'HKLM\Software\WOW6432Node\Policies'
+        'HKLM\SOFTWARE\Policies'
+        'HKLM\SOFTWARE\WOW6432Node\Policies'
     )
 
     $userRegRoot = Get-UserRegistryRoot $User -SkipRegistryPrefix
