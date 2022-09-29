@@ -3351,6 +3351,18 @@ function Get-OutlookProfile {
     $CLSID_OlkIMAP4Account = '{ED475412-B0D6-11D2-8C3B-00104B2A6676}'
     $CLSID_OlkMAPIAccount = '{ED475414-B0D6-11D2-8C3B-00104B2A6676}'
 
+    # Capone profile section (00020D0A-0000-0000-C000-000000000046) is profile-wide, not account specific.
+    # https://github.com/MicrosoftDocs/office-developer-client-docs/blob/main/docs/outlook/mapi/mapi-constants.md
+    $CaponeSectionGuid = '0a0d020000000000c000000000000046';
+    $PR_LAST_OFFLINESTATE_OFFLINE = '00030398'
+
+    # Note: enum keyword is only available from PowerShell v5. Unfortunately, for backward compatibility, I cannot use it.
+    $MapiOfflineState = @{
+        MAPIOFFLINE_STATE_OFFLINE      = 1
+        MAPIOFFLINE_STATE_ONLINE       = 2
+        MAPIOFFLINE_STATE_OFFLINE_MASK = 3
+    }
+
     $defaultProfile = $null
 
     Join-Path $userRegRoot 'Software\Microsoft\Office\' `
@@ -3398,6 +3410,16 @@ function Get-OutlookProfile {
                 }
             )
 
+            # Retrieve Capone section properties
+            $caponeSection = Join-Path $prof.PSPath $CaponeSectionGuid | Get-ItemProperty -Name $PR_LAST_OFFLINESTATE_OFFLINE -ErrorAction SilentlyContinue 
+            $offlineState = [BitConverter]::ToInt32($caponeSection.$PR_LAST_OFFLINESTATE_OFFLINE, 0) -band $MapiOfflineState.MAPIOFFLINE_STATE_OFFLINE_MASK
+
+            $offlineState = 
+            switch ($offlineState) {
+                $MapiOfflineState.MAPIOFFLINE_STATE_OFFLINE { 'Offline'; break }
+                $MapiOfflineState.MAPIOFFLINE_STATE_ONLINE  { 'Online'; break }
+            }
+
             [PSCustomObject]@{
                 User                          = $User
                 Name                          = $profileName
@@ -3408,6 +3430,7 @@ function Get-OutlookProfile {
                 CachedMode                    = $defaultAccount.CachedMode
                 DownloadPublicFolderFavorites = $defaultAccount.DownloadPublicFolderFavorites
                 DownloadSharedFolders         = $defaultAccount.DownloadSharedFolders
+                OfflineState                  = $offlineState
             }
 
             $prof.Close()
