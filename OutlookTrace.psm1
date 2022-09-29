@@ -3411,13 +3411,17 @@ function Get-OutlookProfile {
             )
 
             # Retrieve Capone section properties
-            $caponeSection = Join-Path $prof.PSPath $CaponeSectionGuid | Get-ItemProperty -Name $PR_LAST_OFFLINESTATE_OFFLINE -ErrorAction SilentlyContinue 
-            $offlineState = [BitConverter]::ToInt32($caponeSection.$PR_LAST_OFFLINESTATE_OFFLINE, 0) -band $MapiOfflineState.MAPIOFFLINE_STATE_OFFLINE_MASK
+            $caponeSection = Join-Path $prof.PSPath $CaponeSectionGuid | Get-ItemProperty -Name $PR_LAST_OFFLINESTATE_OFFLINE -ErrorAction SilentlyContinue
+            $offlineState = 'Unknown'
 
-            $offlineState = 
-            switch ($offlineState) {
-                $MapiOfflineState.MAPIOFFLINE_STATE_OFFLINE { 'Offline'; break }
-                $MapiOfflineState.MAPIOFFLINE_STATE_ONLINE  { 'Online'; break }
+            if ($caponeSection) {
+                $offlineState = [BitConverter]::ToInt32($caponeSection.$PR_LAST_OFFLINESTATE_OFFLINE, 0) -band $MapiOfflineState.MAPIOFFLINE_STATE_OFFLINE_MASK
+
+                $offlineState =
+                switch ($offlineState) {
+                    $MapiOfflineState.MAPIOFFLINE_STATE_OFFLINE { 'Offline'; break }
+                    $MapiOfflineState.MAPIOFFLINE_STATE_ONLINE  { 'Online'; break }
+                }
             }
 
             [PSCustomObject]@{
