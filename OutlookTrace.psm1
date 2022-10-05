@@ -2818,7 +2818,7 @@ function Get-WinInetProxy {
     )
 
     if (-not $User) {
-        $User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name.Split('\')[1]
+        $User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     }
 
     # For now, I want to include the result of WinHttpGetIEProxyConfigForCurrentUser because it automatically gets the WinInet proxy setting of "acitve" connection.
