@@ -3897,7 +3897,7 @@ function Get-OfficeModuleInfo {
         if (${env:CommonProgramFiles(x86)}) {
             Join-Path ${env:CommonProgramFiles(x86)} 'microsoft shared'
         }
-    )
+    ) | Select-Object -Unique
 
     Write-Log "officePaths are $($officePaths -join ',')"
 
