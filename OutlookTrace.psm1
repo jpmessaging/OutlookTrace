@@ -3039,7 +3039,7 @@ function Get-ProxyAutoConfig {
             $result.Add('Pac', $bodyString)
         }
         catch {
-            Write-Error -Message "Downloading a PAC file failed from $Url. $_" -Exception $_.Exception
+            Write-Error -Message "Failed to download a PAC file from $Url" -Exception $_.Exception
         }
         finally {
             if ($response) { $response.Dispose() }
@@ -3351,9 +3351,9 @@ function Get-OutlookProfile {
     $CLSID_OlkIMAP4Account = '{ED475412-B0D6-11D2-8C3B-00104B2A6676}'
     $CLSID_OlkMAPIAccount = '{ED475414-B0D6-11D2-8C3B-00104B2A6676}'
 
-    # Capone profile section (00020D0A-0000-0000-C000-000000000046) is profile-wide, not account specific.
+    # Outlook Global profile section ("Capone") (00020D0A-0000-0000-C000-000000000046) is profile-wide, not account specific.
     # https://github.com/MicrosoftDocs/office-developer-client-docs/blob/main/docs/outlook/mapi/mapi-constants.md
-    $CaponeSectionGuid = '0a0d020000000000c000000000000046';
+    $GlobalSectionGuid = '0a0d020000000000c000000000000046';
     $PR_LAST_OFFLINESTATE_OFFLINE = '00030398'
 
     # Note: enum keyword is only available from PowerShell v5. Unfortunately, for backward compatibility, I cannot use it.
@@ -3410,12 +3410,12 @@ function Get-OutlookProfile {
                 }
             )
 
-            # Retrieve Capone section properties
-            $caponeSection = Join-Path $prof.PSPath $CaponeSectionGuid | Get-ItemProperty -Name $PR_LAST_OFFLINESTATE_OFFLINE -ErrorAction SilentlyContinue
+            # Retrieve Global section properties
+            $globalSection = Join-Path $prof.PSPath $GlobalSectionGuid | Get-ItemProperty -Name $PR_LAST_OFFLINESTATE_OFFLINE -ErrorAction SilentlyContinue
             $offlineState = 'Unknown'
 
-            if ($caponeSection) {
-                $offlineState = [BitConverter]::ToInt32($caponeSection.$PR_LAST_OFFLINESTATE_OFFLINE, 0) -band $MapiOfflineState.MAPIOFFLINE_STATE_OFFLINE_MASK
+            if ($globalSection) {
+                $offlineState = [BitConverter]::ToInt32($globalSection.$PR_LAST_OFFLINESTATE_OFFLINE, 0) -band $MapiOfflineState.MAPIOFFLINE_STATE_OFFLINE_MASK
 
                 $offlineState =
                 switch ($offlineState) {
@@ -7268,6 +7268,65 @@ function Get-SessionManager {
     | Select-Object -Property '*' -ExcludeProperty 'PSParentPath', 'PSProvider'
 }
 
+function Set-ThreadCulture {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Culture
+    )
+
+    try {
+        $newCulture = [System.Globalization.CultureInfo]::CreateSpecificCulture($Culture)
+
+        # If CurrentUICulture is already the target culture, no need to change.
+        if ($newCulture -eq [System.Threading.Thread]::CurrentThread.CurrentUICulture) {
+            Write-Log "CurrentUICulture is already $Culture"
+            return
+        }
+
+        # Save the current culture, but do not overwrite the saved value so that it can be reset to the original value later.
+        if (-not $Script:SavedCulture) {
+            $Script:SavedCulture = [System.Threading.Thread]::CurrentThread.CurrentCulture
+        }
+
+        if (-not $Script:SavedUICulture) {
+            $Script:SavedUICulture = [System.Threading.Thread]::CurrentThread.CurrentUICulture
+        }
+
+        [System.Threading.Thread]::CurrentThread.CurrentCulture = $newCulture
+        [System.Threading.Thread]::CurrentThread.CurrentUICulture = $newCulture
+
+        # Changing CurrentThread.CurrentCulture & CurrentUICulture is not enough. NativeCultureResolver.m_Culture & m_uiCulture must be also changed.
+        [System.Reflection.Assembly]::Load('System.Management.Automation').GetType('Microsoft.PowerShell.NativeCultureResolver').GetField('m_Culture', 'NonPublic, Static').SetValue($null, $newCulture)
+        [System.Reflection.Assembly]::Load('System.Management.Automation').GetType('Microsoft.PowerShell.NativeCultureResolver').GetField('m_uiCulture', 'NonPublic, Static').SetValue($null, $newCulture)
+    }
+    catch {
+        Write-Error -Message "Set-ThreadCulture failed" -Exception $_.Exception
+    }
+}
+
+function Reset-ThreadCulture {
+    [CmdletBinding()]
+    param()
+
+    try {
+        if ($Script:SavedCulture) {
+            [System.Threading.Thread]::CurrentThread.CurrentCulture = $Script:SavedCulture
+            [System.Reflection.Assembly]::Load('System.Management.Automation').GetType('Microsoft.PowerShell.NativeCultureResolver').GetField('m_Culture', 'NonPublic, Static').SetValue($null, $Script:SavedCulture)
+            $Script:SavedCulture = $null
+        }
+
+        if ($Script:SavedUICulture) {
+            [System.Threading.Thread]::CurrentThread.CurrentUICulture = $Script:SavedUICulture
+            [System.Reflection.Assembly]::Load('System.Management.Automation').GetType('Microsoft.PowerShell.NativeCultureResolver').GetField('m_uiCulture', 'NonPublic, Static').SetValue($null, $Script:SavedUICulture)
+            $Script:SavedUICulture = $null
+        }
+    }
+    catch {
+        Write-Error -Message "Reset-ThreadCulture failed" -Exception $_.Exception
+    }
+}
+
 <#
 .SYNOPSIS
     Collect Microsoft Office Outlook related configuration & traces
@@ -7390,6 +7449,12 @@ function Collect-OutlookInfo {
         }
     }
 
+    # Current user must be the target user for Invoke-WamSignOut to work propertly. Invoke-WamSignOut will be called later.
+    if ($WamSignOut -and $targetUser.Sid -ne $currentUser.Sid) {
+        Write-Error "To use `"-WamSignOut`" parameter, the target user ($($targetUser.Name)) must run the script. Currently $($currentUser.Name) is running the script.`nThe target user can also use Invoke-WamSingout manually without admin privilege."
+        return
+    }
+
     if (-not (Test-Path $Path -ErrorAction Stop)) {
         $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
@@ -7439,6 +7504,9 @@ function Collect-OutlookInfo {
         }
     }
     Write-Log "Parameters $($sb.ToString())"
+
+    # Set thread culture to en-US for consitent logging.
+    Set-ThreadCulture 'en-US' 2>&1 | Write-Log
 
     # To use Start-Task, make sure to open runspaces first and close it when finished.
     # Currently MaxRunspaces is 8 or more because there are 8 tasks at most. 3 of them, outlookMonitorTask, psrTask, and hungMonitorTask are long running.
@@ -7999,6 +8067,7 @@ function Collect-OutlookInfo {
         }
 
         Write-Progress -Completed
+        Reset-ThreadCulture 2>&1 | Write-Log
         Close-TaskRunspace
         Close-Log
     }
