@@ -643,7 +643,7 @@ function Open-Log {
         if ($AutoFlush) {
             $Script:logWriter.AutoFlush = $true
         }
-        $Script:logWriter.WriteLine("date-time,thread_relative_delta,thread,function,info")
+        $Script:logWriter.WriteLine("datetime,thread_relative_delta,thread,function,category,message")
     }
     catch {
         Write-Error -ErrorRecord $_
@@ -656,13 +656,17 @@ function Write-Log {
         [Parameter(ValueFromPipeline = $true)]
         [string]$Message,
         [Parameter(ValueFromPipeline = $true)]
-        [System.Management.Automation.ErrorRecord]$ErrorRecord
+        [System.Management.Automation.ErrorRecord]$ErrorRecord,
+        [ValidateSet('Information', 'Warning', 'Error')]
+        $Category = 'Information',
+        # Output the given ErrorRecord
+        [Switch]$PassThru
     )
 
     process {
         # If ErrorRecord is provided, use it.
         if ($ErrorRecord) {
-            $Message += "$(if ($Message) {'; '})[ErrorRecord] Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
+            $Message = "$Message [ErrorRecord] ExceptionType: $($ErrorRecord.Exception.GetType().Name), Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
         }
 
         # Ignore null or an empty string.
@@ -700,6 +704,15 @@ function Write-Log {
         $null = $sb.Append($delta).Append(',')
         $null = $sb.Append([System.Threading.Thread]::CurrentThread.ManagedThreadId).Append(',')
         $null = $sb.Append($caller).Append(',')
+
+        $categoryEmoji = switch ($Category) {
+            'Information' { $Script:Emoji.Information; break }
+            'Warning' { $Script:Emoji.Warning; break }
+            'Error' { $Script:Emoji.Error; break }
+        }
+
+        $null = $sb.Append($categoryEmoji).Append(',')
+
         $null = $sb.Append('"').Append($Message.Replace('"', "'")).Append('"')
 
         # Protect from concurrent write
@@ -713,6 +726,10 @@ function Write-Log {
 
         $sb = $null
         $Script:lastLogTime = $currentTime
+
+        if ($PassThru) {
+            $ErrorRecord
+        }
     }
 }
 
@@ -1841,9 +1858,9 @@ function Stop-NetshTrace {
         }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
-        Write-Log "Failed to stop netsh trace ($SessionName). exit code: $LASTEXITCODE; stdout: $stdout; error: $err"
+        Write-Log "Failed to stop netsh trace ($SessionName). exit code: $LASTEXITCODE; stdout: $stdout; error: $err" -Category Warning
         Write-Log "Stopping with Stop-EtwSession"
-        Stop-EtwSession -SessionName $SessionName -ErrorAction SilentlyContinue
+        $null = Stop-EtwSession -SessionName $SessionName
     }
 
     if ($reportMode -ne 'None') {
@@ -1871,7 +1888,7 @@ function Stop-EtwSession {
     )
 
     try {
-        return [Win32.Advapi32]::StopTrace($SessionName)
+        [Win32.Advapi32]::StopTrace($SessionName)
     }
     catch {
         Write-Error -Message "StopTrace for $SessionName failed. $_" -Exception $_.Exception
@@ -2530,6 +2547,8 @@ function Save-OSConfiguration {
     & {
         @{ScriptBlock = { Get-CimInstance -Class Win32_ComputerSystem }; FileName = 'Win32_ComputerSystem.xml' }
         @{ScriptBlock = { Get-CimInstance -Class Win32_OperatingSystem }; FileName = 'Win32_OperatingSystem.xml' }
+        @{ScriptBlock = { Get-CimInstance -Class Win32_Processor }; FileName = 'Win32_Processor.xml' }
+        @{ScriptBlock = { Get-ComputerInfo } }
         @{ScriptBlock = { Get-WinHttpDefaultProxy } }
         @{ScriptBlock = { Get-NLMConnectivity } }
         @{ScriptBlock = { Get-MeteredNetworkCost } }
@@ -2671,11 +2690,11 @@ function Invoke-ScriptBlock {
         $err = $($result = & $ScriptBlock @ArgumentList) 2>&1
 
         foreach ($e in $err) {
-            Write-Log "{$ScriptBlock} had a non-terminating error. $e" -ErrorRecord $e
+            Write-Log "{$ScriptBlock} had a non-terminating error. $e" -ErrorRecord $e -Category Warning
         }
     }
     catch {
-        Write-Log "{$ScriptBlock} threw a terminating error. $_" -ErrorRecord $_
+        Write-Log "{$ScriptBlock} threw a terminating error. $_" -ErrorRecord $_ -Category Error
     }
 
     $sw.Stop()
@@ -4130,38 +4149,6 @@ function Stop-SavingOfficeModuleInfo_PSJob {
     }
 }
 
-function Save-MSInfo32 {
-    [CmdletBinding()]
-    param(
-        [parameter(Mandatory = $true)]
-        $Path
-    )
-
-    if (-not (Test-Path $Path -ErrorAction Stop)) {
-        $null = New-Item -ItemType Directory $Path -ErrorAction Stop
-    }
-
-    $filePath = Join-Path $Path -ChildPath "$($env:COMPUTERNAME).nfo"
-
-    $processName = "msinfo32.exe"
-    $process = $null
-
-    try {
-        $process = Start-Process $processName -ArgumentList "/nfo $filePath" -Wait -PassThru
-        if ($process.ExitCode -ne 0) {
-            Write-Error "$processName failed. exit code = $($process.ExitCode)"
-        }
-    }
-    catch {
-        Write-Error -Message "Failed to start $processName.`n$_" -Exception $_.Exception
-    }
-    finally {
-        if ($process) {
-            $process.Dispose()
-        }
-    }
-}
-
 function Start-CapiTrace {
     [CmdletBinding(PositionalBinding = $false)]
     param(
@@ -4512,20 +4499,23 @@ function Stop-Procmon {
     param()
 
     $process = @(Get-Process -Name Procmon*)
+
     if ($process.Count -eq 0) {
         Write-Error "Cannot find procmon or procmon64"
         return
     }
 
     $procmonFile = $process[0].Path
+
     foreach ($p in $process) {
         $p.Dispose()
     }
 
     # Stop procmon
     Write-Log "Stopping procmon"
-    Write-Progress -Activity "Stopping procmon" -Status "Please wait" -PercentComplete -1
+
     $process = $null
+
     try {
         $err = $($process = Invoke-Command {
                 $ErrorActionPreference = "Continue"
@@ -4546,8 +4536,6 @@ function Stop-Procmon {
             $process.Dispose()
         }
     }
-
-    Write-Progress -Activity "Stopping procmon" -Status "Done" -Completed
 }
 
 function Start-TcoTrace {
@@ -6733,10 +6721,10 @@ function Get-IMProvider {
     }
     catch {
         if (-not $imProvider) {
-            Write-Error -Message "Failed to create an instance of $defaultIMApp (CLSID: {$clsid}).`n$($_.Exception.Message)" -Exception $_.Exception
+            Write-Error -Message "Failed to create an instance of $defaultIMApp (CLSID: {$clsid})" -Exception $_.Exception
         }
         elseif ($pIUCOfficeIntegration -eq [IntPtr]::Zero) {
-            Write-Error -Message "Failed to obtain IUCOfficeIntegration interface.`n$($_.Exception.Message)" -Exception $_.Exception
+            Write-Error -Message "Failed to obtain IUCOfficeIntegration interface" -Exception $_.Exception
         }
         else {
             Write-Error -ErrorRecord $_
@@ -7504,45 +7492,45 @@ function Collect-OutlookInfo {
         }
     }
     Write-Log "Parameters $($sb.ToString())"
+    
+    try {
+        # Set thread culture to en-US for consitent logging.
+        Set-ThreadCulture 'en-US' 2>&1 | Write-Log -Category Error
 
-    # Set thread culture to en-US for consitent logging.
-    Set-ThreadCulture 'en-US' 2>&1 | Write-Log
+        # To use Start-Task, make sure to open runspaces first and close it when finished.
+        # Currently MaxRunspaces is 8 or more because there are 8 tasks at most. 3 of them, outlookMonitorTask, psrTask, and hungMonitorTask are long running.
+        # Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(8, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
+        $vars = 'logWriter', 'PSDefaultParameterValues', 'MyModulePath', 'Emoji' | Get-Variable
+        Open-TaskRunspace -Variables $vars -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(8, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
 
-    # To use Start-Task, make sure to open runspaces first and close it when finished.
-    # Currently MaxRunspaces is 8 or more because there are 8 tasks at most. 3 of them, outlookMonitorTask, psrTask, and hungMonitorTask are long running.
-    # Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(8, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
-
-    $vars = 'logWriter', 'PSDefaultParameterValues', 'MyModulePath' | Get-Variable
-    Open-TaskRunspace -Variables $vars -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(8, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
-
-    # Configure log file mode and max file size for ETW traces (OutlookTrace, WAM, LDAP, and CAPI)
-    $PSDefaultParameterValues['Start-*Trace:LogFileMode'] = $LogFileMode
-    if ($PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
-        $PSDefaultParameterValues['Start-*Trace:MaxFileSizeMB'] = $MaxFileSizeMB
-    }
-    else {
-        # MaxFileSizeMB is not specified by the user. Use default value depending on the log mode.
-        if ($LogFileMode -eq 'NewFile') {
-            $PSDefaultParameterValues['Start-*Trace:MaxFileSizeMB'] = 256
+        # Configure log file mode and max file size for ETW traces (OutlookTrace, WAM, LDAP, and CAPI)
+        $PSDefaultParameterValues['Start-*Trace:LogFileMode'] = $LogFileMode
+        if ($PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
+            $PSDefaultParameterValues['Start-*Trace:MaxFileSizeMB'] = $MaxFileSizeMB
         }
         else {
-            $PSDefaultParameterValues['Start-*Trace:MaxFileSizeMB'] = 2048
+            # MaxFileSizeMB is not specified by the user. Use default value depending on the log mode.
+            if ($LogFileMode -eq 'NewFile') {
+                $PSDefaultParameterValues['Start-*Trace:MaxFileSizeMB'] = 256
+            }
+            else {
+                $PSDefaultParameterValues['Start-*Trace:MaxFileSizeMB'] = 2048
+            }
         }
-    }
 
-    # Sign out of all WAM accounts.
-    if ($WamSignOut) {
-        Invoke-WamSignOut -Force 2>&1 | Write-Log
-    }
+        # Sign out of all WAM accounts.
+        if ($WamSignOut) {
+            Invoke-WamSignOut -Force -ErrorAction Stop
+        }
 
-    # Enable PageHeap for outlook.exe
-    if ($EnablePageHeap) {
-        Enable-PageHeap -ProcessName 'outlook.exe' 2>&1 | Write-Log
-        Write-Log "Page Heap is enabled for outlook.exe."
-    }
+        # Enable PageHeap for outlook.exe
+        if ($EnablePageHeap) {
+            Enable-PageHeap -ProcessName 'outlook.exe' -ErrorAction Stop
+            Write-Log "Page Heap is enabled for outlook.exe."
+        }
 
-    Write-Log "Starting traces"
-    try {
+        Write-Log "Starting traces"
+
         if ($Component -contains 'Configuration') {
             # Sub directories
             $ConfigDir = Join-Path $tempPath 'Configuration'
@@ -7559,10 +7547,6 @@ function Collect-OutlookInfo {
             Write-Progress -PercentComplete 0
 
             # First start tasks that might take a while.
-
-            # MSInfo32 takes a long time. Currently disabled.
-            # $msinfo32Task = Start-Task { param($path) Save-MSInfo32 -Path $path } -ArgumentList $OSDir
-
             Write-Log "Starting officeModuleInfoTask."
             $officeModuleInfoTaskCts = New-Object System.Threading.CancellationTokenSource
             $officeModuleInfoTask = Start-Task { param($path, $token) Save-OfficeModuleInfo -Path $path -CancellationToken $token } -ArgumentList $OfficeDir, $officeModuleInfoTaskCts.Token
@@ -7642,11 +7626,11 @@ function Collect-OutlookInfo {
             # When netsh trace is run for the first time, it does not capture packets (even with "capture=yes").
             # To workaround, netsh is started and stopped immediately.
             $tempNetshName = 'netsh_test'
-            Start-NetshTrace -Path (Join-Path $tempPath $tempNetshName) -FileName "$tempNetshName.etl" -ReportMode 'None' -ErrorAction SilentlyContinue
-            Stop-NetshTrace -ErrorAction SilentlyContinue
+            Start-NetshTrace -Path (Join-Path $tempPath $tempNetshName) -FileName "$tempNetshName.etl" -ReportMode 'None' -ErrorAction Stop
+            Stop-NetshTrace -ErrorAction Stop
             Remove-Item (Join-Path $tempPath $tempNetshName) -Recurse -Force -ErrorAction SilentlyContinue
 
-            Start-NetshTrace -Path (Join-Path $tempPath 'Netsh') -ReportMode $NetshReportMode
+            Start-NetshTrace -Path (Join-Path $tempPath 'Netsh') -ReportMode $NetshReportMode -ErrorAction Stop
             $netshTraceStarted = $true
         }
 
@@ -7654,7 +7638,7 @@ function Collect-OutlookInfo {
             Write-Progress -Status 'Starting Outlook trace'
             # Stop a lingering session if any.
             Stop-OutlookTrace -ErrorAction SilentlyContinue
-            Start-OutlookTrace -Path (Join-Path $tempPath 'Outlook')
+            Start-OutlookTrace -Path (Join-Path $tempPath 'Outlook') -ErrorAction Stop
             $outlookTraceStarted = $true
         }
 
@@ -7725,7 +7709,7 @@ function Collect-OutlookInfo {
 
         if ($Component -contains 'CAPI') {
             Enable-EventLog 'Microsoft-Windows-CAPI2/Operational'
-            Start-CAPITrace -Path (Join-Path $tempPath 'CAPI')
+            Start-CAPITrace -Path (Join-Path $tempPath 'CAPI') -ErrorAction Stop
             $capiTraceStarted = $true
         }
 
@@ -7756,7 +7740,7 @@ function Collect-OutlookInfo {
 
         if ($Component -contains 'Performance') {
             Write-Progress -Status 'Starting performance trace'
-            Start-PerfTrace -Path (Join-Path $tempPath 'Performance')
+            Start-PerfTrace -Path (Join-Path $tempPath 'Performance') -ErrorAction Stop
             $perfStarted = $true
         }
 
@@ -7831,7 +7815,7 @@ function Collect-OutlookInfo {
                     }
 
                     Write-Log "hungMonitorTask has found $name (PID $id). Starting hung window monitoring."
-                    $(Save-HungDump -Path $path -ProcessId $id -DumpCount $dumpCount -TimeoutSecond $timeout -CancellationToken $cancelToken) 2>&1 | Write-Log
+                    Save-HungDump -Path $path -ProcessId $id -DumpCount $dumpCount -TimeoutSecond $timeout -CancellationToken $cancelToken 2>&1 | Write-Log -Category Error -PassThru
                 }
             } -ArgumentList (Join-Path $tempPath 'HungDump'), $HungTimeoutSecond, $maxDumpFileCount, $hungDumpCts.Token, $HungMonitorTarget, $monitorStartedEvent
 
@@ -7888,11 +7872,13 @@ function Collect-OutlookInfo {
             Write-Host 'Hit enter to stop: ' -NoNewline
             $null = $host.UI.ReadLine()
         }
+
+        $startSuccess = $true
     }
     catch {
         # Log & save the exception so that I can analyze later. Then rethrow.
-        Write-Log "Exception occured. $_"
-        $_ | Export-CliXml (Join-Path $tempPath 'Exception.xml')
+        Write-Log "Terminating Error occured while staring traces" -ErrorRecord $_ -Category Error
+        Export-CliXml -InputObject $_ -Path (Join-Path $tempPath 'Exception.xml')
         throw
     }
     finally {
@@ -7932,12 +7918,12 @@ function Collect-OutlookInfo {
 
         if ($netshTraceStarted) {
             Write-Progress -Status 'Stopping Netsh trace'
-            Stop-NetshTrace
+            Stop-NetshTrace 2>&1 | Write-Log -Category Error -PassThru
         }
 
         if ($outlookTraceStarted) {
             Write-Progress -Status 'Stopping Outlook trace'
-            Stop-OutlookTrace
+            Stop-OutlookTrace 2>&1 | Write-Log -Category Error -PassThru
         }
 
         if ($ldapTraceStarted) {
@@ -7963,7 +7949,7 @@ function Collect-OutlookInfo {
 
         if ($procmonStared) {
             Write-Progress -Status 'Stopping Procmon'
-            Stop-Procmon
+            Stop-Procmon 2>&1 | Write-Log -Category Error -PassThru
             # Remove procmon
             # if ($procmonResult -and $procmonResult.ProcmonZipDownloaded) {
             #     Remove-Item $procmonResult.ProcmonFolderPath -Force -Recurse
@@ -7976,12 +7962,12 @@ function Collect-OutlookInfo {
         }
 
         if ($perfStarted) {
-            Stop-PerfTrace
+            Stop-PerfTrace 2>&1 | Write-Log -Category Error -PassThru
         }
 
         if ($wprStarted) {
             Write-Progress -Status 'Stopping WPR trace'
-            Stop-Wpr -Path (Join-Path $tempPath 'WPR')
+            Stop-Wpr -Path (Join-Path $tempPath 'WPR') | Write-Log -Category Error -PassThru
         }
 
         if ($hungDumpStarted) {
@@ -8000,7 +7986,7 @@ function Collect-OutlookInfo {
         if ($psrStarted) {
             Write-Progress -Status "Stopping PSR"
             $psrCts.Cancel()
-            $(Receive-Task $psrTask -AutoRemoveTask) 2>&1 | Write-Log
+            Receive-Task $psrTask -AutoRemoveTask 2>&1 | Write-Log -Category Error -PassThru
         }
 
         # Wait for the tasks started earlier and save the event logs
@@ -8008,28 +7994,30 @@ function Collect-OutlookInfo {
             if ($outlookMonitorTask) {
                 Write-Progress -Status 'Stopping monitor task'
                 $outlookMonitorTaskCts.Cancel()
-                $($outlookMonitorTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
+                $outlookMonitorTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
             }
 
-            Write-Progress -Status 'Saving event logs'
-            $(Save-EventLog -Path $EventDir) 2>&1 | Write-Log
-            Invoke-ScriptBlock { param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user -All } -ArgumentList $targetUser, $MSIPCDir
+            if ($startSuccess) {
+                Write-Progress -Status 'Saving event logs'
+                Save-EventLog -Path $EventDir 2>&1 | Write-Log -Category Error
+                Invoke-ScriptBlock { param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user -All } -ArgumentList $targetUser, $MSIPCDir 2>&1 | Write-Log -Category Error
+            }
 
             if ($osConfigurationTask) {
                 Write-Progress -Status 'Saving OS configuration'
-                $($osConfigurationTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
+                $osConfigurationTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 Write-Log "osConfigurationTask is complete."
             }
 
             if ($officeRegistryTask) {
                 Write-Progress -Status 'Saving Office Registry'
-                $($officeRegistryTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
+                $officeRegistryTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 Write-Log "officeRegistryTask is complete."
             }
 
             if ($networkInfoTask) {
                 Write-Progress -Status 'Saving network info'
-                $($networkInfoTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
+                $networkInfoTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 Write-Log "networkInfoTask is complete."
             }
 
@@ -8045,30 +8033,25 @@ function Collect-OutlookInfo {
                     $officeModuleInfoTaskCts.Cancel()
                 }
 
-                $($officeModuleInfoTask | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
+                $officeModuleInfoTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 Write-Log "officeRegistryTask is complete."
             }
 
-            if ($msinfo32Task) {
-                Write-Progress -Status 'Saving MSInfo32'
-                $($msinfo32Task | Receive-Task -AutoRemoveTask) 2>&1 | Write-Log
-            }
-
             # Save process list again after traces
-            if ($Component.Count -gt 1) {
+            if ($startSuccess -and $Component.Count -gt 1) {
                 Write-Progress -Status 'Saving process list'
-                Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir
+                Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir 2>&1 | Write-Log -Category Error
             }
         }
 
         if ($EnablePageHeap) {
-            Disable-PageHeap -ProcessName 'outlook.exe'
+            Disable-PageHeap -ProcessName 'outlook.exe' 2>&1 | Write-Log -Category Error -PassThru
             Write-Log "Page Heap disabled."
         }
 
         Write-Progress -Completed
-        Reset-ThreadCulture 2>&1 | Write-Log
-        Close-TaskRunspace
+        Reset-ThreadCulture 2>&1 | Write-Log -Category Error
+        Close-TaskRunspace 2>&1 | Write-Log -Category Error
         Close-Log
     }
 
@@ -8103,6 +8086,13 @@ if ($PSDefaultParameterValues -ne $null -and -not $PSDefaultParameterValues.Cont
     $PSDefaultParameterValues.Add("Set-Content:Encoding", 'utf8')
 }
 
+# Some emoji chars (https://unicode.org/emoji/charts/full-emoji-list.html)
+$Script:Emoji = @{
+    Information = [Char]::ConvertFromUtf32(0x2139)
+    Warning     = [Char]::ConvertFromUtf32(0x26A0)
+    Error       = [Char]::ConvertFromUtf32(0x26D4) # This is actually "NoEntry" emoji
+}
+
 # Add type for Win32 interop
 if (-not ('Win32.Kernel32' -as [type])) {
     Add-Type -TypeDefinition $Win32Interop
@@ -8111,4 +8101,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Save-MSInfo32, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Collect-OutlookInfo
