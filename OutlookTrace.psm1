@@ -2666,7 +2666,7 @@ function Save-NetworkInfo {
 
 <#
 .DESCRIPTION
-Run a given script block. If Path is given, save the result there.
+Run a given script block. If Path is given, save the result there. Any errors (terminating or non-terminating) will be written by Write-Log.
 If FileName is given, it's used for the file name for saving the result. If its extension is not ".xml", Set-Content will be used. Otherwise Export-CliXml will be used.
 If FileName is not give, the file name will be auto-decided. If the command is an application, then Set-Content will be used. Otherwise Export-CliXml will be used.
 #>
@@ -2685,6 +2685,10 @@ function Invoke-ScriptBlock {
     $result = $null
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
 
+    # Suppress progress that may be written by the script block
+    $savedProgressPreference = $ProgressPreference
+    $ProgressPreference = "SilentlyContinue";
+
     try {
         # To redirect error, call operator (&) is used, instead of $ScriptBlock.InvokeReturnAsIs().
         $err = $($result = & $ScriptBlock @ArgumentList) 2>&1
@@ -2695,6 +2699,9 @@ function Invoke-ScriptBlock {
     }
     catch {
         Write-Log "{$ScriptBlock} threw a terminating error. $_" -ErrorRecord $_ -Category Error
+    }
+    finally {
+        $ProgressPreference = $savedProgressPreference
     }
 
     $sw.Stop()
@@ -2759,11 +2766,9 @@ function Invoke-ScriptBlock {
     }
 
     # Dispose if necessary
-    $result | & {
-        process {
-            if ($_.Dispose) {
-                $_.Dispose()
-            }
+    foreach ($_ in $result) {
+        if ($_.Dispose) {
+            $_.Dispose()
         }
     }
 }
@@ -7492,7 +7497,7 @@ function Collect-OutlookInfo {
         }
     }
     Write-Log "Parameters $($sb.ToString())"
-    
+
     try {
         # Set thread culture to en-US for consitent logging.
         Set-ThreadCulture 'en-US' 2>&1 | Write-Log -Category Error
