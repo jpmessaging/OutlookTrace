@@ -2694,11 +2694,11 @@ function Invoke-ScriptBlock {
         $err = $($result = & $ScriptBlock @ArgumentList) 2>&1
 
         foreach ($e in $err) {
-            Write-Log "{$ScriptBlock} had a non-terminating error. $e" -ErrorRecord $e -Category Warning
+            Write-Log "{$ScriptBlock} had a non-terminating error" -ErrorRecord $e -Category Warning
         }
     }
     catch {
-        Write-Log "{$ScriptBlock} threw a terminating error. $_" -ErrorRecord $_ -Category Error
+        Write-Log "{$ScriptBlock} threw a terminating error" -ErrorRecord $_ -Category Error
     }
     finally {
         $ProgressPreference = $savedProgressPreference
@@ -3399,6 +3399,23 @@ function Get-OutlookProfile {
                     | Select-Object -ExpandProperty 'DefaultProfile'
                 }
 
+                # Cache mode can be enabled/disabled by registry values:
+                # HKCU\Software\Policies\Microsoft\office\16.0\outlook\cached mode\enabled
+                # HKCU\Software\Microsoft\office\16.0\outlook\cached mode\enabled
+
+                # Insert 'Policies' in the path and read registry value.
+                $cachedModePolicy = Join-Path $key.PSPath.SubString(0, $key.PSPath.IndexOf('Microsoft\Office')) 'Policies' `
+                | Join-Path -ChildPath $key.PSPath.SubString($key.PSPath.IndexOf('Microsoft\Office')) `
+                | Join-Path -ChildPath 'outlook\cached mode' `
+                | Get-ItemProperty -Name 'enabled' -ErrorAction SilentlyContinue `
+                | Select-Object -ExpandProperty 'enabled'
+
+                if ($null -eq $cachedModePolicy) {
+                    $cachedModePolicy = Join-Path $key.PSPath 'outlook\cached mode' `
+                    | Get-ItemProperty -Name 'enabled' -ErrorAction SilentlyContinue `
+                    | Select-Object -ExpandProperty 'enabled'
+                }
+
                 Get-ChildItem (Join-Path $key.PSPath '\Outlook\Profiles') -ErrorAction SilentlyContinue
             }
 
@@ -3417,10 +3434,9 @@ function Get-OutlookProfile {
                     $accountId = "{0:x8}" -f [BitConverter]::ToInt32($olkMailBytes, $i * 4)
                     $account = Join-Path $accountStore.PSPath $accountId | Get-ItemProperty
 
-                    $acct =
-                    switch ($account.clsid) {
+                    $acct = switch ($account.clsid) {
                         $CLSID_OlkPOP3Account { Get-Pop3Account $account; break }
-                        $CLSID_OlkIMAP4Account { Get-Imap4Account $account; break; }
+                        $CLSID_OlkIMAP4Account { Get-Imap4Account $account; break }
                         $CLSID_OlkMAPIAccount { Get-MapiAccount $account; break }
                     }
 
@@ -3430,9 +3446,17 @@ function Get-OutlookProfile {
                     }
 
                     $acct.Profile = $profileName
+
+                    # Override CachedMode for MAPI account if "cached mode\enabled" regitry is configured.
+                    if ($acct.AccountType -eq 'MAPI' -and $null -ne $cachedModePolicy) {
+                        $acct.CachedMode = -not ($cachedModePolicy -eq 0)
+                        $acct | Add-Member -NotePropertyName 'CachedModeOverride' -NotePropertyValue $true
+                    }
+
                     $acct
                 }
             )
+
 
             # Retrieve Global section properties
             $globalSection = Join-Path $prof.PSPath $GlobalSectionGuid | Get-ItemProperty -Name $PR_LAST_OFFLINESTATE_OFFLINE -ErrorAction SilentlyContinue
