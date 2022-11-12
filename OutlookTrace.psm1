@@ -3400,20 +3400,20 @@ function Get-OutlookProfile {
                 }
 
                 # Cache mode can be enabled/disabled by registry values:
-                # HKCU\Software\Policies\Microsoft\office\16.0\outlook\cached mode\enabled
-                # HKCU\Software\Microsoft\office\16.0\outlook\cached mode\enabled
+                # HKCU\Software\Policies\Microsoft\office\16.0\outlook\cached mode\enable
+                # HKCU\Software\Microsoft\office\16.0\outlook\cached mode\enable
 
                 # Insert 'Policies' in the path and read registry value.
                 $cachedModePolicy = Join-Path $key.PSPath.SubString(0, $key.PSPath.IndexOf('Microsoft\Office')) 'Policies' `
                 | Join-Path -ChildPath $key.PSPath.SubString($key.PSPath.IndexOf('Microsoft\Office')) `
                 | Join-Path -ChildPath 'outlook\cached mode' `
-                | Get-ItemProperty -Name 'enabled' -ErrorAction SilentlyContinue `
-                | Select-Object -ExpandProperty 'enabled'
+                | Get-ItemProperty -Name 'enable' -ErrorAction SilentlyContinue `
+                | Select-Object -ExpandProperty 'enable'
 
                 if ($null -eq $cachedModePolicy) {
                     $cachedModePolicy = Join-Path $key.PSPath 'outlook\cached mode' `
-                    | Get-ItemProperty -Name 'enabled' -ErrorAction SilentlyContinue `
-                    | Select-Object -ExpandProperty 'enabled'
+                    | Get-ItemProperty -Name 'enable' -ErrorAction SilentlyContinue `
+                    | Select-Object -ExpandProperty 'enable'
                 }
 
                 Get-ChildItem (Join-Path $key.PSPath '\Outlook\Profiles') -ErrorAction SilentlyContinue
