@@ -494,6 +494,113 @@ namespace Win32
     {
         [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
         public static extern uint SendMessageTimeoutW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+        [DllImport("user32.dll", SetLastError=true)]
+        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct KeyboardInput
+        {
+            public ushort wVk;
+            public ushort wScan;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MouseInput
+        {
+            public int dx;
+            public int dy;
+            public uint mouseData;
+            public uint dwFlags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct HardwareInput
+        {
+            public uint uMsg;
+            public ushort wParamL;
+            public ushort wParamH;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        public struct InputUnion
+        {
+            [FieldOffset(0)] public MouseInput mi;
+            [FieldOffset(0)] public KeyboardInput ki;
+            [FieldOffset(0)] public HardwareInput hi;
+        }
+
+        public struct Input
+        {
+            public InputType type;
+            public InputUnion u;
+        }
+
+        public enum InputType
+        {
+            Mouse = 0,
+            Keyboard = 1,
+            Hardware = 2
+        }
+
+        [Flags]
+        public enum KeyEventF
+        {
+            KeyDown = 0x0000,
+            ExtendedKey = 0x0001,
+            KeyUp = 0x0002,
+            Unicode = 0x0004,
+            Scancode = 0x0008
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern uint SendInput(int nInputs, Input[] pInputs, int cbSize);
+
+        public static void SendKeyboardInput(ushort vkey, KeyEventF flags)
+        {
+            Input[] inputs = new Input[1];
+            inputs[0].type = InputType.Keyboard;
+            inputs[0].u.ki.wVk = vkey;
+            inputs[0].u.ki.dwFlags = (uint)flags;
+
+            var count = SendInput(1, inputs, Marshal.SizeOf(typeof(Input)));
+
+            if (count == 0)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
+
+        public static void SendCtrl5()
+        {
+            Input[] inputs = new Input[4];
+
+            inputs[0].type = InputType.Keyboard;
+            inputs[0].u.ki.wVk = 0x11; // VK_CONTROL
+
+            inputs[1].type = InputType.Keyboard;
+            inputs[1].u.ki.wVk = 0x35; // 5
+
+            inputs[2].type = InputType.Keyboard;
+            inputs[2].u.ki.wVk = 0x35; // 5
+            inputs[2].u.ki.dwFlags = (uint)(KeyEventF.KeyUp);
+
+            inputs[2].type = InputType.Keyboard;
+            inputs[2].u.ki.wVk = 0x11; // VK_CONTROL
+            inputs[2].u.ki.dwFlags = (uint)(KeyEventF.KeyUp);
+
+            var count = SendInput(inputs.Length, inputs, Marshal.SizeOf(typeof(Input)));
+
+            if (count == 0)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
     }
 
     public static class WinHttp
@@ -7346,6 +7453,254 @@ function Reset-ThreadCulture {
 
 <#
 .SYNOPSIS
+    Start recording by using ZoomIt
+#>
+function Download-ZoomIt {
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
+    param(
+        [Parameter(Mandatory = $true)]
+        # Path to save zoomIt
+        [string]$Path
+    )
+
+    $url = 'https://download.sysinternals.com/files/ZoomIt.zip'
+    $zoomItZip = Join-Path $Path 'ZoomIt.zip'
+    $webClient = $null
+
+    if (-not (Test-Path $Path)) {
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
+    }
+
+    try {
+        $webClient = New-Object System.Net.WebClient
+        $webClient.UseDefaultCredentials = $true
+        $webClient.DownloadFile($url, $zoomItZip)
+    }
+    catch {
+        Write-Error -Message "Failed to download ZoomIt from $url" -Exception $_.Exception
+    }
+    finally {
+        if ($webClient) {
+            $webClient.Dispose()
+        }
+    }
+
+    if (-not (Test-Path $zoomItZip)) {
+        return
+    }
+
+    # Expand ZIP file and remove it
+    $err = $($null = Expand-Archive $zoomItZip -DestinationPath $Path) 2>&1
+
+    if (-not $err) {
+        Remove-Item $zoomItZip
+    }
+}
+
+<#
+.SYNOPSIS
+    Start recording by using ZoomIt
+#>
+function Start-Recording {
+    [CmdletBinding()]
+    param(
+        # Path to download ZoomIt if necessary
+        [string]$ZoomItDownloadPath,
+        # Path to look for zoomit executable, including subfolders
+        [string]$ZoomItSearchPath
+    )
+
+    # OS version must be higher than Win10 1903 (Build 18362)
+    $os = Get-CimInstance Win32_OperatingSystem
+
+    try {
+        if ($os.Version -match '(?<Major>\d+)\.\d+\.(?<Build>\d+)') {
+            $major = $Matches.Major -as [int]
+            $build = $Matches.Build -as [int]
+
+            if (-not ($major -ge 10 -and $build -ge 18362)) {
+                Write-Error "Windows version $($os.Version) is not supported"
+                return
+            }
+        }
+    }
+    finally {
+        $os.Dispose()
+    }
+
+    $zoomItExe = $null
+
+    # Find the running instance of zoomit if exists and check if its version is >= 6 (Recording feature is available since version 6)
+    $running = Get-Process 'ZoomIt*' | Select-Object -First 1
+
+    if ($running) {
+        $prop = Get-ItemProperty $running.Path -ErrorAction SilentlyContinue
+
+        if ($prop.VersionInfo.FileVersion.ToString() -match '(?<Major>\d)\.') {
+            $major = $Matches.Major -as [int]
+
+            if ($major -ge 6) {
+                $zoomItExe = $running.Path
+                Write-Log "Found a running instance of $($running.Path) ($($prop.VersionInfo.FileVersion))"
+            }
+        }
+
+        if (-not $zoomItExe) {
+            Write-Error "$($running.Name) is running, but it's version is older than 6"
+            return
+        }
+    }
+
+    # Next, look for zoomIt executable under the given path (including subfolders)
+    if (-not $zoomItExe -and $ZoomItSearchPath) {
+        Get-ChildItem -Path (Join-Path $ZoomItSearchPath 'ZoomIt*.exe') -Recurse -ErrorAction SilentlyContinue | . {
+            process {
+                # Ignore one for ARM.
+                if ($_.Name -eq 'ZoomIt64a.exe') {
+                    return
+                }
+
+                if (-not $zoomItExe) {
+                    $zoomItExe = $_.FullName
+                }
+
+                # For x64, prefer ZoomIt64.exe
+                if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64' -and $_.Name -eq 'ZoomIt64.exe') {
+                    $zoomItExe = $_.FullName
+                }
+            }
+        }
+    }
+
+    # Still not found. Try to download.
+    $downloaded = $false
+
+    if (-not $zoomItExe -and $ZoomItDownloadPath) {
+        Write-Log "Downloading ZoomIt"
+        Download-ZoomIt -Path $ZoomItDownloadPath
+        $downloaded = $true
+
+        Get-ChildItem -Path (Join-Path $ZoomItDownloadPath 'ZoomIt*.exe') -ErrorAction SilentlyContinue | . {
+            process {
+                # Ignore one for ARM.
+                if ($_.Name -eq 'ZoomIt64a.exe') {
+                    return
+                }
+
+                if (-not $zoomItExe) {
+                    $zoomItExe = $_.FullName
+                }
+
+                # For x64, prefer ZoomIt64.exe
+                if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64' -and $_.Name -eq 'ZoomIt64.exe') {
+                    $zoomItExe = $_.FullName
+                }
+            }
+        }
+    }
+
+    if (-not $zoomItExe) {
+        Write-Error "Cannot find ZoomIt executable"
+        return
+    }
+
+    Unblock-File $zoomItExe
+    $started = $false
+
+    # If there was no running instance, start it.
+    if (-not $running) {
+        # Configure "OptionsShown" registry value so that zoomit's option won't be displayed.
+        $zoomItPath = 'Registry::HKEY_CURRENT_USER\Software\Sysinternals\ZoomIt'
+
+        if (-not (Test-Path $zoomItPath)) {
+            $null = New-Item -Path $zoomItPath -Force
+        }
+
+        # Create or set "OptionsShown" to 1
+        $null = Set-ItemProperty -Path $zoomItPath -Name 'OptionsShown' -Value 1
+
+        # Start ZoomIt
+        Write-Log "Starting $zoomItExe"
+        $zoomIt = Start-Process $zoomItExe -ArgumentList '/AcceptEula' -PassThru
+        $started = $true
+
+        # Wait a little;otherwise zoomIt does not handle Ctrl+5
+        # Start-Sleep -Seconds 1
+    }
+
+    # Send Ctrl+5 keybord input to start recording
+    $success = $false
+    $maxRetry = 5
+    $interval = [TimeSpan]::FromMilliseconds(200)
+
+    for ($i = 0; $i -lt $maxRetry; ++$i) {
+        try {
+            Write-Log "Sending Ctrl+5"
+            [Win32.User32]::SendCtrl5()
+        }
+        catch {
+            Write-Error -Message "Win32.User32.SendCtrl5 failed" -Exception $_.Exception
+            break
+        }
+
+        Start-Sleep -Milliseconds $interval.TotalMilliseconds
+
+        # Check if ZoomIt has started writing to %TEMP%\ZoomIt\zoomit.mp4. This file will be removed by ZoomIt when recording is stopped.
+        if (Test-Path (Join-Path $env:TEMP 'ZoomIt\zoomit.mp4')) {
+            $success = $true
+
+            [PSCustomObject]@{
+                Downloaded = $downloaded
+                Started = $started
+            }
+
+            break
+        }
+    }
+
+    if ($zoomIt) {
+        if (-not $success) {
+            Write-Error "Failed to start recording"
+
+            if ( $started) {
+                $zoomIt.Kill()
+            }
+        }
+
+        $zoomIt.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
+    Stop recording.
+
+.NOTES
+    This does not kill ZoomIt.
+#>
+function Stop-Recording {
+    [CmdletBinding()]
+    param()
+
+    # Make sure zoomit is running.
+    $zoomIt = Get-Process -Name 'ZoomIt*' | Select-Object -First 1
+
+    # Send Ctrl+5 to stop recording.
+    try {
+        [Win32.User32]::SendCtrl5()
+    }
+    catch {
+        Write-Error -Message "Win32.User32.SendCtrl5 failed" -Exception $_.Exception
+    }
+
+    if ($zoomIt) {
+        $zoomIt.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
     Collect Microsoft Office Outlook related configuration & traces
 .DESCRIPTION
     This will collect different kinds of traces & log files depending on the value specified in the "Component" parameter.
@@ -7365,7 +7720,7 @@ function Collect-OutlookInfo {
         $Path,
         # What to collect
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'HungDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance', 'WPR')]
+        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'HungDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance', 'WPR', 'Recording')]
         [array]$Component,
         # This controls the level of netsh trace report
         [ValidateSet('None', 'Mini', 'Full')]
@@ -7891,10 +8246,24 @@ function Collect-OutlookInfo {
             $ttdStarted = $true
         }
 
+        if ($Component -contains 'Recording') {
+            # Make sure ZoomIt is not running
+            # $existingZoomIt = Get-Process -Name 'ZoomIt*' | Select-Object -First 1
+
+            # if ($existingZoomIt) {
+            #     Write-Error -Message "ZoomIt is already running. Please stop it and try again."  -ErrorAction Stop
+            # }
+
+            # $zoomItPath = Join-Path $tempPath 'ZoomIt'
+            # Download-ZoomIt -Path $zoomItPath
+            $recording = Start-Recording -ZoomItDownloadPath (Join-Path $Path 'ZoomIt') -ZoomItSearchPath $Path -ErrorAction Stop
+            $recordingStarted = $true
+        }
+
         Write-Progress -Completed
         $waitStart = Get-Date
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted) {
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted) {
             Write-Log "Waiting for the user to stop"
 
             # Read-Host is not used here because it'd block background tasks.
@@ -7914,6 +8283,39 @@ function Collect-OutlookInfo {
         Write-Log "Stopping traces. $(if ($waitStart) { "Wait duration: $((Get-Date) - $waitStart)" })"
 
         $PSDefaultParameterValues['Write-Progress:Activity'] = 'Stopping traces'
+
+        if ($recordingStarted) {
+            # This will show the user a Save As dialog
+            Stop-Recording
+            Write-Host "Please save the recording (Save As dialog should appear). Then hit enter to continue:" -ForegroundColor Yellow -NoNewline
+            $null = $host.UI.ReadLine()
+
+            # If the zoomit was started by above, then kill it.
+            if ($recording.Started) {
+                $zoomIt = Get-Process -Name 'ZoomIt*' | Select-Object -First 1
+
+                if ($zoomIt) {
+                    $zoomIt.Kill()
+                    $zoomIt.Dispose()
+                    Write-Log "ZoomIt instance was killed"
+                }
+            }
+
+            # ZoomIt was downloaded. 
+            # if ($recoding.ZoomItDownloadedPath) {
+            #     # Kill ZoomIt and remove exe files
+            #     $zoomiIt = Get-Process 'ZoomIt*' | Select-Object -First 1
+
+            #     if ($zoomiIt) {
+            #         $zoomiIt.Kill()
+            #         Wait-Process -InputObject $zoomiIt
+            #     }
+
+            #     if ($zoomItPath) {
+            #         $null = Remove-Item -Path (Join-Path $zoomItPath "*") -Include "ZoomIt*.exe", 'Eula.txt' -Force 2>&1 | Write-Log -Category Warning
+            #     }
+            # }
+        }
 
         if ($ttdStarted) {
             Write-Progress -Status 'Stopping TTD trace'
@@ -8130,4 +8532,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Collect-OutlookInfo, Start-Recording, Stop-Recording, Download-ZoomIt
