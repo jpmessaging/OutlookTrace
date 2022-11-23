@@ -3660,6 +3660,7 @@ function Get-MapiAccount {
         $Account
     )
 
+    # This should be Transport Provider (PR_RESOURCE_TYPE: 36)
     $providerUid = [BitConverter]::ToString($Account.'XP Provider UID').Replace('-', '')
 
     $prof = Split-Path $Account.PSParentPath
@@ -3667,7 +3668,7 @@ function Get-MapiAccount {
     $emsmdbSectionUidBytes = Join-Path $prof $providerUid | Get-ItemProperty -Name $PR_EMSMDB_SECTION_UID -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $PR_EMSMDB_SECTION_UID
     $emsmdbSectionUid = [BitConverter]::ToString($emsmdbSectionUidBytes).Replace('-', '')
 
-    # Profile properties
+    #  Provider Properties
     $PR_DISPLAY_NAME = '001f3001'
     $PR_EMSMDB_IDENTITY_UNIQUEID = '001f3d1d'
     $PR_PROFILE_CONFIG_FLAGS = '00036601'
@@ -3719,6 +3720,20 @@ function Get-MapiAccount {
         $sharedCalFlags = [BitConverter]::ToInt32($props.$PR_PROFILE_CONFIG_FLAGS_EX, 0)
     }
 
+    # Get display name of Store Providers (which appears on top of Outlook's folder tree)
+    # Note that there might be more than one store providers (such as primary & archive mailbox)
+    $PR_STORE_PROVIDERS = '01023d00'
+    $storeProvidersBytes = Join-Path $prof $emsmdbSectionUid | Get-ItemProperty -Name $PR_STORE_PROVIDERS -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $PR_STORE_PROVIDERS
+    $storeProvidersCount = $storeProvidersBytes.Count / 16
+
+    $storeProviderDisplayNames = @(
+        for ($i = 0; $i -lt $storeProvidersCount; ++$i) {
+            $uid = [BitConverter]::ToString($storeProvidersBytes, $i * 16, 16).Replace('-', '')
+            $props = Join-Path $prof $uid | Get-ItemProperty -Name $PR_DISPLAY_NAME -ErrorAction SilentlyContinue
+            [System.Text.encoding]::Unicode.GetString($props.$PR_DISPLAY_NAME)
+        }
+    )
+
     [PSCustomObject]@{
         Profile                       = $null
         AccountName                   = $Account.'Account Name'
@@ -3726,6 +3741,7 @@ function Get-MapiAccount {
         AccountType                   = 'MAPI'
         IsDefaultAccount              = $false
         DisplayName                   = $displayName
+        StoreProviderDisplayNames     = $storeProviderDisplayNames
         CachedMode                    = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
         DownloadPublicFolderFavorites = $CACHE_PUBLIC
         DownloadSharedFolders         = $CACHE_DELEGATE_PIM
@@ -7652,7 +7668,7 @@ function Start-Recording {
 
             [PSCustomObject]@{
                 Downloaded = $downloaded
-                Started = $started
+                Started    = $started
             }
 
             break
