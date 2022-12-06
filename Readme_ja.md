@@ -2,12 +2,13 @@
 
 OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
-[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2022-11-11/OutlookTrace.psm1)
+[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2022-12-06/OutlookTrace.psm1)
 
-Fiddler トレースや Process Monitor ログも含めて採取する場合には以下から事前にダウンロードできます:
+Fiddler トレースや Process Monitor ログ、そして ZoomIt によるスクリーン レコーディングも含めて採取する場合には以下から事前にダウンロードできます:
 
 - [FiddlerCapSetup](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe)
 - [Process Monitor](https://download.sysinternals.com/files/ProcessMonitor.zip)
+- [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)
 
 ## 利用方法
 
@@ -36,7 +37,7 @@ Fiddler トレースや Process Monitor ログも含めて採取する場合に�
 
     ※ 採取するコンポーネントについてはエンジニアからの案内をご確認ください。
 
-    ※ Fiddler または Procmon を採取する場合、スクリプト内で自動的にダウンロードを試みます。インターネットへのアクセスに制限がある環境で実行する場合には、事前にダウンロードした [FiddlerCapSetup.exe](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe) や [ProcessMonitor.zip](https://download.sysinternals.com/files/ProcessMonitor.zip) を、下記 `Path` パラメータで指定するフォルダに配置ください。
+    ※ Fiddler、Procmon、または ZoomIt によるスクリーン レコーディングを採取する場合、スクリプト内で自動的にダウンロードを試みます。インターネットへのアクセスに制限がある環境で実行する場合には、事前にダウンロードした [FiddlerCapSetup.exe](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe)、[ProcessMonitor.zip](https://download.sysinternals.com/files/ProcessMonitor.zip)、そして [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip) を、下記 `Path` パラメータで指定するフォルダに配置ください。
 
     ```
     Collect-OutlookInfo -Path <出力先フォルダ> -Component <採取するコンポーネント>

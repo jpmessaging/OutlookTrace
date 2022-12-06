@@ -2,7 +2,7 @@
 
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2022-11-11/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2022-12-06/OutlookTrace.psm1)
 
 ## How to use
 
@@ -165,6 +165,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | WFP           | Windows Firewall diagnostic log                                                                                |
 | Performance   | Performance counter log (Process, Memory, LogicalDisk etc.)                                                    |
 | TTD           | Time Travel Debugging trace (OS must be Windows 10 or above)                                                   |
+| Recording     | Screen recording by [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)                               |
 
 **Note**: `Collect-OutlookInfo` tries to download FiddlerCap & Procmon when requested in `Component` parameter. If Internet access is not available, please download [FiddlerCap](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe) and/or [Procmon](https://download.sysinternals.com/files/ProcessMonitor.zip) and place them in `Path` folder before running the command.
 
