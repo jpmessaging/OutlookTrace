@@ -3673,6 +3673,7 @@ function Get-MapiAccount {
     $PR_EMSMDB_IDENTITY_UNIQUEID = '001f3d1d'
     $PR_PROFILE_CONFIG_FLAGS = '00036601'
     $PR_PROFILE_CONFIG_FLAGS_EX = '1003666e'
+    $PR_PROFILE_USER_SMTP_EMAIL_ADDRESS = '001f6641'
 
     # Config flag constants
     $CONFIG_OST_CACHE_PRIVATE = 0x180      # [Use Cached Exchange Mode]
@@ -3720,17 +3721,21 @@ function Get-MapiAccount {
         $sharedCalFlags = [BitConverter]::ToInt32($props.$PR_PROFILE_CONFIG_FLAGS_EX, 0)
     }
 
-    # Get display name of Store Providers (which appears on top of Outlook's folder tree)
+    # Get Store Providers (its displayname appears on top of Outlook's folder tree)
     # Note that there might be more than one store providers (such as primary & archive mailbox)
     $PR_STORE_PROVIDERS = '01023d00'
     $storeProvidersBytes = Join-Path $prof $emsmdbSectionUid | Get-ItemProperty -Name $PR_STORE_PROVIDERS -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $PR_STORE_PROVIDERS
     $storeProvidersCount = $storeProvidersBytes.Count / 16
 
-    $storeProviderDisplayNames = @(
+    $storeProviders = @(
         for ($i = 0; $i -lt $storeProvidersCount; ++$i) {
             $uid = [BitConverter]::ToString($storeProvidersBytes, $i * 16, 16).Replace('-', '')
-            $props = Join-Path $prof $uid | Get-ItemProperty -Name $PR_DISPLAY_NAME -ErrorAction SilentlyContinue
-            [System.Text.encoding]::Unicode.GetString($props.$PR_DISPLAY_NAME)
+            $props = Join-Path $prof $uid | Get-ItemProperty -Name $PR_DISPLAY_NAME, $PR_PROFILE_USER_SMTP_EMAIL_ADDRESS -ErrorAction SilentlyContinue
+
+            [PSCustomObject]@{
+                DisplayName = [System.Text.encoding]::Unicode.GetString($props.$PR_DISPLAY_NAME)
+                PR_PROFILE_USER_SMTP_EMAIL_ADDRESS = [System.Text.encoding]::Unicode.GetString($props.$PR_PROFILE_USER_SMTP_EMAIL_ADDRESS)
+            }
         }
     )
 
@@ -3741,12 +3746,12 @@ function Get-MapiAccount {
         AccountType                   = 'MAPI'
         IsDefaultAccount              = $false
         DisplayName                   = $displayName
-        StoreProviderDisplayNames     = $storeProviderDisplayNames
         CachedMode                    = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
         DownloadPublicFolderFavorites = $CACHE_PUBLIC
         DownloadSharedFolders         = $CACHE_DELEGATE_PIM
         PR_PROFILE_CONFIG_FLAGS       = $flags
         SharedCalendarOption          = $SharedCal[$sharedCalFlags -band 0xffff]
+        StoreProviders                = $storeProviders
     }
 }
 
@@ -6628,15 +6633,14 @@ function Start-ProcessMonitoring {
                 $startTime = $_.StartTime
                 $_.Dispose()
 
-                $targets | & {
-                    process {
-                        if ($name -like $_.Name -and (-not $_.Ids.ContainsKey($id) -or $_.Ids[$id] -ne $startTime) ) {
-                            Write-Log "Found new $name with PID $id, StartTime $startTime."
-                            $_.Ids.Add($id, $startTime)
-                            $true
-                        }
+                foreach ($target in $targets) {
+                    if ($name -like $target.Name -and (-not $target.Ids.ContainsKey($id) -or $target.Ids[$id] -ne $startTime) ) {
+                        Write-Log "Found new $name with PID $id, StartTime $startTime."
+                        $target.Ids.Add($id, $startTime)
+                        $true
+                        break
                     }
-                } | Select-Object -First 1
+                }
             }
         }
 
@@ -7824,16 +7828,9 @@ function Collect-OutlookInfo {
             $targetUser = $logonUsers[0]
         }
         else {
-            # Multiple logon users are found. If the current user is one of them, use it as targetUser. Otherwise, 'User' parameter needs to be used.
-            $currentLogonUser = $logonUsers | Where-Object { $_.Sid -eq $currentUser.Sid } | Select-Object -First 1
-
-            if ($currentLogonUser) {
-                $targetUser = $currentLogonUser
-            }
-            else {
-                Write-Error "Found multiple logon users ($($logonUsers.Count) users$(if ($logonUsers.Count -le 3) { "; $($logonUsers.Name -join ',')" })). Please specify the target user by `"-User`" parameter."
-                return
-            }
+            # Multiple logon users are found. 'User' parameter needs to be used.
+            Write-Error "Found multiple logon users ($($logonUsers.Count) users$(if ($logonUsers.Count -le 3) { "; $($logonUsers.Name -join ',')" })). Please specify the target user by `"-User`" parameter."
+            return
         }
     }
 
@@ -7986,7 +7983,9 @@ function Collect-OutlookInfo {
 
             Write-Progress -PercentComplete 80
 
-            Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir
+            # Names of processes whose owner info is also saved.
+            $processesWithOwner = @('Outlook', 'Fiddler*', 'explorer')
+            Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name $processesWithOwner } -ArgumentList $OSDir
 
             if ($targetUser) {
                 $targetUser | Export-Clixml -Path (Join-Path $OSDir 'User.xml')
@@ -7996,7 +7995,7 @@ function Collect-OutlookInfo {
                 # The user might start & stop Outlook while tracing. In order to capture Outlook's instances, run a task to check Outlook.exe periodically.
                 Write-Log "Starting outlookMonitorTask."
                 $outlookMonitorTaskCts = New-Object System.Threading.CancellationTokenSource
-                $outlookMonitorTask = Start-Task { param ($path, $name, $cancelToken) Start-ProcessMonitoring -Path $path -Name $name -CancelToken $cancelToken } -ArgumentList $OSDir, @('Outlook', 'Fiddler*'), $outlookMonitorTaskCts.Token
+                $outlookMonitorTask = Start-Task { param ($path, $name, $cancelToken) Start-ProcessMonitoring -Path $path -Name $name -CancelToken $cancelToken } -ArgumentList $OSDir, $processesWithOwner, $outlookMonitorTaskCts.Token
             }
 
             Write-Progress -Completed
@@ -8487,7 +8486,7 @@ function Collect-OutlookInfo {
             # Save process list again after traces
             if ($startSuccess -and $Component.Count -gt 1) {
                 Write-Progress -Status 'Saving process list'
-                Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name 'Outlook', 'Fiddler*' } -ArgumentList $OSDir 2>&1 | Write-Log -Category Error
+                Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name $processesWithOwner } -ArgumentList $OSDir 2>&1 | Write-Log -Category Error
             }
         }
 
@@ -8548,4 +8547,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Collect-OutlookInfo, Start-Recording, Stop-Recording, Download-ZoomIt
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Collect-OutlookInfo
