@@ -343,6 +343,67 @@ namespace Win32
         }
     }
 
+    namespace Mapi
+    {
+        // https://learn.microsoft.com/en-us/office/client-developer/outlook/mapi/pidtagresourceflags-canonical-property
+        [Flags]
+        public enum ResourceFlags
+        {
+            None = 0,
+            STATUS_DEFAULT_OUTBOUND = 1,
+            STATUS_DEFAULT_STORE = 2,
+            STATUS_PRIMARY_IDENTITY = 4,
+            STATUS_SIMPLE_STORE = 8,
+            STATUS_XP_PREFER_LAST = 0x10,
+            STATUS_NO_PRIMARY_IDENTITY = 0x20,
+            STATUS_NO_DEFAULT_STORE = 0x40,
+            STATUS_TEMP_SECTION = 0x80,
+            STATUS_OWN_STORE = 0x100,
+            STATUS_NEED_IPM_TREE = 0x800,
+            STATUS_PRIMARY_STORE = 0x1000,
+            STATUS_SECONDARY_STORE = 0x2000
+        }
+
+        public enum CacheSyncMode
+        {
+            Headers = 1,
+            FullItems = 2,
+            Drizzle = 3
+        }
+
+        public enum OfflineState
+        {
+            Offline = 1,
+            Online = 2,
+            MASK = 3
+        }
+
+        [Flags]
+        public enum ProfileConfigFlags
+        {
+            CONFIG_SERVICE = 1,
+            CONFIG_SHOW_STARTUP_UI = 2,
+            CONFIG_SHOW_CONNECT_UI = 4,
+            CONFIG_PROMPT_FOR_CREDENTIALS = 8,
+            CONFIG_NO_AUTO_DETECT = 0x10,
+            CONFIG_OST_CACHE_ONLY = 0x20,
+            CONFIG_USE_SMTP_ADDRESSES = 0x40,
+            CONFIG_OST_CACHE_PRIVATE = 0x180,
+            CONFIG_OST_DISASTER_RECOVERY = 0x200,
+            CONFIG_OST_CACHE_PUBLIC = 0x400,
+            CONFIG_OST_CACHE_DELEGATE_PIM = 0x800,
+            CONFIG_PUB_FOLDERS_ALIVE = 0x1000,
+            CONFIG_PUB_FOLDERS_DEAD = 0x2000,
+        }
+
+        public enum SharedCalProfileConfigFlags
+        {
+            None = 0,
+            Rest = 1,
+            Mapi = 2
+        }
+    }
+
     public static class Netapi32
     {
         public enum NETSETUP_JOIN_STATUS
@@ -3460,10 +3521,58 @@ function Get-JoinInformation {
     }
 }
 
+# ***********************
+# MAPI related constants
+# ***********************
+# https://docs.microsoft.com/en-us/office/client-developer/outlook/auxiliary/iolkaccountmanager-enumerateaccounts
+$AccountManagerCLSIDs = @{
+    # Categories
+    CLSID_OlkMail         = '{ED475418-B0D6-11D2-8C3B-00104B2A6676}'
+    CLSID_OlkAddressBook  = '{ED475419-B0D6-11D2-8C3B-00104B2A6676}'
+    CLSID_OlkStore        = '{ED475420-B0D6-11D2-8C3B-00104B2A6676}'
+
+    # Account types
+    CLSID_OlkPOP3Account  = '{ED475411-B0D6-11D2-8C3B-00104B2A6676}'
+    CLSID_OlkIMAP4Account = '{ED475412-B0D6-11D2-8C3B-00104B2A6676}'
+    CLSID_OlkMAPIAccount  = '{ED475414-B0D6-11D2-8C3B-00104B2A6676}'
+}
+
+$KnownSections = @{
+    Global         = '0a0d020000000000c000000000000046'
+    MapiProvider   = '9207f3e0a3b11019908b08002b2a56c2'
+    AccountManager = '9375CFF0413111d3B88A00104B2A6676'
+}
+
+$PropTags = @{
+    PR_LAST_OFFLINESTATE_OFFLINE       = '00030398'
+    PR_SERVICE_UID                     = '01023d0c'
+    PR_STORE_PROVIDERS                 = '01023d00'
+    PR_RESOURCE_TYPE                   = '00033e03'
+    PR_RESOURCE_FLAGS                  = '00033009'
+    PR_DISPLAY_NAME                    = '001f3001'
+    PR_PROFILE_USER_SMTP_EMAIL_ADDRESS = '001f6641'
+    PR_PROFILE_PST_PATH                = '001f6700'
+    PR_EMSMDB_SECTION_UID              = '01023d15'
+    PR_CACHE_SYNC_MODE                 = '0003041f'
+    PR_PROFILE_OFFLINE_STORE_PATH      = '001f6610'
+    PR_EMSMDB_IDENTITY_UNIQUEID        = '001f3d1d'
+    PR_PROFILE_CONFIG_FLAGS            = '00036601'
+    PR_PROFILE_CONFIG_FLAGS_EX         = '1003666e'
+    PR_PROFILE_USER_FULL_NAME          = '001f663c'
+    PR_PROFILE_SYNC_MONTHS             = '00036649'
+    PR_PROFILE_SYNC_DAYS               = '0003665a'
+    PR_PROFILE_ALTERNATE_STORE_TYPE    = '001f65d0'
+    PR_PROFILE_TENANT_ID               = '001f6663'
+}
+
 function Get-OutlookProfile {
-    [CmdletBinding()]
+    [CmdletBinding(PositionalBinding = $false)]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '')]
     param(
-        [string]$User
+        # Target user
+        [string]$User,
+        # Profile names
+        [string[]]$Name 
     )
 
     if (-not $User) {
@@ -3476,26 +3585,6 @@ function Get-OutlookProfile {
         return
     }
 
-    # https://docs.microsoft.com/en-us/office/client-developer/outlook/auxiliary/iolkaccountmanager-enumerateaccounts
-    $CLSID_OlkMail = '{ED475418-B0D6-11D2-8C3B-00104B2A6676}'
-    $CLSID_OlkPOP3Account = '{ED475411-B0D6-11D2-8C3B-00104B2A6676}'
-    $CLSID_OlkIMAP4Account = '{ED475412-B0D6-11D2-8C3B-00104B2A6676}'
-    $CLSID_OlkMAPIAccount = '{ED475414-B0D6-11D2-8C3B-00104B2A6676}'
-
-    # Outlook Global profile section ("Capone") (00020D0A-0000-0000-C000-000000000046) is profile-wide, not account specific.
-    # https://github.com/MicrosoftDocs/office-developer-client-docs/blob/main/docs/outlook/mapi/mapi-constants.md
-    $GlobalSectionGuid = '0a0d020000000000c000000000000046';
-    $PR_LAST_OFFLINESTATE_OFFLINE = '00030398'
-
-    # Note: enum keyword is only available from PowerShell v5. Unfortunately, for backward compatibility, I cannot use it.
-    $MapiOfflineState = @{
-        MAPIOFFLINE_STATE_OFFLINE      = 1
-        MAPIOFFLINE_STATE_ONLINE       = 2
-        MAPIOFFLINE_STATE_OFFLINE_MASK = 3
-    }
-
-    $defaultProfile = $null
-
     Join-Path $userRegRoot 'Software\Microsoft\Office\' `
     | Get-ChildItem -ErrorAction SilentlyContinue | . {
         param ([Parameter(ValueFromPipeline)]$key)
@@ -3506,23 +3595,7 @@ function Get-OutlookProfile {
                     | Select-Object -ExpandProperty 'DefaultProfile'
                 }
 
-                # Cache mode can be enabled/disabled by registry values:
-                # HKCU\Software\Policies\Microsoft\office\16.0\outlook\cached mode\enable
-                # HKCU\Software\Microsoft\office\16.0\outlook\cached mode\enable
-
-                # Insert 'Policies' in the path and read registry value.
-                $cachedModePolicy = Join-Path $key.PSPath.SubString(0, $key.PSPath.IndexOf('Microsoft\Office')) 'Policies' `
-                | Join-Path -ChildPath $key.PSPath.SubString($key.PSPath.IndexOf('Microsoft\Office')) `
-                | Join-Path -ChildPath 'outlook\cached mode' `
-                | Get-ItemProperty -Name 'enable' -ErrorAction SilentlyContinue `
-                | Select-Object -ExpandProperty 'enable'
-
-                if ($null -eq $cachedModePolicy) {
-                    $cachedModePolicy = Join-Path $key.PSPath 'outlook\cached mode' `
-                    | Get-ItemProperty -Name 'enable' -ErrorAction SilentlyContinue `
-                    | Select-Object -ExpandProperty 'enable'
-                }
-
+                $cachedModePolicy = Get-CachedModePolicy -OfficeVersionKey $key
                 Get-ChildItem (Join-Path $key.PSPath '\Outlook\Profiles') -ErrorAction SilentlyContinue
             }
 
@@ -3532,68 +3605,215 @@ function Get-OutlookProfile {
         param([Parameter(ValueFromPipeline)]$prof)
         process {
             $profileName = $prof.PSChildName
-            $accountStore = Join-Path $prof.PSPath '*' | Get-ItemProperty -Name $CLSID_OlkMail -ErrorAction SilentlyContinue | Select-Object -First 1
-            $olkMailBytes = $accountStore.$CLSID_OlkMail
-            $accountCount = $olkMailBytes.Count / 4
 
-            $accounts = @(
-                for ($i = 0; $i -lt $accountCount; ++$i) {
-                    $accountId = "{0:x8}" -f [BitConverter]::ToInt32($olkMailBytes, $i * 4)
-                    $account = Join-Path $accountStore.PSPath $accountId | Get-ItemProperty
-
-                    $acct = switch ($account.clsid) {
-                        $CLSID_OlkPOP3Account { Get-Pop3Account $account; break }
-                        $CLSID_OlkIMAP4Account { Get-Imap4Account $account; break }
-                        $CLSID_OlkMAPIAccount { Get-MapiAccount $account; break }
-                    }
-
-                    if ($i -eq 0) {
-                        $acct.IsDefaultAccount = $true
-                        $defaultAccount = $acct
-                    }
-
-                    $acct.Profile = $profileName
-
-                    # Override CachedMode for MAPI account if "cached mode\enabled" regitry is configured.
-                    if ($acct.AccountType -eq 'MAPI' -and $null -ne $cachedModePolicy) {
-                        $acct.CachedMode = -not ($cachedModePolicy -eq 0)
-                        $acct | Add-Member -NotePropertyName 'CachedModeOverride' -NotePropertyValue $true
-                    }
-
-                    $acct
-                }
-            )
-
-
-            # Retrieve Global section properties
-            $globalSection = Join-Path $prof.PSPath $GlobalSectionGuid | Get-ItemProperty -Name $PR_LAST_OFFLINESTATE_OFFLINE -ErrorAction SilentlyContinue
-            $offlineState = 'Unknown'
-
-            if ($globalSection) {
-                $offlineState = [BitConverter]::ToInt32($globalSection.$PR_LAST_OFFLINESTATE_OFFLINE, 0) -band $MapiOfflineState.MAPIOFFLINE_STATE_OFFLINE_MASK
-
-                $offlineState =
-                switch ($offlineState) {
-                    $MapiOfflineState.MAPIOFFLINE_STATE_OFFLINE { 'Offline'; break }
-                    $MapiOfflineState.MAPIOFFLINE_STATE_ONLINE  { 'Online'; break }
-                }
+            if ($Name.Count -gt 0 -and $profileName -notin $Name) {
+                return
             }
 
+            $globalSection = Get-GlobalSection $prof
+            $mailAccounts = Get-MailAccount $prof
+            $storeProviders = Get-StoreProvider $prof
+
+            # Apply cache mode policy to MAPI accounts
+            $mailAccounts | Merge-CachedModePolicy -CachedModePolicy $cachedModePolicy
+
+            # Create a flattened object for data files.
+            $dataFiles = $storeProviders | Get-DataFile -MailAccounts $mailAccounts
+
             [PSCustomObject]@{
-                User                          = $User
-                Name                          = $profileName
-                Path                          = $prof.Name
-                IsDefault                     = $profileName -eq $defaultProfile
-                Accounts                      = $accounts
-                DefaultAccountType            = $defaultAccount.AccountType
-                CachedMode                    = $defaultAccount.CachedMode
-                DownloadPublicFolderFavorites = $defaultAccount.DownloadPublicFolderFavorites
-                DownloadSharedFolders         = $defaultAccount.DownloadSharedFolders
-                OfflineState                  = $offlineState
+                User           = $User
+                Name           = $profileName
+                Path           = $prof.Name
+                IsDefault      = $profileName -eq $defaultProfile
+                Accounts       = $mailAccounts | Select-Object -Property * -ExcludeProperty 'EmsmdbUid'
+                StoreProviders = $storeProviders
+                DataFiles      = $dataFiles
+                OfflineState   = $globalSection.OfflineState
+                CacheSyncMode  = $globalSection.CacheSyncMode
             }
 
             $prof.Close()
         }
+    }
+}
+
+# Helper function to create a flattened object for data files.
+function Get-DataFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        $StoreProvider,
+        [Parameter(Mandatory)]
+        $MailAccounts
+    )
+
+    begin {
+        $emsmdbUidCache = @{}
+    }
+
+    process {
+        if ($_.PstPath) {
+            [PSCustomObject]@{
+                Name = $_.DisplayName
+                IsDefault = $_.ResourceFlags.HasFlag([Win32.Mapi.ResourceFlags]::STATUS_DEFAULT_STORE)
+                Location = $_.PstPath
+                Size = $_.PstSize
+            }
+        }
+        elseif ($emsmdbUid = $_.EmsmdbUid) {
+            if ($emsmdbUidCache.ContainsKey($emsmdbUid)) {
+                return
+            }
+
+            $emsmdbUidCache.Add($emsmdbUid, $true)
+            $account = $MailAccounts | Where-Object { $_.EmsmdbUid -eq $emsmdbUid} | Select-Object -First 1
+
+            if ($account.OstPath) {
+                [PSCustomObject]@{
+                    Name = $_.DisplayName
+                    IsDefault = $_.ResourceFlags.HasFlag([Win32.Mapi.ResourceFlags]::STATUS_DEFAULT_STORE)
+                    Location = $account.OstPath
+                    Size = $account.OstSize
+                }
+            }
+        }
+    }
+}
+
+function Get-CachedModePolicy {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        $OfficeVersionKey # e.g, HKCU\Software\Microsoft\Office\16.0
+    )
+
+    if ($OfficeVersionKey -is [string]) {
+        if (-not $OfficeVersionKey.StartsWith("Registry::")) {
+            $OfficeVersionKey = 'Registry::' + $OfficeVersionKey
+        }
+
+        $OfficeVersionKey = Get-Item $OfficeVersionKey
+    }
+
+    # Insert 'Policies' in the path and read registry values.
+    $cachedModePolicy = Join-Path $OfficeVersionKey.PSPath.SubString(0, $OfficeVersionKey.PSPath.IndexOf('Microsoft\Office')) 'Policies' `
+    | Join-Path -ChildPath $OfficeVersionKey.PSPath.SubString($OfficeVersionKey.PSPath.IndexOf('Microsoft\Office')) `
+    | Join-Path -ChildPath 'outlook\cached mode' `
+    | Get-ItemProperty -ErrorAction SilentlyContinue
+
+    $props = @{}
+
+    if ($cachedModePolicy.enable) {
+        $props.Enable = $cachedModePolicy.enable -eq 1
+    }
+
+    if ($cachedModePolicy.cachedexchangemode) {
+        $props.SyncMode = [Win32.Mapi.CacheSyncMode]([int]::Parse($cachedModePolicy.cachedexchangemode))
+    }
+
+    $props.SyncWindow = Get-SyncWindow -Days $cachedModePolicy.syncwindowsettingdays -Months $cachedModePolicy.syncwindowsetting
+
+    [PSCustomObject]$props
+}
+
+function Merge-CachedModePolicy {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        $Account,
+        [Parameter(Mandatory = $true)]
+        $CachedModePolicy
+    )
+
+    process {
+        if ($Account.AccountType -ne 'MAPI') {
+            return
+        }
+
+        $merged = New-Object System.Collections.Generic.List[string]
+
+        if ($null -ne $cachedModePolicy.Enable) {
+            $Account.IsCachedMode = $cachedModePolicy.Enable
+            $merged.Add('IsCachedMode')
+        }
+        
+        if ($cachedModePolicy.SyncWindow) {
+            $Account.SyncWindow = $cachedModePolicy.SyncWindow
+            $merged.Add('SyncWindow')
+        }
+        
+        if ($merged.Count -gt 0) {
+            $Account | Add-Member -NotePropertyName 'CachedModePolicyOverrides' -NotePropertyValue $merged
+        }
+    }
+}
+
+function Get-SyncWindow {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        $Days,
+        $Months
+    )
+
+    if ($null -ne $Days) {
+        # When Online-mode, the value is set to signed int max (0x7fffffff)
+        if ($Days -eq [int]::MaxValue) {
+            return "None (Online Mode)"
+        }
+        elseif ($Days -gt 0) {
+            return "$Days Days"
+        }
+    }
+
+    # If Days is explicitly set to 0 then default to 12 months.
+    if ($Days -eq 0 -and $null -eq $Months) {
+        $Months = 12
+    }
+
+    if ($null -ne $Months) {
+        # When Online-mode, the value is set to signed int max (0x7fffffff)
+        if ($Months -eq [int]::MaxValue) {
+            return "None (Online Mode)"
+        }
+        elseif ($Months -eq 0) {
+            return 'All'
+        }
+        elseif ($Months -lt 12) {
+            return "$Months Months"
+        }
+        else {
+            "$($Months / 12) Years"
+        }
+    }
+}
+
+function Get-MailAccount {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Profile
+    )
+
+    $accountManager = Join-Path $Profile.PSPath $KnownSections.AccountManager | Get-ItemProperty -Name $AccountManagerCLSIDs.CLSID_OlkMail -ErrorAction SilentlyContinue
+    $accountIdBin = $accountManager.$($AccountManagerCLSIDs.CLSID_OlkMail)
+    $accountCount = $accountIdBin.Count / 4
+
+    for ($i = 0; $i -lt $accountCount; ++$i) {
+        $accountId = "{0:x8}" -f [BitConverter]::ToInt32($accountIdBin, $i * 4)
+        $account = Join-Path $accountManager.PsPath $accountId | Get-ItemProperty
+
+        $acct = switch ($account.clsid) {
+            $AccountManagerCLSIDs.CLSID_OlkPOP3Account { Get-Pop3Account $account; break }
+            $AccountManagerCLSIDs.CLSID_OlkIMAP4Account { Get-Imap4Account $account; break }
+            $AccountManagerCLSIDs.CLSID_OlkMAPIAccount { Get-MapiAccount $account; break }
+        }
+
+        if ($i -eq 0) {
+            $acct.IsDefaultAccount = $true
+        }
+
+        $acct.Profile = $Profile.PSChildName
+        $acct
     }
 }
 
@@ -3654,105 +3874,207 @@ function Get-Imap4Account {
     }
 }
 
+function Get-GlobalSection {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        $Profile
+    )
+
+    $properties = @(
+        $PropTags.PR_LAST_OFFLINESTATE_OFFLINE
+        $PropTags.PR_CACHE_SYNC_MODE
+    )
+
+    $globalSection = Join-Path $Profile.PSPath $KnownSections.Global | Get-ItemProperty -Name $properties -ErrorAction SilentlyContinue
+
+    # It's possible that Global Section does not have any of above properties and thus null.
+    $offlineState = 'Unknown'
+    $cacheSyncMode = [Win32.Mapi.CacheSyncMode]::FullItems
+
+    if ($globalSection) {
+        if ($offlineStateBin = $globalSection.$($PropTags.PR_LAST_OFFLINESTATE_OFFLINE)) {
+            [Win32.Mapi.OfflineState]$offlineState = [BitConverter]::ToInt32($offlineStateBin, 0) -band [Win32.Mapi.OfflineState]::Mask
+        }
+
+        if ($syncModeBin = $globalSection.$($PropTags.PR_CACHE_SYNC_MODE)) {
+            $cacheSyncMode = [BitConverter]::ToInt32($syncModeBin, 0)
+        }
+    }
+
+    [PSCustomObject]@{
+        DisplayName   = 'Outlook Global Section'
+        Uid           = $KnownSections.Global
+        OfflineState  = $offlineState
+        CacheSyncMode = $cacheSyncMode
+    }
+}
+
+function Get-StoreProvider {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Profile
+    )
+
+    if ($Profile -is [string]) {
+        if (-not $Profile.StartsWith('Registry::')) {
+            $local:Profile = 'Registry::' + $Profile
+        }
+
+        $local:Profile = Get-Item $Profile
+    }
+
+    $accountManager = Join-Path $Profile.PSPath $KnownSections.AccountManager | Get-ItemProperty -Name $AccountManagerCLSIDs.CLSID_OlkStore -ErrorAction SilentlyContinue
+    $storeBin = $accountManager | Select-Object -ExpandProperty $AccountManagerCLSIDs.CLSID_OlkStore
+    $accountCount = $storeBin.Count / 4
+
+    $storeProviderProps = @(
+        $PropTags.PR_DISPLAY_NAME
+        $PropTags.PR_RESOURCE_FLAGS
+        $PropTags.PR_PROFILE_PST_PATH
+        $PropTags.PR_PROFILE_ALTERNATE_STORE_TYPE
+        $PropTags.PR_PROFILE_USER_SMTP_EMAIL_ADDRESS
+        $PropTags.PR_PROFILE_TENANT_ID
+        $PropTags.PR_EMSMDB_SECTION_UID
+    )
+
+    for ($i = 0; $i -lt $accountCount; ++$i) {
+        $accountId = "{0:x8}" -f [BitConverter]::ToInt32($storeBin, $i * 4)
+        $account = Join-Path $accountManager.PSPath $accountId | Get-ItemProperty
+        $serviceUid = [BitConverter]::ToString($account.'Service UID').Replace('-', '').ToLowerInvariant()
+        $service = Join-Path $Profile.PSPath $serviceUid | Get-ItemProperty -Name $PropTags.PR_STORE_PROVIDERS -ErrorAction SilentlyContinue
+        $storeProvidersBin = $service.$($PropTags.PR_STORE_PROVIDERS)
+        $storeProvidersCount = $storeProvidersBin.Count / 16 
+
+        for ($j = 0; $j -lt $storeProvidersCount; ++$j) {
+            $storeUid = [BitConverter]::ToString($storeProvidersBin, $j * 16, 16).Replace('-', '')
+            $store = Join-Path $Profile.PSPath $storeUid | Get-ItemProperty -Name $storeProviderProps -ErrorAction SilentlyContinue
+
+            $props = [ordered]@{
+                DisplayName = [System.Text.Encoding]::Unicode.GetString($store.$($PropTags.PR_DISPLAY_NAME))
+            }
+
+            if ($resourceFlagsBin = $store.$($PropTags.PR_RESOURCE_FLAGS)) {
+                $props.ResourceFlags = [Win32.Mapi.ResourceFlags][BitConverter]::ToUInt32($resourceFlagsBin, 0)
+            }
+
+            if ($alternateStoreTypeBin = $store.$($PropTags.PR_PROFILE_ALTERNATE_STORE_TYPE)) {
+                $props.AlternateStoreType = [System.Text.Encoding]::Unicode.GetString($alternateStoreTypeBin)
+            }
+
+            if ($pstPath = $store.$($PropTags.PR_PROFILE_PST_PATH)) {
+                $props.PstPath = [System.Text.Encoding]::Unicode.GetString($pstPath, 0, $pstPath.Length - 2)
+                $props.PstSize = Get-ItemProperty $props.PstPath | Select-Object -ExpandProperty Length | Format-ByteSize
+            }
+
+            if ($userSmtpEmailAddressBin = $store.$($PropTags.PR_PROFILE_USER_SMTP_EMAIL_ADDRESS)) {
+                $props.UserSmtpEmailAddress = [System.Text.Encoding]::Unicode.GetString($userSmtpEmailAddressBin)
+            }
+
+            if ($tenantIdBin = $store.$($PropTags.PR_PROFILE_TENANT_ID)) {
+                $props.TenantId = [System.Text.Encoding]::Unicode.GetString($tenantIdBin)
+            }
+
+            if ($emsmdbUidBin = $store.$($PropTags.PR_EMSMDB_SECTION_UID)) {
+                $props.EmsmdbUid = [BitConverter]::ToString($emsmdbUidBin).Replace('-', [String]::Empty).ToLowerInvariant()
+            }
+
+            [PSCustomObject]$props
+        }
+    }
+}
+
 function Get-MapiAccount {
     [CmdletBinding()]
     param(
         $Account
     )
 
-    # This should be Transport Provider (PR_RESOURCE_TYPE: 36)
-    $providerUid = [BitConverter]::ToString($Account.'XP Provider UID').Replace('-', '')
+    # Get Profile root path
+    $profRoot = $Account.PSPath.SubString(0, $Account.PSPath.IndexOf($KnownSections.AccountManager))
 
-    $prof = Split-Path $Account.PSParentPath
-    $PR_EMSMDB_SECTION_UID = '01023d15'
-    $emsmdbSectionUidBytes = Join-Path $prof $providerUid | Get-ItemProperty -Name $PR_EMSMDB_SECTION_UID -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $PR_EMSMDB_SECTION_UID
-    $emsmdbSectionUid = [BitConverter]::ToString($emsmdbSectionUidBytes).Replace('-', '')
+    $serviceUid = [BitConverter]::ToString($account.'Service UID').Replace('-', [String]::Empty)
+    $service = Join-Path $profRoot $serviceUid | Get-ItemProperty -Name $PropTags.PR_EMSMDB_SECTION_UID -ErrorAction SilentlyContinue
+    $emsmdbUid = [BitConverter]::ToString($service.$($PropTags.PR_EMSMDB_SECTION_UID)).Replace('-', '').ToLowerInvariant()
 
-    #  Provider Properties
-    $PR_DISPLAY_NAME = '001f3001'
-    $PR_EMSMDB_IDENTITY_UNIQUEID = '001f3d1d'
-    $PR_PROFILE_CONFIG_FLAGS = '00036601'
-    $PR_PROFILE_CONFIG_FLAGS_EX = '1003666e'
-    $PR_PROFILE_USER_SMTP_EMAIL_ADDRESS = '001f6641'
-
-    # Config flag constants
-    $CONFIG_OST_CACHE_PRIVATE = 0x180      # [Use Cached Exchange Mode]
-    $CONFIG_OST_CACHE_PUBLIC = 0x400       # [Download Public Folder Favorites]
-    $CONFIG_OST_CACHE_DELEGATE_PIM = 0x800 # [Download shared folders]
-
-    # Shared calendar options
-    $SharedCal = @{
-        0 = 'None'
-        1 = 'REST'
-        2 = 'MAPI'
-    }
-
-    $props = Join-Path $prof $emsmdbSectionUid | Get-ItemProperty -Name $PR_DISPLAY_NAME, $PR_EMSMDB_IDENTITY_UNIQUEID, $PR_PROFILE_CONFIG_FLAGS, $PR_PROFILE_CONFIG_FLAGS_EX -ErrorAction SilentlyContinue
-
-    $displayName = $null
-
-    if ($props.$PR_DISPLAY_NAME) {
-        $displayName = [System.Text.encoding]::Unicode.GetString($props.$PR_DISPLAY_NAME)
-    }
-
-    $identityUniqueId = $null
-
-    if ($props.$PR_EMSMDB_IDENTITY_UNIQUEID) {
-        $identityUniqueId = [System.Text.encoding]::Unicode.GetString($props.$PR_EMSMDB_IDENTITY_UNIQUEID)
-    }
-
-    $flags = 0
-
-    if ($props.$PR_PROFILE_CONFIG_FLAGS) {
-        $flags = [BitConverter]::ToUInt32($props.$PR_PROFILE_CONFIG_FLAGS, 0)
-    }
-    else {
-        Write-Log "Cannot find PR_PROFILE_CONFIG_FLAGS (0x66010003) for account '$accountName'."
-    }
-
-    $CACHE_PRIVATE = ($flags -band $CONFIG_OST_CACHE_PRIVATE) -ne 0
-    $CACHE_PUBLIC = ($flags -band $CONFIG_OST_CACHE_PUBLIC) -ne 0
-    $CACHE_DELEGATE_PIM = ($flags -band $CONFIG_OST_CACHE_DELEGATE_PIM) -ne 0
-
-    # Get PR_PROFILE_CONFIG_FLAGS_EX.
-    $sharedCalFlags = 0
-
-    if ($props.$PR_PROFILE_CONFIG_FLAGS_EX) {
-        $sharedCalFlags = [BitConverter]::ToInt32($props.$PR_PROFILE_CONFIG_FLAGS_EX, 0)
-    }
-
-    # Get Store Providers (its displayname appears on top of Outlook's folder tree)
-    # Note that there might be more than one store providers (such as primary & archive mailbox)
-    $PR_STORE_PROVIDERS = '01023d00'
-    $storeProvidersBytes = Join-Path $prof $emsmdbSectionUid | Get-ItemProperty -Name $PR_STORE_PROVIDERS -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $PR_STORE_PROVIDERS
-    $storeProvidersCount = $storeProvidersBytes.Count / 16
-
-    $storeProviders = @(
-        for ($i = 0; $i -lt $storeProvidersCount; ++$i) {
-            $uid = [BitConverter]::ToString($storeProvidersBytes, $i * 16, 16).Replace('-', '')
-            $props = Join-Path $prof $uid | Get-ItemProperty -Name $PR_DISPLAY_NAME, $PR_PROFILE_USER_SMTP_EMAIL_ADDRESS -ErrorAction SilentlyContinue
-
-            [PSCustomObject]@{
-                DisplayName = [System.Text.encoding]::Unicode.GetString($props.$PR_DISPLAY_NAME)
-                PR_PROFILE_USER_SMTP_EMAIL_ADDRESS = [System.Text.encoding]::Unicode.GetString($props.$PR_PROFILE_USER_SMTP_EMAIL_ADDRESS)
-            }
-        }
+    # Get EMSMDB section properties
+    $emsmdbProperties = @(
+        $PropTags.PR_DISPLAY_NAME
+        $PropTags.PR_EMSMDB_IDENTITY_UNIQUEID
+        $PropTags.PR_PROFILE_USER_FULL_NAME
+        $PropTags.PR_PROFILE_OFFLINE_STORE_PATH
+        $PropTags.PR_PROFILE_CONFIG_FLAGS
+        $PropTags.PR_PROFILE_CONFIG_FLAGS_EX
+        $PropTags.PR_PROFILE_SYNC_MONTHS
+        $PropTags.PR_PROFILE_SYNC_DAYS
     )
 
-    [PSCustomObject]@{
-        Profile                       = $null
-        AccountName                   = $Account.'Account Name'
-        IdentityUniqueId              = $identityUniqueId
-        AccountType                   = 'MAPI'
-        IsDefaultAccount              = $false
-        DisplayName                   = $displayName
-        CachedMode                    = $CACHE_PRIVATE -or $CACHE_PUBLIC -or $CACHE_DELEGATE_PIM
-        DownloadPublicFolderFavorites = $CACHE_PUBLIC
-        DownloadSharedFolders         = $CACHE_DELEGATE_PIM
-        PR_PROFILE_CONFIG_FLAGS       = $flags
-        SharedCalendarOption          = $SharedCal[$sharedCalFlags -band 0xffff]
-        StoreProviders                = $storeProviders
+    $emsmdb = Join-Path $profRoot $emsmdbUid | Get-ItemProperty -Name $emsmdbProperties -ErrorAction SilentlyContinue
+
+    $props = [ordered]@{
+        Profile          = $null
+        DisplayName      = [System.Text.Encoding]::Unicode.GetString($emsmdb.$($PropTags.PR_DISPLAY_NAME))
+        IdentityUniqueId = [System.Text.Encoding]::Unicode.GetString($emsmdb.$($PropTags.PR_EMSMDB_IDENTITY_UNIQUEID))
+        AccountType      = 'MAPI'
+        IsDefaultAccount = $false
+        EmsmdbUid = $emsmdbUid
     }
+
+    if ($userFullName = $emsmdb.$($PropTags.PR_PROFILE_USER_FULL_NAME)) {
+        $props.UserFullName = [System.Text.Encoding]::Unicode.GetString($userFullName)
+    }
+
+    if ($ostPath = $emsmdb.$($PropTags.PR_PROFILE_OFFLINE_STORE_PATH)) {
+        $props.OstPath = [System.Text.Encoding]::Unicode.GetString($ostPath, 0, $ostPath.Length - 2)
+        $props.OstSize = Get-ItemProperty $props.OstPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Length | Format-ByteSize
+    }
+
+    if ($configFlagsBin = $emsmdb.$($PropTags.PR_PROFILE_CONFIG_FLAGS)) {
+        [Win32.Mapi.ProfileConfigFlags]$configFlags = [BitConverter]::ToUInt32($configFlagsBin, 0)
+        $props.IsCachedMode = $configFlags.HasFlag([Win32.Mapi.ProfileConfigFlags]::CONFIG_OST_CACHE_PRIVATE)
+        $props.DownloadPublicFolderFavorites = $configFlags.HasFlag([Win32.Mapi.ProfileConfigFlags]::CONFIG_OST_CACHE_PUBLIC)
+        $props.DownloadSharedFolders = $configFlags.HasFlag([Win32.Mapi.ProfileConfigFlags]::CONFIG_OST_CACHE_DELEGATE_PIM)
+    }
+
+    # Get Sync Window
+    $syncMonths = $null
+    $syncDays = $null
+
+    if ($syncMonthsBin = $emsmdb.$($PropTags.PR_PROFILE_SYNC_MONTHS)) {
+        $syncMonths = [System.BitConverter]::ToInt32($syncMonthsBin, 0)
+    }
+
+    if ($syncDaysBin = $emsmdb.$($PropTags.PR_PROFILE_SYNC_DAYS)) {
+        $syncDays = [System.BitConverter]::ToInt32($syncDaysBin, 0)
+    }
+
+    $props.SyncWindow = Get-SyncWindow -Days $syncDays -Months $syncMonths
+
+    # Shared Calendar (low 2 bytes of PR_PROFILE_CONFIG_FLAGS_EX)
+    if ($configFlagsExBin = $emsmdb.$($PropTags.PR_PROFILE_CONFIG_FLAGS_EX)) {
+        [Win32.Mapi.SharedCalProfileConfigFlags]$props.SharedCalendarOption = [BitConverter]::ToInt32($configFlagsExBin, 0) -band 0xffff
+    }
+
+    [PSCustomObject]$props
+}
+
+function Format-ByteSize {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        $Size
+    )
+
+    $suffix = "B", "KB", "MB", "GB", "TB", "PB"
+    $index = 0
+
+    while ($Size -gt 1kb) {
+        $Size = $Size / 1kb
+        $index++
+    }
+
+    "{0:N2} {1}" -f $Size, $suffix[$index]
 }
 
 <#
@@ -7807,6 +8129,7 @@ function Collect-OutlookInfo {
     # If User is given, use it as the target user; Otherwise, use the logon user.
     if ($PSBoundParameters.ContainsKey('User')) {
         $targetUser = Resolve-User $User
+
         if (-not $targetUser) {
             return
         }
@@ -8316,7 +8639,7 @@ function Collect-OutlookInfo {
                 }
             }
 
-            # ZoomIt was downloaded. 
+            # ZoomIt was downloaded.
             # if ($recoding.ZoomItDownloadedPath) {
             #     # Kill ZoomIt and remove exe files
             #     $zoomiIt = Get-Process 'ZoomIt*' | Select-Object -First 1
