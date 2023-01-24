@@ -4027,7 +4027,13 @@ function Get-MapiAccount {
 
     if ($ostPath = $emsmdb.$($PropTags.PR_PROFILE_OFFLINE_STORE_PATH)) {
         $props.OstPath = [System.Text.Encoding]::Unicode.GetString($ostPath, 0, $ostPath.Length - 2)
-        $props.OstSize = Get-ItemProperty $props.OstPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Length | Format-ByteSize
+
+        if ($size = Get-ItemProperty $props.OstPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Length) {
+            $props.OstSize = Format-ByteSize $size
+        }
+        else {
+            $props.OstSize = 'Unknown'
+        }
     }
 
     if ($configFlagsBin = $emsmdb.$($PropTags.PR_PROFILE_CONFIG_FLAGS)) {
@@ -4075,6 +4081,96 @@ function Format-ByteSize {
     }
 
     "{0:N2} {1}" -f $Size, $suffix[$index]
+}
+
+function Get-OutlookOption {
+    [CmdletBinding()]
+    param (
+        $User
+    )
+
+    function New-Option {
+        param (
+            [Parameter(Mandatory)]
+            $Name,
+            [Parameter(Mandatory)]
+            $DisplayName,
+            [Parameter(Mandatory)]
+            [ValidateSet('Mail', 'Calendar', 'Advanced')]
+            $Category,
+            $Value
+        )
+
+        [PSCustomObject]@{ 
+            Name = $Name
+            DisplayName = $DisplayName
+            Category = $Category
+            Value = $Value
+        }
+    }
+
+    function Set-Option {
+        param (
+            [Parameter(Mandatory)]
+            # Name of registry value
+            $Name,
+            [Parameter(Mandatory)]
+            $Property,
+            # Default converter just converts 0 -> $false, otherwise $true.
+            [ScriptBlock]$Converter = { param ($val) if ($val -eq 0) { return $false } else { $true } },
+            [Parameter(Mandatory)]
+            $Options
+        )
+
+        $regValue = $Property.$Name
+
+        if ($null -ne $regValue) {
+            $option = $Options | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
+            $option.Value = & $Converter $regValue 
+        }
+    }
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    $officeInfo = Get-OfficeInfo
+    $major = $officeInfo.Version.Split('.')[0]
+
+    $optionsPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Options"
+    $prefPath =  Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Preferences"
+
+    # Options I'm interested
+    $options = @(
+        New-Option -Name 'Send Mail Immediately' -DisplayName 'Send Mail Immediately' -Category Mail -Value $true
+        New-Option -Name 'NewMailDesktopAlerts' -DisplayName 'Display a Desktop Alert' -Category Mail -Value $true
+        New-Option -Name 'NewMailDesktopAlertsDRMPreview' -DisplayName 'Enable preview for Rights Protected messages' -Category Mail -Value $false
+        New-Option -Name 'Autodetect_CodePageOut' -DisplayName 'Automatically select encoding for outgoing messages' -Category Advanced -Value $true
+        New-Option -Name 'Default_CodePageOut' -DisplayName 'Preferred encoding for outgoing messages' -Category Advanced -Value $null
+    )
+
+    $PSDefaultParameterValues['Set-Option:Options'] = $options
+    
+    if ($prop = Join-Path $optionsPath 'Mail' | Get-ItemProperty -ErrorAction SilentlyContinue) {
+        $PSDefaultParameterValues['Set-Option:Property'] = $prop
+        Set-Option -Name 'Send Mail Immediately'
+    }
+
+    if ($prop = Get-ItemProperty $prefPath -ErrorAction SilentlyContinue) {
+        $PSDefaultParameterValues['Set-Option:Property'] = $prop
+        Set-Option -Name 'NewMailDesktopAlerts'
+        Set-Option -Name 'NewmailDesktopAlertsDRMPreview'
+    }
+
+    if ($prop = Join-Path $optionsPath 'MSHTML\International\' | Get-ItemProperty -ErrorAction SilentlyContinue) {
+        $PSDefaultParameterValues['Set-Option:Property'] = $prop
+        Set-Option -Name 'Autodetect_CodePageOut'
+        Set-Option -Name 'Default_CodePageOut' -Converter { param ($regValue) [System.Text.Encoding]::GetEncoding($prop.Default_CodePageOut).WebName } 
+    }
+
+    $options
 }
 
 <#
@@ -5854,7 +5950,7 @@ function Save-Dump {
         }
     }
     else {
-        $dumpFile = Join-Path $Path "$($process.Name)_$(Get-Date -Format 'yyyy-MM-dd-HHmmss').dmp"
+        $dumpFile = Join-Path $Path "$($process.Name)_PID$($ProcessId)_$(Get-Date -Format 'yyyy-MM-dd-HHmmss').dmp"
         $dumpFileStream = [System.IO.File]::Create($dumpFile)
         $writeDumpSuccess = $false
 
@@ -8089,6 +8185,7 @@ function Collect-OutlookInfo {
         # Number of seconds used to detect a hung window when "HungDump" is requested in Component.
         [ValidateRange(1, [int]::MaxValue)]
         [int]$HungTimeoutSecond = 5,
+        [int]$MaxHungDumpCount = 3,
         [string]$HungMonitorTarget = 'Outlook', # This is just for testing.
         [switch]$WamSignOut,
         [switch]$EnablePageHeap
@@ -8509,14 +8606,12 @@ function Collect-OutlookInfo {
             $monitorStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
             Write-Log "Starting hungMonitorTask. HungMonitorTarget: $HungMonitorTarget, HungTimeoutSecond: $HungTimeoutSecond."
 
-            # Save at most 10 dump files for each instance of the process.
-            $maxDumpFileCount = 10
-
             $hungMonitorTask = Start-Task -ScriptBlock {
                 param($path, $timeout, $dumpCount, $cancelToken, $name, $monitorStartedEvent)
 
                 $null = $monitorStartedEvent.Set()
-
+                $procCache = @{} # Key: Process Hash, Value: true/false for "need to log".
+                
                 # The target process may restart while being monitored. Keep monitoring until canceled (via hungDumpCts).
                 while ($true) {
                     # Wait for the target process ($name) to come live.
@@ -8525,21 +8620,41 @@ function Collect-OutlookInfo {
                             return
                         }
 
-                        $targetProcess = Get-Process -Name $name -ErrorAction SilentlyContinue
+                        # There could be multiple process instances.
+                        # Not really expected for Outlook, but monitor the one that started first, while skipping the ones that have been monitored already.
+                        $targetPid = Get-Process -Name $name -ErrorAction SilentlyContinue | Sort-Object StartTime | & {
+                            process {
+                                $id =  $_.Id
+                                $startTime = $_.StartTime
+                                $_.Dispose()
+                                # Do not use GetHashCode() for the Process itself because tt returns a new value every time.
+                                $hash = (17 * 23 + $id.GetHashCode()) * 23 + $startTime.GetHashCode()
 
-                        if ($targetProcess -and -not $targetProcess.HasExited) {
-                            $id = $targetProcess.Id
-                            $targetProcess.Dispose()
+                                if ($procCache.ContainsKey($hash)) {
+                                    if ($procCache[$hash]) {
+                                        Write-Log "This instance of $name (PID: $id, StartTime:$startTime) has been seen already. This instance will be not be monitored"
+                                        $procCache[$hash] = $false
+                                    }
+                                }
+                                else {
+                                    $procCache.Add($hash, $true)
+                                    $id
+                                }
+
+                            }
+                        } | Select-Object -First 1
+
+                        if ($targetPid) {
                             break
                         }
 
                         Start-Sleep -Seconds 2
                     }
 
-                    Write-Log "hungMonitorTask has found $name (PID $id). Starting hung window monitoring."
-                    Save-HungDump -Path $path -ProcessId $id -DumpCount $dumpCount -TimeoutSecond $timeout -CancellationToken $cancelToken 2>&1 | Write-Log -Category Error -PassThru
+                    Write-Log "hungMonitorTask has found $name (PID $targetPid). Starting hung window monitoring."
+                    Save-HungDump -Path $path -ProcessId $targetPid -DumpCount $dumpCount -TimeoutSecond $timeout -CancellationToken $cancelToken 2>&1 | Write-Log -Category Error -PassThru
                 }
-            } -ArgumentList (Join-Path $tempPath 'HungDump'), $HungTimeoutSecond, $maxDumpFileCount, $hungDumpCts.Token, $HungMonitorTarget, $monitorStartedEvent
+            } -ArgumentList (Join-Path $tempPath 'HungDump'), $HungTimeoutSecond, $MaxHungDumpCount, $hungDumpCts.Token, $HungMonitorTarget, $monitorStartedEvent
 
             $null = $monitorStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan)
             $hungDumpStarted = $true
@@ -8798,7 +8913,7 @@ function Collect-OutlookInfo {
                     Write-Log "officeModuleInfoTask is complete before timeout."
                 }
                 else {
-                    Write-Log "officeModuleInfoTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled."
+                    Write-Log "officeModuleInfoTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
                     $officeModuleInfoTaskCts.Cancel()
                 }
 
