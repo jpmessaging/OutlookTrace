@@ -2862,7 +2862,7 @@ function Invoke-ScriptBlock {
     param (
         [Parameter(Mandatory = $true, Position = 0)]
         [ScriptBlock]$ScriptBlock,
-        [object[]]$ArgumentList,
+        $ArgumentList,
         # Folder to save to
         $Path,
         # File name used for saving
@@ -8454,6 +8454,7 @@ function Collect-OutlookInfo {
 
         # Configure log file mode and max file size for ETW traces (OutlookTrace, WAM, LDAP, and CAPI)
         $PSDefaultParameterValues['Start-*Trace:LogFileMode'] = $LogFileMode
+
         if ($PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
             $PSDefaultParameterValues['Start-*Trace:MaxFileSizeMB'] = $MaxFileSizeMB
         }
@@ -8496,48 +8497,52 @@ function Collect-OutlookInfo {
             Write-Progress -PercentComplete 0
 
             # First start tasks that might take a while.
-            Write-Log "Starting officeModuleInfoTask."
+            Write-Log "Starting officeModuleInfoTask"
             $officeModuleInfoTaskCts = New-Object System.Threading.CancellationTokenSource
-            $officeModuleInfoTask = Start-Task { param($path, $token) Save-OfficeModuleInfo -Path $path -CancellationToken $token } -ArgumentList $OfficeDir, $officeModuleInfoTaskCts.Token
+            $officeModuleInfoTask = Start-Task { param($Path, $CancellationToken) Save-OfficeModuleInfo @PSBoundParameters } -ArgumentList @{ Path = $OfficeDir; CancellationToken = $officeModuleInfoTaskCts.Token }
 
-            Write-Log "Starting networkInfoTask."
-            $networkInfoTask = Start-Task { param($path) Save-NetworkInfo -Path $path } -ArgumentList $NetworkDir
+            Write-Log "Starting networkInfoTask"
+            $networkInfoTask = Start-Task { param($Path) Save-NetworkInfo @PSBoundParameters } -ArgumentList $NetworkDir
 
             Write-Progress -PercentComplete 20
 
-            Write-Log "Starting officeRegistryTask."
-            $officeRegistryTask = Start-Task { param($path, $user) Save-OfficeRegistry -Path $path -User $user } -ArgumentList $RegistryDir, $targetUser
+            Write-Log "Starting officeRegistryTask"
+            $officeRegistryTask = Start-Task { param($Path, $User) Save-OfficeRegistry @PSBoundParameters } -ArgumentList @{ Path = $RegistryDir; User = $targetUser }
 
-            Write-Log "Starting osConfigurationTask."
-            $osConfigurationTask = Start-Task { param($path, $user) Save-OSConfiguration -Path $path -User $user } -ArgumentList $OSDir, $targetUser
+            Write-Log "Starting osConfigurationTask"
+            $osConfigurationTask = Start-Task { param($Path, $User) Save-OSConfiguration @PSBoundParameters } -ArgumentList @{ Path = $OSDir; User = $targetUser }
 
             Write-Progress -PercentComplete 40
 
-            Invoke-ScriptBlock { Get-OfficeInfo } -Path $OfficeDir
-            Invoke-ScriptBlock { param($user) Get-OutlookProfile -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Invoke-ScriptBlock { param($user) Get-OutlookAddin -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Invoke-ScriptBlock { param($user) Get-AutodiscoverConfig -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Invoke-ScriptBlock { param($user) Get-SocialConnectorConfig -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Invoke-ScriptBlock { Get-ClickToRunConfiguration } -Path $OfficeDir
-            Invoke-ScriptBlock { param($user) Get-IMProvider -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Invoke-ScriptBlock { param($user) Get-AlternateId -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Invoke-ScriptBlock { param($user) Get-UseOnlineContent -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Invoke-ScriptBlock { param($user) Get-OfficeIdentityConfig -User $user } -ArgumentList $targetUser -Path $OfficeDir
-            Invoke-ScriptBlock { param($user) Get-OfficeIdentity -User $user } -ArgumentList $targetUser -Path $OfficeDir
+            $PSDefaultParameterValues['Invoke-ScriptBlock:ArgumentList'] = @{ User = $targetUser }
+            $PSDefaultParameterValues['Invoke-ScriptBlock:Path'] = $OfficeDir
+            Invoke-ScriptBlock { Get-OfficeInfo }
+            Invoke-ScriptBlock { param($User) Get-OutlookProfile @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-OutlookAddin @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-AutodiscoverConfig @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-SocialConnectorConfig @PSBoundParameters }
+            Invoke-ScriptBlock { Get-ClickToRunConfiguration }
+            Invoke-ScriptBlock { param($User) Get-IMProvider @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-AlternateId @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-UseOnlineContent @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-OfficeIdentityConfig @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-OfficeIdentity @PSBoundParameters }
+            $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:ArgumentList')
+            $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:Path')
 
             Write-Progress -PercentComplete 60
 
-            Invoke-ScriptBlock { param($user, $OfficeDir) Save-CachedAutodiscover -User $user -Path $(Join-Path $OfficeDir 'Cached AutoDiscover') } -ArgumentList $targetUser, $OfficeDir
-            Invoke-ScriptBlock { param($user, $OfficeDir) Save-CachedOutlookConfig -User $user -Path $(Join-Path $OfficeDir 'Cached OutlookConfig') } -ArgumentList $targetUser, $OfficeDir
-            Invoke-ScriptBlock { param($user, $OfficeDir) Save-PolicyNudge -User $user -Path $(Join-Path $OfficeDir 'PolicyNudge') } -ArgumentList $targetUser, $OfficeDir
-            Invoke-ScriptBlock { param($user, $OfficeDir) Save-DLP -User $user -Path $(Join-Path $OfficeDir 'DLP') } -ArgumentList $targetUser, $OfficeDir
-            Invoke-ScriptBlock { param($user, $OfficeDir) Save-CLP -User $user -Path $(Join-Path $OfficeDir 'CLP') } -ArgumentList $targetUser, $OfficeDir
+            Invoke-ScriptBlock { param($User, $Path) Save-CachedAutodiscover @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'Cached AutoDiscover' }
+            Invoke-ScriptBlock { param($User, $Path) Save-CachedOutlookConfig @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'Cached OutlookConfig' }
+            Invoke-ScriptBlock { param($User, $Path) Save-PolicyNudge @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'PolicyNudge' }
+            Invoke-ScriptBlock { param($User, $Path) Save-DLP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'DLP' }
+            Invoke-ScriptBlock { param($User, $Path) Save-CLP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'CLP' }
 
             Write-Progress -PercentComplete 80
 
             # Names of processes whose owner info is also saved.
             $processesWithOwner = @('Outlook', 'Fiddler*', 'explorer')
-            Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name $processesWithOwner } -ArgumentList $OSDir
+            Invoke-ScriptBlock { param($Path, $Name) Save-Process @PSBoundParameters } -ArgumentList @{ Path = $OSDir; Name = $processesWithOwner }
 
             if ($targetUser) {
                 $targetUser | Export-Clixml -Path (Join-Path $OSDir 'User.xml')
@@ -8547,7 +8552,12 @@ function Collect-OutlookInfo {
                 # The user might start & stop Outlook while tracing. In order to capture Outlook's instances, run a task to check Outlook.exe periodically.
                 Write-Log "Starting outlookMonitorTask."
                 $outlookMonitorTaskCts = New-Object System.Threading.CancellationTokenSource
-                $outlookMonitorTask = Start-Task { param ($path, $name, $cancelToken) Start-ProcessMonitoring -Path $path -Name $name -CancelToken $cancelToken } -ArgumentList $OSDir, $processesWithOwner, $outlookMonitorTaskCts.Token
+                $outlookMonitorTask = Start-Task { param ($Path, $Name, $CancelToken) Start-ProcessMonitoring @PSBoundParameters } `
+                    -ArgumentList @{ 
+                    Path        = $OSDir
+                    Name        = $processesWithOwner
+                    CancelToken = $outlookMonitorTaskCts.Token
+                }
             }
 
             Write-Progress -Completed
@@ -8925,7 +8935,7 @@ function Collect-OutlookInfo {
             if ($startSuccess) {
                 Write-Progress -Status 'Saving event logs'
                 Save-EventLog -Path $EventDir 2>&1 | Write-Log -Category Error
-                Invoke-ScriptBlock { param($user, $MSIPCDir) Save-MSIPC -Path $MSIPCDir -User $user -All } -ArgumentList $targetUser, $MSIPCDir 2>&1 | Write-Log -Category Error
+                Invoke-ScriptBlock { param($User, $Path, $All) Save-MSIPC @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = $MSIPCDir; All = $true } 2>&1 | Write-Log -Category Error
             }
 
             if ($osConfigurationTask) {
@@ -8965,7 +8975,7 @@ function Collect-OutlookInfo {
             # Save process list again after traces
             if ($startSuccess -and $Component.Count -gt 1) {
                 Write-Progress -Status 'Saving process list'
-                Invoke-ScriptBlock { param($OSDir) Save-Process -Path $OSDir -Name $processesWithOwner } -ArgumentList $OSDir 2>&1 | Write-Log -Category Error
+                Invoke-ScriptBlock { param($Path, $Name) Save-Process @PSBoundParameters } -ArgumentList @{ Path = $OSDir; Name = $processesWithOwner } 2>&1 | Write-Log -Category Error
             }
         }
 
