@@ -834,7 +834,7 @@ function Write-Log {
     process {
         # If ErrorRecord is provided, use it.
         if ($ErrorRecord) {
-            $Message = "$Message [ErrorRecord] ExceptionType: $($ErrorRecord.Exception.GetType().Name), Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
+            $Message = "$Message; [ErrorRecord] ExceptionType: $($ErrorRecord.Exception.GetType().Name), Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
         }
 
         # Ignore null or an empty string.
@@ -1016,6 +1016,8 @@ Note: Receive-Task waits for the task to complete and returns the result (and er
 function Start-Task {
     [CmdletBinding()]
     param (
+        # Optional name of task
+        [string]$Name,
         # Command to execute.
         [Parameter(ParameterSetName = 'Command', Mandatory = $true, Position = 0)]
         [string]$Command,
@@ -1027,7 +1029,7 @@ function Start-Task {
         [ScriptBlock]$ScriptBlock,
         # ArgumentList to ScriptBlock
         [Parameter(ParameterSetName = 'Script')]
-        [object[]]$ArgumentList
+        $ArgumentList
     )
 
     if (-not $Script:runspacePool) {
@@ -1050,9 +1052,14 @@ function Start-Task {
 
         'Script' {
             $null = $ps.AddScript($ScriptBlock)
-            foreach ($p in $ArgumentList) {
-                $null = $ps.AddArgument($p)
+
+            if ($ArgumentList -is [System.Collections.IList] -or $ArgumentList -is [System.Collections.IDictionary]) {
+                $null = $ps.AddParameters($ArgumentList)
             }
+            else {
+                $null = $ps.AddArgument($ArgumentList)
+            }
+
             break
         }
     }
@@ -1066,6 +1073,7 @@ function Start-Task {
         # These are for diagnostic purpose
         ScriptBlock  = $ScriptBlock
         ArgumentList = $ArgumentList
+        Name         = $Name
     }
 }
 
@@ -1100,6 +1108,24 @@ function Wait-Task {
     }
 }
 
+# Helper function to format an error message from an ErrorRecord of task.
+function Format-TaskError {
+    param(
+        $Task,
+        [System.Management.Automation.ErrorRecord]$ErrorRecord,
+        [switch]$Terminating
+    )
+
+    $msg = New-Object System.Text.StringBuilder "Task $(if ($Task.Name) { $Task.Name } else { "{$($Task.ScriptBlock)}" }) had a $(if (-not $Terminating) {'non-'})terminating error."
+    $null = $msg.Append(' ').Append($ErrorRecord.Exception.GetType().Name).Append(': ').Append($ErrorRecord.Exception.Message)
+
+    if ($ErrorRecord.ScriptStackTrace) {
+        $null = $msg.Append(' ').Append($ErrorRecord.ScriptStackTrace.Split([System.Environment]::NewLine)[0])
+    }
+
+    $msg.ToString()
+}
+
 function Receive-Task {
     [CmdletBinding()]
     param (
@@ -1114,40 +1140,33 @@ function Receive-Task {
             [powershell]$ps = $t.PowerShell
             [IAsyncResult]$ar = $t.AsyncResult
 
-            try {
-                # To support Ctrl+C, wake up once in while.
-                while ($true) {
-                    if ($ar.AsyncWaitHandle.WaitOne(2000)) {
-                        break
-                    }
+            # To support Ctrl+C, wake up once in while.
+            while ($true) {
+                if ($ar.AsyncWaitHandle.WaitOne(2000)) {
+                    break
                 }
+            }
+
+            try {
                 $ps.EndInvoke($ar)
             }
             catch {
-                Write-Error -Message "Task threw a terminating error.`nScriptBlock: $($t.ScriptBlock); ArgumentList: $($t.ArgumentList)`n$_" -Exception $_.Exception
+                # "Real" ErrorRecord is inside InnerException (The outermost exception points to EndInvoke() above)
+                $errorMessage = Format-TaskError -Task $t -ErrorRecord $_.Exception.InnerException.ErrorRecord -Terminating
+                Write-Error -Message $errorMessage -Exception $_.Exception
             }
 
-            if ($ps.HadErrors) {
-                $ps.Streams.Error | ForEach-Object {
-                    # Include the ErrorRecord's InvocationInfo so that it's easier to understand the origin of error.
-                    Write-Error -Message "Task has a non-terminating error.`nScriptBlock: $($t.ScriptBlock); ArgumentList: $($t.ArgumentList);`n$($_.InvocationInfo.MyCommand): $($_.Exception.Message);`n$($_.InvocationInfo.PositionMessage)" -Exception $_.Exception
+            foreach ($_ in $ps.Streams.Error) {
+                $errorMessage = Format-TaskError -Task $t -ErrorRecord $_
+                Write-Error -Message $errorMessage -Exception $_.Exception
+            }
 
-                    if ($TaskErrorVariable) {
-                        # Scope 1 is the parent scope, but it's not necessarily the caller scope.
-                        # If the caller is a function in this module, then scope 1 is the caller function.
-                        # However, if it's called from outside of module, scope 1 is the module's script scope. Thus the caller does not get the error.
-                        # Because this function is meant to be moudule-internal and should be called only within the moudle, Scope 1 is ok for now.
-                        New-Variable -Name $TaskErrorVariable -Value $($ps.Streams.Error.ReadAll()) -Scope 1 -Force
-
-                        # To see if it's called from within this moudle, maybe I can check the SessionState.
-                        # if ($SessionState -eq $ExecutionContext.SessionState) {
-                        #     New-Variable -Name $TaskErrorVariable -Value $($ps.Streams.Error.ReadAll()) -Scope 1 -Force
-                        # }
-                        # else {
-                        #     $SessionState.PSVariable.Set($TaskErrorVariable,$ps.Streams.Error.ReadAll())
-                        # }
-                    }
-                }
+            if ($TaskErrorVariable -and $ps.Streams.Error.Count -gt 0) {
+                # Scope 1 is the parent scope, but it's not necessarily the caller scope.
+                # If the caller is a function in this module, then scope 1 is the caller function.
+                # However, if it's called from outside of module, scope 1 is the module's script scope. Thus the caller does not get the error.
+                # Because this function is meant to be moudule-internal and should be called only within the moudle, Scope 1 is ok for now.
+                New-Variable -Name $TaskErrorVariable -Value $($ps.Streams.Error.ReadAll()) -Scope 1 -Force
             }
 
             if ($AutoRemoveTask) {
@@ -2215,7 +2234,7 @@ function Save-EventLog {
             $fileName = $log.Replace('/', '_') + '.evtx'
             $filePath = Join-Path $Path -ChildPath $fileName
             Write-Log "Saving $log to $filePath"
-            Start-Task -ScriptBlock {
+            Start-Task -Name 'EventLogExportTask' -ScriptBlock {
                 param ($log, $filePath)
                 wevtutil export-log $log $filePath /ow
                 wevtutil archive-log $filePath
@@ -3572,7 +3591,7 @@ function Get-OutlookProfile {
         # Target user
         [string]$User,
         # Profile names
-        [string[]]$Name 
+        [string[]]$Name
     )
 
     if (-not $User) {
@@ -3654,10 +3673,10 @@ function Get-DataFile {
     process {
         if ($_.PstPath) {
             [PSCustomObject]@{
-                Name = $_.DisplayName
+                Name      = $_.DisplayName
                 IsDefault = $_.ResourceFlags.HasFlag([Win32.Mapi.ResourceFlags]::STATUS_DEFAULT_STORE)
-                Location = $_.PstPath
-                Size = $_.PstSize
+                Location  = $_.PstPath
+                Size      = $_.PstSize
             }
         }
         elseif ($emsmdbUid = $_.EmsmdbUid) {
@@ -3666,14 +3685,14 @@ function Get-DataFile {
             }
 
             $emsmdbUidCache.Add($emsmdbUid, $true)
-            $account = $MailAccounts | Where-Object { $_.EmsmdbUid -eq $emsmdbUid} | Select-Object -First 1
+            $account = $MailAccounts | Where-Object { $_.EmsmdbUid -eq $emsmdbUid } | Select-Object -First 1
 
             if ($account.OstPath) {
                 [PSCustomObject]@{
-                    Name = $_.DisplayName
+                    Name      = $_.DisplayName
                     IsDefault = $_.ResourceFlags.HasFlag([Win32.Mapi.ResourceFlags]::STATUS_DEFAULT_STORE)
-                    Location = $account.OstPath
-                    Size = $account.OstSize
+                    Location  = $account.OstPath
+                    Size      = $account.OstSize
                 }
             }
         }
@@ -3736,12 +3755,12 @@ function Merge-CachedModePolicy {
             $Account.IsCachedMode = $cachedModePolicy.Enable
             $merged.Add('IsCachedMode')
         }
-        
+
         if ($cachedModePolicy.SyncWindow) {
             $Account.SyncWindow = $cachedModePolicy.SyncWindow
             $merged.Add('SyncWindow')
         }
-        
+
         if ($merged.Count -gt 0) {
             $Account | Add-Member -NotePropertyName 'CachedModePolicyOverrides' -NotePropertyValue $merged
         }
@@ -3945,7 +3964,7 @@ function Get-StoreProvider {
         $serviceUid = [BitConverter]::ToString($account.'Service UID').Replace('-', '').ToLowerInvariant()
         $service = Join-Path $Profile.PSPath $serviceUid | Get-ItemProperty -Name $PropTags.PR_STORE_PROVIDERS -ErrorAction SilentlyContinue
         $storeProvidersBin = $service.$($PropTags.PR_STORE_PROVIDERS)
-        $storeProvidersCount = $storeProvidersBin.Count / 16 
+        $storeProvidersCount = $storeProvidersBin.Count / 16
 
         for ($j = 0; $j -lt $storeProvidersCount; ++$j) {
             $storeUid = [BitConverter]::ToString($storeProvidersBin, $j * 16, 16).Replace('-', '')
@@ -4018,7 +4037,7 @@ function Get-MapiAccount {
         IdentityUniqueId = [System.Text.Encoding]::Unicode.GetString($emsmdb.$($PropTags.PR_EMSMDB_IDENTITY_UNIQUEID))
         AccountType      = 'MAPI'
         IsDefaultAccount = $false
-        EmsmdbUid = $emsmdbUid
+        EmsmdbUid        = $emsmdbUid
     }
 
     if ($userFullName = $emsmdb.$($PropTags.PR_PROFILE_USER_FULL_NAME)) {
@@ -4101,11 +4120,11 @@ function Get-OutlookOption {
             $Value
         )
 
-        [PSCustomObject]@{ 
-            Name = $Name
+        [PSCustomObject]@{
+            Name        = $Name
             DisplayName = $DisplayName
-            Category = $Category
-            Value = $Value
+            Category    = $Category
+            Value       = $Value
         }
     }
 
@@ -4126,7 +4145,7 @@ function Get-OutlookOption {
 
         if ($null -ne $regValue) {
             $option = $Options | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
-            $option.Value = & $Converter $regValue 
+            $option.Value = & $Converter $regValue
         }
     }
 
@@ -4140,7 +4159,7 @@ function Get-OutlookOption {
     $major = $officeInfo.Version.Split('.')[0]
 
     $optionsPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Options"
-    $prefPath =  Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Preferences"
+    $prefPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Preferences"
 
     # Options I'm interested
     $options = @(
@@ -4152,7 +4171,7 @@ function Get-OutlookOption {
     )
 
     $PSDefaultParameterValues['Set-Option:Options'] = $options
-    
+
     if ($prop = Join-Path $optionsPath 'Mail' | Get-ItemProperty -ErrorAction SilentlyContinue) {
         $PSDefaultParameterValues['Set-Option:Property'] = $prop
         Set-Option -Name 'Send Mail Immediately'
@@ -4167,7 +4186,7 @@ function Get-OutlookOption {
     if ($prop = Join-Path $optionsPath 'MSHTML\International\' | Get-ItemProperty -ErrorAction SilentlyContinue) {
         $PSDefaultParameterValues['Set-Option:Property'] = $prop
         Set-Option -Name 'Autodetect_CodePageOut'
-        Set-Option -Name 'Default_CodePageOut' -Converter { param ($regValue) [System.Text.Encoding]::GetEncoding($prop.Default_CodePageOut).WebName } 
+        Set-Option -Name 'Default_CodePageOut' -Converter { param ($regValue) [System.Text.Encoding]::GetEncoding($prop.Default_CodePageOut).WebName }
     }
 
     $options
@@ -7077,6 +7096,118 @@ function Start-ProcessMonitoring {
 }
 
 <#
+.SYNOPSIS
+    Start PSR as a task and restart after some time until canceled.
+    This creates PSR_***.mht in $Path. When $Circular, only files writen within the last 1 hour will be kept.
+#>
+function Start-PsrMonitor {
+    [CmdletBinding()]
+    param(
+        [string]$Path,
+        [System.Threading.CancellationToken]$CancelToken,
+        [TimeSpan]$WaitInterval,
+        [System.Threading.EventWaitHandle]$IsStartedEvent,
+        [bool]$Circular
+    )
+
+    while ($true) {
+        Start-PSR -Path $Path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')" -UseJob
+        $null = $IsStartedEvent.Set()
+        $canceled = $cancelToken.WaitHandle.WaitOne($WaitInterval)
+        Stop-PSR -UseJob
+
+        if ($canceled) {
+            Write-Log "PSR task cancellation is acknowledged"
+            break
+        }
+
+        if ($circular) {
+            # Remove mht files older than 1 hour
+            Get-ChildItem $Path -Filter '*.mht' | & {
+                begin {
+                    $cutoff = [datetime]::Now.AddHours(-1)
+                    $removedCount = 0
+                }
+
+                process {
+                    if ($_.LastWriteTime -lt $cutoff) {
+                        Remove-Item $_.FullName
+                        ++$removedCount
+                    }
+                }
+
+                end {
+                    if ($removedCount) {
+                        Write-Log "$removedCount mht files were removed because they were older than 1 hour"
+                    }
+                }
+            }
+        }
+    }
+}
+
+function Start-HungMonitor {
+    [CmdletBinding()]
+    param(
+        $Path,
+        [TimeSpan]$Timeout,
+        [int]$DumpCount,
+        $CancelToken,
+        $Name,
+        [System.Threading.EventWaitHandle]$IsStartedEvent
+    )
+
+    $null = $IsStartedEvent.Set()
+
+    # Key: Process Hash, Value: true/false for "need to log".
+    $procCache = @{}
+
+    # The target process may restart while being monitored. Keep monitoring until canceled (via hungDumpCts).
+    while ($true) {
+        # Wait for the target process ($Name) to come live.
+        while ($true) {
+            if ($CancelToken.IsCancellationRequested) {
+                return
+            }
+
+            # There could be multiple process instances.
+            # Not really expected for Outlook, but monitor the one that started first, while skipping the ones that have been monitored already.
+            $targetPid = Get-Process -Name $Name -ErrorAction SilentlyContinue | Sort-Object StartTime | & {
+                process {
+                    $id = $_.Id
+                    $startTime = $_.StartTime
+                    $_.Dispose()
+                    # Do not use GetHashCode() for the Process itself because it returns a new value every time.
+                    # $hash = (17 * 23 + $id.GetHashCode()) * 23 + $startTime.GetHashCode()
+                    $hash = $id.GetHashCode() -bxor $startTime.GetHashCode()
+
+                    if ($procCache.ContainsKey($hash)) {
+                        if ($procCache[$hash]) {
+                            Write-Log "This instance of $Name (PID: $id, StartTime:$startTime) has been seen already. This instance will be not be monitored"
+                            $procCache[$hash] = $false
+                        }
+                    }
+                    else {
+                        $procCache.Add($hash, $true)
+                        $id
+                    }
+
+                }
+            } | Select-Object -First 1
+
+            if ($targetPid) {
+                break
+            }
+
+            Start-Sleep -Seconds 2
+        }
+
+        Write-Log "hungMonitorTask has found $Name (PID $targetPid). Starting hung window monitoring."
+        Save-HungDump -Path $Path -ProcessId $targetPid -DumpCount $DumpCount -TimeoutSecond $Timeout.TotalSeconds -CancellationToken $CancelToken 2>&1 | Write-Log -Category Error -PassThru
+    }
+}
+
+<#
 Check GitHub's latest release and if it's newer, download and import it except if OutlookTrace is installed as module.
 #>
 function Invoke-AutoUpdate {
@@ -8184,7 +8315,8 @@ function Collect-OutlookInfo {
         [string]$User,
         # Number of seconds used to detect a hung window when "HungDump" is requested in Component.
         [ValidateRange(1, [int]::MaxValue)]
-        [int]$HungTimeoutSecond = 5,
+        [TimeSpan]$HungTimeout = [TimeSpan]::FromSeconds(5),
+        [ValidateRange(1, 10)]
         [int]$MaxHungDumpCount = 3,
         [string]$HungMonitorTarget = 'Outlook', # This is just for testing.
         [switch]$WamSignOut,
@@ -8463,59 +8595,20 @@ function Collect-OutlookInfo {
 
         if ($Component -contains 'PSR') {
             Write-Progress -Status 'Starting PSR'
-
-            # Start PSR as a task and restart after some time until canceled.
-            # This task creates PSR_***.mht in $psrPath. When LogFileMode is 'Circular', only files writen within the last 1 hour will be kept.
             $psrCts = New-Object System.Threading.CancellationTokenSource
-            $psrPath = Join-Path $tempPath 'PSR'
             $psrStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
-
             Write-Log "Starting a PSR task. PsrRecycleInterval: $PsrRecycleInterval"
 
-            $psrTask = Start-Task -ScriptBlock {
-                param(
-                    [string]$path,
-                    [System.Threading.CancellationToken]$cancelToken,
-                    [TimeSpan]$waitInterval,
-                    $psrStartedEvent,
-                    [bool]$circular
-                )
-
-                while ($true) {
-                    Start-PSR -Path $path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')" -UseJob
-                    $null = $psrStartedEvent.Set()
-                    $canceled = $cancelToken.WaitHandle.WaitOne($waitInterval)
-                    Stop-PSR -UseJob
-
-                    if ($canceled) {
-                        Write-Log "PSR task cancellation is acknowledged."
-                        break
-                    }
-
-                    if ($circular) {
-                        # Remove mht files older than 1 hour
-                        Get-ChildItem $path -Filter '*.mht' | & {
-                            begin {
-                                $cutoff = [datetime]::Now.AddHours(-1)
-                                $removedCount = 0
-                            }
-
-                            process {
-                                if ($_.LastWriteTime -lt $cutoff) {
-                                    Remove-Item $_.FullName
-                                    ++$removedCount
-                                }
-                            }
-
-                            end {
-                                if ($removedCount) {
-                                    Write-Log "$removedCount mht files were removed because they were older than 1 hour"
-                                }
-                            }
-                        }
-                    }
-                }
-            } -ArgumentList $psrPath, $psrCts.Token, $PsrRecycleInterval, $psrStartedEvent, ($LogFileMode -eq 'Circular')
+            # Could use ${Function:Start-PsrMonitor} directly for a scriptblock, but for a better logging, invoke via a forwarding scriptblock.
+            $psrTask = Start-Task -Name 'PsrTask' `
+                -ScriptBlock { param($Path, $CancelToken, $WaitInterval, $IsStartedEvent, $Circular) Start-PsrMonitor @PSBoundParameters } `
+                -ArgumentList @{
+                Path           = Join-Path $tempPath 'PSR'
+                CancelToken    = $psrCts.Token
+                WaitInterval   = $PsrRecycleInterval
+                IsStartedEvent = $psrStartedEvent
+                Circular       = $LogFileMode -eq 'Circular'
+            }
 
             $null = $psrStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan)
             $psrStarted = $true
@@ -8604,57 +8697,18 @@ function Collect-OutlookInfo {
             Write-Progress -Status 'Starting HungDump monitoring'
             $hungDumpCts = New-Object System.Threading.CancellationTokenSource
             $monitorStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
-            Write-Log "Starting hungMonitorTask. HungMonitorTarget: $HungMonitorTarget, HungTimeoutSecond: $HungTimeoutSecond."
+            Write-Log "Starting HungMonitorTask. HungMonitorTarget: $HungMonitorTarget, HungTimeout: $HungTimeout"
 
-            $hungMonitorTask = Start-Task -ScriptBlock {
-                param($path, $timeout, $dumpCount, $cancelToken, $name, $monitorStartedEvent)
-
-                $null = $monitorStartedEvent.Set()
-                $procCache = @{} # Key: Process Hash, Value: true/false for "need to log".
-                
-                # The target process may restart while being monitored. Keep monitoring until canceled (via hungDumpCts).
-                while ($true) {
-                    # Wait for the target process ($name) to come live.
-                    while ($true) {
-                        if ($cancelToken.IsCancellationRequested) {
-                            return
-                        }
-
-                        # There could be multiple process instances.
-                        # Not really expected for Outlook, but monitor the one that started first, while skipping the ones that have been monitored already.
-                        $targetPid = Get-Process -Name $name -ErrorAction SilentlyContinue | Sort-Object StartTime | & {
-                            process {
-                                $id =  $_.Id
-                                $startTime = $_.StartTime
-                                $_.Dispose()
-                                # Do not use GetHashCode() for the Process itself because tt returns a new value every time.
-                                $hash = (17 * 23 + $id.GetHashCode()) * 23 + $startTime.GetHashCode()
-
-                                if ($procCache.ContainsKey($hash)) {
-                                    if ($procCache[$hash]) {
-                                        Write-Log "This instance of $name (PID: $id, StartTime:$startTime) has been seen already. This instance will be not be monitored"
-                                        $procCache[$hash] = $false
-                                    }
-                                }
-                                else {
-                                    $procCache.Add($hash, $true)
-                                    $id
-                                }
-
-                            }
-                        } | Select-Object -First 1
-
-                        if ($targetPid) {
-                            break
-                        }
-
-                        Start-Sleep -Seconds 2
-                    }
-
-                    Write-Log "hungMonitorTask has found $name (PID $targetPid). Starting hung window monitoring."
-                    Save-HungDump -Path $path -ProcessId $targetPid -DumpCount $dumpCount -TimeoutSecond $timeout -CancellationToken $cancelToken 2>&1 | Write-Log -Category Error -PassThru
-                }
-            } -ArgumentList (Join-Path $tempPath 'HungDump'), $HungTimeoutSecond, $MaxHungDumpCount, $hungDumpCts.Token, $HungMonitorTarget, $monitorStartedEvent
+            $hungMonitorTask = Start-Task -Name 'HungMonitorTask' `
+                -ScriptBlock { param($Path, $Timeout, $DumpCount, $CancelToken, $Name, $IsStartedEvent) Start-HungMonitor @PSBoundParameters } `
+                -ArgumentList @{
+                Path           = Join-Path $tempPath 'HungDump'
+                Timeout        = $HungTimeout
+                DumpCount      = $MaxHungDumpCount
+                CancelToken    = $hungDumpCts.Token
+                Name           = $HungMonitorTarget
+                IsStartedEvent = $monitorStartedEvent
+            }
 
             $null = $monitorStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan)
             $hungDumpStarted = $true
@@ -8700,15 +8754,6 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Recording') {
-            # Make sure ZoomIt is not running
-            # $existingZoomIt = Get-Process -Name 'ZoomIt*' | Select-Object -First 1
-
-            # if ($existingZoomIt) {
-            #     Write-Error -Message "ZoomIt is already running. Please stop it and try again."  -ErrorAction Stop
-            # }
-
-            # $zoomItPath = Join-Path $tempPath 'ZoomIt'
-            # Download-ZoomIt -Path $zoomItPath
             $recording = Start-Recording -ZoomItDownloadPath (Join-Path $Path 'ZoomIt') -ZoomItSearchPath $Path -ErrorAction Stop
             $recordingStarted = $true
         }
@@ -8834,10 +8879,6 @@ function Collect-OutlookInfo {
         if ($procmonStared) {
             Write-Progress -Status 'Stopping Procmon'
             Stop-Procmon 2>&1 | Write-Log -Category Error -PassThru
-            # Remove procmon
-            # if ($procmonResult -and $procmonResult.ProcmonZipDownloaded) {
-            #     Remove-Item $procmonResult.ProcmonFolderPath -Force -Recurse
-            # }
         }
 
         if ($wfpStarted) {

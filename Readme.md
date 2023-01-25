@@ -139,9 +139,9 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | AutoFlush          | Switch to flush log data every time it's written (This is just for troubleshooting the script)                                                      |
 | PsrRecycleInterval | PSR recycle interval (Default: `10` min). A new instance of PSR is created after this interval                                                      |
 | User               | Target user whose configuration data will be collected. By default, it's the logon user (Note: Not necessarily the current user running the script) |
-| HungTimeoutSecond  | Number of seconds used to detect a hung window when `HungDump` is requested in Component                                                            |
+| HungTimeout        | Timespan used to detect a hung window when `HungDump` is requested in Component (Default: `00:00:05`)                                               |
 | HungMonitorTarget  | Name of the target process to monitor a hung window (Default: `Outlook`)                                                                            |
-| MaxHungDumpCount   | Max Number of hung fump files to be saved per process instance                                                                                      |
+| MaxHungDumpCount   | Max Number of hung fump files to be saved per process instance (Default: `3`)                                                                       |
 | WamSignOut         | Switch to sign out all WAM (Web Account Manager) accounts                                                                                           |
 | EnablePageHeap     | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                                |
 
