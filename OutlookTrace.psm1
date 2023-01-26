@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2023-01-10'
+$Version = 'v2023-01-26'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -8323,16 +8323,20 @@ function Collect-OutlookInfo {
         # Skip running autoupdate of this script.
         [switch]$SkipAutoUpdate,
         # PSR recycle interval.
+        [ValidateRange('00:01:00', '01:00:00')]
         [TimeSpan]$PsrRecycleInterval = [Timespan]::FromMinutes(10),
         # Target user whose configuration is collected. By default, it's the logon user (Note: Not necessarily the current user running the script).
         [string]$User,
-        # Number of seconds used to detect a hung window when "HungDump" is requested in Component.
-        [ValidateRange(1, [int]::MaxValue)]
+        # Timespan used to detect a hung window when "HungDump" is requested in Component.
+        [ValidateRange('00:00:01', '00:01:00')]
         [TimeSpan]$HungTimeout = [TimeSpan]::FromSeconds(5),
         [ValidateRange(1, 10)]
         [int]$MaxHungDumpCount = 3,
-        [string]$HungMonitorTarget = 'Outlook', # This is just for testing.
+        # Name of the target process to monitor a hung window (This is just for testing)
+        [string]$HungMonitorTarget = 'Outlook',
+        # Switch to sign out all WAM (Web Account Manager) accounts
         [switch]$WamSignOut,
+        # Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)
         [switch]$EnablePageHeap
     )
 

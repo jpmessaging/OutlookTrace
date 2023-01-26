@@ -2,7 +2,7 @@
 
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2023-01-10/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2023-01-26/OutlookTrace.psm1)
 
 ## How to use
 
@@ -137,11 +137,11 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | SkipArchive        | Switch to skip archiving (zip or cab)                                                                                                               |
 | SkipAutoUpdate     | Switch to skip auto update                                                                                                                          |
 | AutoFlush          | Switch to flush log data every time it's written (This is just for troubleshooting the script)                                                      |
-| PsrRecycleInterval | PSR recycle interval (Default: `10` min). A new instance of PSR is created after this interval                                                      |
+| PsrRecycleInterval | PSR recycle interval. A new instance of PSR is created after this interval (Default: `00:10:00`, Min: `00:01:00`, Max: `01:00:00`)                 |
 | User               | Target user whose configuration data will be collected. By default, it's the logon user (Note: Not necessarily the current user running the script) |
-| HungTimeout        | Timespan used to detect a hung window when `HungDump` is requested in Component (Default: `00:00:05`)                                               |
+| HungTimeout        | Timespan used to detect a hung window when `HungDump` is requested in Component (Default: `00:00:05`, Min: `00:00:01`, Max: `00:01:00`)             |
 | HungMonitorTarget  | Name of the target process to monitor a hung window (Default: `Outlook`)                                                                            |
-| MaxHungDumpCount   | Max Number of hung fump files to be saved per process instance (Default: `3`)                                                                       |
+| MaxHungDumpCount   | Max Number of hung fump files to be saved per process instance (Default: `3`, Min: `1`, Max: `10`)                                                                       |
 | WamSignOut         | Switch to sign out all WAM (Web Account Manager) accounts                                                                                           |
 | EnablePageHeap     | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                                |
 
