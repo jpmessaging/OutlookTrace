@@ -3970,8 +3970,10 @@ function Get-StoreProvider {
             $storeUid = [BitConverter]::ToString($storeProvidersBin, $j * 16, 16).Replace('-', '')
             $store = Join-Path $Profile.PSPath $storeUid | Get-ItemProperty -Name $storeProviderProps -ErrorAction SilentlyContinue
 
-            $props = [ordered]@{
-                DisplayName = [System.Text.Encoding]::Unicode.GetString($store.$($PropTags.PR_DISPLAY_NAME))
+            $props = [ordered]@{}
+
+            if ($displayNameBin = $store.$($PropTags.PR_DISPLAY_NAME)) {
+                $props.DisplayName = [System.Text.Encoding]::Unicode.GetString($displayNameBin)
             }
 
             if ($resourceFlagsBin = $store.$($PropTags.PR_RESOURCE_FLAGS)) {
@@ -4033,15 +4035,21 @@ function Get-MapiAccount {
 
     $props = [ordered]@{
         Profile          = $null
-        DisplayName      = [System.Text.Encoding]::Unicode.GetString($emsmdb.$($PropTags.PR_DISPLAY_NAME))
-        IdentityUniqueId = [System.Text.Encoding]::Unicode.GetString($emsmdb.$($PropTags.PR_EMSMDB_IDENTITY_UNIQUEID))
         AccountType      = 'MAPI'
         IsDefaultAccount = $false
         EmsmdbUid        = $emsmdbUid
     }
 
-    if ($userFullName = $emsmdb.$($PropTags.PR_PROFILE_USER_FULL_NAME)) {
-        $props.UserFullName = [System.Text.Encoding]::Unicode.GetString($userFullName)
+    if ($displayNameBin = $emsmdb.$($PropTags.PR_DISPLAY_NAME)) {
+        $props.DisplayName = [System.Text.Encoding]::Unicode.GetString($displayNameBin)
+    }
+
+    if ($identityUniqueIdBin = $emsmdb.$($PropTags.PR_EMSMDB_IDENTITY_UNIQUEID)) {
+        $props.IdentityUniqueId = [System.Text.Encoding]::Unicode.GetString($identityUniqueIdBin)
+    }
+
+    if ($userFullNameBin = $emsmdb.$($PropTags.PR_PROFILE_USER_FULL_NAME)) {
+        $props.UserFullName = [System.Text.Encoding]::Unicode.GetString($userFullNameBin)
     }
 
     if ($ostPath = $emsmdb.$($PropTags.PR_PROFILE_OFFLINE_STORE_PATH)) {
@@ -6101,6 +6109,11 @@ function Save-MSIPC {
     # MSIPC info is in %LOCALAPPDATA%\Microsoft\MSIPC
     if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
         $msipcPath = Join-Path $localAppdata 'Microsoft\MSIPC\'
+
+        if (-not (Test-Path $msipcPath)) {
+            Write-Error "Cannot find path '$msipcPath'"
+            return
+        }
     }
     else {
         return
@@ -8553,7 +8566,7 @@ function Collect-OutlookInfo {
                 Write-Log "Starting outlookMonitorTask."
                 $outlookMonitorTaskCts = New-Object System.Threading.CancellationTokenSource
                 $outlookMonitorTask = Start-Task { param ($Path, $Name, $CancelToken) Start-ProcessMonitoring @PSBoundParameters } `
-                    -ArgumentList @{ 
+                    -ArgumentList @{
                     Path        = $OSDir
                     Name        = $processesWithOwner
                     CancelToken = $outlookMonitorTaskCts.Token
