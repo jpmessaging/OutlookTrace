@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2023-01-26'
+$Version = 'v2023-01-31'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -3798,10 +3798,10 @@ function Get-SyncWindow {
             return 'All'
         }
         elseif ($Months -lt 12) {
-            return "$Months Months"
+            return "$Months Month$(if ($Months -gt 1) { 's' })"
         }
         else {
-            "$($Months / 12) Years"
+            return "$($Months / 12) Year$(if ($Months -gt 12) { 's' })"
         }
     }
 }
@@ -5589,89 +5589,120 @@ function Add-WerDumpKey {
     param (
         [Parameter(Mandatory = $true)]
         $Path, # Folder to save dump files
+        [Parameter(ValueFromPipeline = $true)]
         [string]$TargetProcess # Target Process (e.g. Outlook.exe)
     )
 
-    # Need admin rights to modify HKLM registry values.
-    if (-not (Test-RunAsAdministrator)) {
-        Write-Error "Please run as administrator"
-        return
-    }
-
-    if (-not (Test-Path $Path)) {
-        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
-    }
-
-    $Path = (Resolve-Path $Path -ErrorAction Stop).Path
-
-    # Create a key 'LocalDumps' under HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps, if it doesn't exist
-    $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
-    if (-not (Test-Path (Join-Path $werKey 'LocalDumps'))) {
-        $null = New-Item $werKey -Name 'LocalDumps' -ErrorAction Stop
-    }
-
-    $localDumpsKey = Join-Path $werKey 'LocalDumps'
-
-    if ($TargetProcess) {
-        # Check if $TargetProcess ends with ".exe".
-        if (-not $TargetProcess.EndsWith(".exe")) {
-            Write-Log "$TargetProcess does not end with '.exe'. Adding '.exe'"
-            $TargetProcess += '.exe'
+    begin {
+        # Need admin rights to modify HKLM registry values.
+        if (-not (Test-RunAsAdministrator)) {
+            Write-Error "Please run as administrator"
+            return
         }
 
-        # Create a ProcessName key under LocalDumps, if it doesn't exist
-        $targetKey = Join-Path $localDumpsKey $TargetProcess
-
-        if (-not (Test-Path $targetKey)) {
-            $null = New-Item $localDumpsKey -Name $TargetProcess -ErrorAction Stop
+        if (-not (Test-Path $Path)) {
+            $null = New-Item $Path -ItemType Directory -ErrorAction Stop
         }
-    }
-    else {
-        $targetKey = $localDumpsKey
-    }
 
-    # Create "CustomDumpFlags", "DumpType", and "DumpFolder" values
-    Write-Log "Setting up $targetKey with CustomDumpFlags:0x61826, DumpType:0, DumpFolder:$Path"
-    # -Force will overwrite existing value
-    # 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4)| MiniDumpWithFullMemory (2)
-    $null = New-ItemProperty $targetKey -Name 'CustomDumpFlags' -Value 0x00061826 -Force -ErrorAction Stop
-    $null = New-ItemProperty $targetKey -Name 'DumpType' -Value 0 -PropertyType DWORD -Force -ErrorAction Stop
-    $null = New-ItemProperty $targetKey -Name 'DumpFolder' -Value $Path -PropertyType String -Force -ErrorAction Stop
+        $Path = (Resolve-Path $Path -ErrorAction Stop).Path
 
-    # Rename DW Installed keys to "_Installed" in order to disable it temporarily
-    $pcHealth = @(
-        # For C2R
-        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
-        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+        # Create a key 'LocalDumps' under HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps, if it doesn't exist
+        $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
 
-        # For MSI
-        'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
-        'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
-    )
-
-    foreach ($installedKey in $pcHealth) {
-        if (Test-Path $installedKey) {
-            Write-Log "Temporarily renaming $installedKey to `"_Installed`""
-            Rename-Item $installedKey -NewName '_Installed'
+        if (-not (Test-Path (Join-Path $werKey 'LocalDumps'))) {
+            $null = New-Item $werKey -Name 'LocalDumps' -ErrorAction Stop
         }
+
+        $localDumpsKey = Join-Path $werKey 'LocalDumps'
+        $beginBlockComplete = $true
     }
 
-    Write-Log "Temporarily disabling dwwin."
-    Disable-DWWin 2>&1 | Write-Log
+    process {
+        # Bail if begin block failed.
+        if (-not $Local:beginBlockComplete) {
+            return
+        }
+
+        if ($TargetProcess) {
+            if (-not $TargetProcess.EndsWith(".exe")) {
+                Write-Log "TargetProcess '$TargetProcess' does not end with '.exe'. Adding '.exe'"
+                $TargetProcess += '.exe'
+            }
+
+            # Create a ProcessName key under LocalDumps, if it doesn't exist.
+            $targetKey = Join-Path $localDumpsKey $TargetProcess
+
+            if (-not (Test-Path $targetKey)) {
+                $null = New-Item $localDumpsKey -Name $TargetProcess -ErrorAction Stop
+            }
+        }
+        else {
+            $targetKey = $localDumpsKey
+        }
+
+        # Create "CustomDumpFlags", "DumpType", and "DumpFolder" values
+        Write-Log "Setting up $targetKey with CustomDumpFlags:0x61826, DumpType:0, DumpFolder:$Path"
+        # -Force will overwrite existing value
+        # 0x61826 = MiniDumpWithTokenInformation | MiniDumpIgnoreInaccessibleMemory | MiniDumpWithThreadInfo (0x1000) | MiniDumpWithFullMemoryInfo (0x800) |MiniDumpWithUnloadedModules (0x20) | MiniDumpWithHandleData (4)| MiniDumpWithFullMemory (2)
+        $null = New-ItemProperty $targetKey -Name 'CustomDumpFlags' -Value 0x00061826 -Force -ErrorAction Stop
+        $null = New-ItemProperty $targetKey -Name 'DumpType' -Value 0 -PropertyType DWORD -Force -ErrorAction Stop
+        $null = New-ItemProperty $targetKey -Name 'DumpFolder' -Value $Path -PropertyType String -Force -ErrorAction Stop
+
+        $processBlockComplete = $true
+    }
+
+    end {
+        # If none of process block gets completed, there is no need to configure the rest.
+        if (-not $Local:processBlockComplete) {
+            return
+        }
+
+        # Rename DW Installed keys to "_Installed" in order to disable it temporarily
+        foreach ($_ in @(
+                # For C2R
+                'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+                'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+
+                # For MSI
+                'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+                'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+            )) {
+            if (Test-Path $_) {
+                Write-Log "Temporarily renaming $_ to `"_Installed`""
+                Rename-Item $_ -NewName '_Installed'
+            }
+        }
+
+        Write-Log "Temporarily disabling dwwin."
+        Disable-DWWin 2>&1 | Write-Log
+    }
 }
 
 function Remove-WerDumpKey {
     [CmdletBinding()]
     param (
+        [Parameter(ValueFromPipeline = $true)]
         [string]$TargetProcess # Target Process (e.g. Outlook.exe)
     )
 
-    $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
-    $localDumpsKey = Join-Path $werKey 'LocalDumps'
+    begin {
+        $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
+        $localDumpsKey = Join-Path $werKey 'LocalDumps'
 
-    if (Test-Path $localDumpsKey) {
+        if (-not (Test-Path $localDumpsKey)) {
+            Write-Log "Cannot find $localDumpsKey."
+            return
+        }
+
+        $beginBlockComplete = $true
+    }
+
+    process {
+        if (-not $Local:beginBlockComplete) {
+            return
+        }
+
         if ($TargetProcess) {
-            # Check if TargetProcess ends with ".exe".
             if (-not $TargetProcess.EndsWith(".exe")) {
                 Write-Log "$TargetProcess does not end with '.exe'. Adding '.exe'"
                 $TargetProcess += '.exe'
@@ -5691,30 +5722,27 @@ function Remove-WerDumpKey {
             Remove-Item $localDumpsKey
         }
     }
-    else {
-        Write-Log "Cannot find $localDumpsKey."
-    }
 
-    # Rename DW "_Installed" keys back to "Installed"
-    $pcHealth = @(
-        # For C2R
-        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
-        'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
+    end {
+        # Rename DW "_Installed" keys back to "Installed"
+        foreach ($_ in @(
+                # For C2R
+                'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
+                'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
 
-        # For MSI
-        'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
-        'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
-    )
-
-    foreach ($installedKey in $pcHealth) {
-        if (Test-Path $installedKey) {
-            Write-Log "Renaming $installedKey back to `"Installed`""
-            Rename-Item $installedKey -NewName 'Installed'
+                # For MSI
+                'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
+                'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
+            )) {
+            if (Test-Path $_) {
+                Write-Log "Renaming $_ back to `"Installed`""
+                Rename-Item $_ -NewName 'Installed'
+            }
         }
-    }
 
-    Write-Log "Re-enabling dwwin"
-    Enable-DWWin 2>&1 | Write-Log
+        Write-Log "Re-enabling dwwin"
+        Enable-DWWin 2>&1 | Write-Log
+    }
 }
 
 <#
@@ -5732,6 +5760,7 @@ function Disable-DWWin {
         $null = New-Item $IFEO -Name $dwwin
     }
 
+    # Create "Debugger" key (If the value already exists, an error will be put in verbose stream)
     $null = New-ItemProperty $imageKeyPath -Name 'Debugger' -Value ([Guid]::NewGuid().ToString())
 }
 
@@ -8330,10 +8359,13 @@ function Collect-OutlookInfo {
         # Timespan used to detect a hung window when "HungDump" is requested in Component.
         [ValidateRange('00:00:01', '00:01:00')]
         [TimeSpan]$HungTimeout = [TimeSpan]::FromSeconds(5),
+        # Max number of hung dump files to be saved per process instance
         [ValidateRange(1, 10)]
         [int]$MaxHungDumpCount = 3,
         # Name of the target process to monitor a hung window (This is just for testing)
         [string]$HungMonitorTarget = 'Outlook',
+        # Names of the target processes for crash dumps. When not specified, all processes will be the targets.
+        [string[]]$CrashDumpTargets,
         # Switch to sign out all WAM (Web Account Manager) accounts
         [switch]$WamSignOut,
         # Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)
@@ -8690,7 +8722,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'CrashDump') {
-            Add-WerDumpKey -Path (Join-Path $tempPath 'WerDump')
+            $CrashDumpTargets | Add-WerDumpKey -Path (Join-Path $tempPath 'WerDump')
             $crashDumpStarted = $true
         }
 
@@ -8928,7 +8960,7 @@ function Collect-OutlookInfo {
         }
 
         if ($crashDumpStarted) {
-            Remove-WerDumpKey
+            $CrashDumpTargets | Remove-WerDumpKey
         }
 
         if ($fiddlerCapStarted) {
