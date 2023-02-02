@@ -151,7 +151,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | Name          | Description                                                                                                    |
 | ------------- | -------------------------------------------------------------------------------------------------------------- |
 | Configuration | OS config, Registry, Event logs, Proxy settings, etc.                                                          |
-| Outlook       | Outlook's ETW                                                                                                  |
+| Outlook       | Outlook ETW                                                                                                    |
 | Netsh         | Netsh ETW                                                                                                      |
 | PSR           | Problem Steps Recorder                                                                                         |
 | WAM           | WAM (Web Account Manager) ETW                                                                                  |
@@ -161,7 +161,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | CAPI          | CAPI (Crypt API) ETW                                                                                           |
 | TCO           | TCO trace                                                                                                      |
 | Dump          | Outlook's process dump                                                                                         |
-| CrashDump     | Crash dump for any process                                                                                     |
+| CrashDump     | Crash dump for any process (see `CrashDumpTargets` above)                                                      |
 | HungDump      | Outlook's hung dump (When a window hung is detected, it generate a dump file)                                  |
 | WPR           | WPR (Windows Performance Recorder) ETW (OS must be Windows 10 or above)                                        |
 | WFP           | Windows Firewall diagnostic log                                                                                |

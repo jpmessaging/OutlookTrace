@@ -8064,7 +8064,7 @@ function Reset-ThreadCulture {
 
 <#
 .SYNOPSIS
-    Start recording by using ZoomIt
+    Download ZoomIt
 #>
 function Download-ZoomIt {
     [CmdletBinding()]
@@ -8274,7 +8274,7 @@ function Start-Recording {
         if (-not $success) {
             Write-Error "Failed to start recording"
 
-            if ( $started) {
+            if ($started) {
                 $zoomIt.Kill()
             }
         }
