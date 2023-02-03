@@ -8566,11 +8566,12 @@ function Collect-OutlookInfo {
             $PSDefaultParameterValues['Invoke-ScriptBlock:ArgumentList'] = @{ User = $targetUser }
             $PSDefaultParameterValues['Invoke-ScriptBlock:Path'] = $OfficeDir
             Invoke-ScriptBlock { Get-OfficeInfo }
+            Invoke-ScriptBlock { Get-ClickToRunConfiguration }
             Invoke-ScriptBlock { param($User) Get-OutlookProfile @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-OutlookAddin @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-OutlookOption @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-AutodiscoverConfig @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-SocialConnectorConfig @PSBoundParameters }
-            Invoke-ScriptBlock { Get-ClickToRunConfiguration }
             Invoke-ScriptBlock { param($User) Get-IMProvider @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-AlternateId @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-UseOnlineContent @PSBoundParameters }
@@ -8857,21 +8858,6 @@ function Collect-OutlookInfo {
                     Write-Log "ZoomIt instance was killed"
                 }
             }
-
-            # ZoomIt was downloaded.
-            # if ($recoding.ZoomItDownloadedPath) {
-            #     # Kill ZoomIt and remove exe files
-            #     $zoomiIt = Get-Process 'ZoomIt*' | Select-Object -First 1
-
-            #     if ($zoomiIt) {
-            #         $zoomiIt.Kill()
-            #         Wait-Process -InputObject $zoomiIt
-            #     }
-
-            #     if ($zoomItPath) {
-            #         $null = Remove-Item -Path (Join-Path $zoomItPath "*") -Include "ZoomIt*.exe", 'Eula.txt' -Force 2>&1 | Write-Log -Category Warning
-            #     }
-            # }
         }
 
         if ($ttdStarted) {
@@ -9085,4 +9071,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Collect-OutlookInfo
