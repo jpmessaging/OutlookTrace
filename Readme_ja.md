@@ -51,11 +51,11 @@ Fiddler トレースや Process Monitor ログ、そして ZoomIt によるス�
 
 7. 正常にトレースが開始されると、`Hit enter to stop` と表示されます。
 
-    ※ 採取するコンポーネントに Dump を含めた場合、`Hit enter to save a process dump of Outlook. To quit, enter q:` とプロンプトされます。ダンプ ファイルを取得したいタイミングで Enter を入力してください。ハング事象の場合、およそ 30 秒間隔で 3 回程度採取ください。ダンプ ファイルの採取が終了したら `q` を入力します。
+    ※ 採取するコンポーネントに `Dump` を含めた場合、`Hit enter to save a process dump of Outlook. To quit, enter q:` とプロンプトされます。ダンプ ファイルを取得したいタイミングで Enter を入力してください。ハング事象の場合、およそ 30 秒間隔で 3 回程度採取ください。ダンプ ファイルの採取が終了したら `q` を入力します。
 
-    ※ 採取するコンポーネントに Fiddler を含めた場合、[FiddlerCap Web Recorder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
+    ※ 採取するコンポーネントに `Fiddler` を含めた場合、[FiddlerCap Web Recorder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
 
-    \* スクリプト実行ユーザーと、情報採取対象ユーザーが異なる場合には FiddlerCap は自動的に開始されません。情報採取対象ユーザーが FiddlerCap.exe を開始する必要があります。
+    ⚠️ スクリプト実行ユーザーと、情報採取対象ユーザーが異なる場合には FiddlerCap は自動的に開始されません。情報採取対象ユーザーが FiddlerCap.exe を開始する必要があります。
 
     <details>
         <summary>Fiddler 開始方法</summary>
