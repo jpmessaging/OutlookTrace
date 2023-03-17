@@ -808,9 +808,11 @@ function Open-Log {
     # Open a file & add header
     try {
         [IO.StreamWriter]$Script:logWriter = [IO.File]::AppendText($Path)
+
         if ($AutoFlush) {
             $Script:logWriter.AutoFlush = $true
         }
+
         $Script:logWriter.WriteLine("datetime,thread_relative_delta,thread,function,category,message")
     }
     catch {
@@ -845,6 +847,12 @@ function Write-Log {
         # If Open-Log is not called beforehand, just output to verbose.
         if (-not $Script:logWriter) {
             Write-Verbose $Message
+            return
+        }
+
+        # If logWriter exists but disposed already, something went wrong.
+        if (-not $Script:logWriter.BaseStream.CanWrite) {
+            Write-Warning "logWriter has been disposed already"
             return
         }
 
@@ -885,6 +893,7 @@ function Write-Log {
 
         # Protect from concurrent write
         [System.Threading.Monitor]::Enter($Script:logWriter)
+
         try {
             $Script:logWriter.WriteLine($sb.ToString())
         }
@@ -903,8 +912,11 @@ function Write-Log {
 
 function Close-Log {
     if ($Script:logWriter) {
-        Write-Log "Closing logWriter."
-        $Script:logWriter.Close()
+        if ($Script:logWriter.BaseStream.CanWrite) {
+            Write-Log "Closing logWriter."
+            $Script:logWriter.Close()
+        }
+
         $Script:logWriter = $null
         $Script:lastLogTime = $null
     }
