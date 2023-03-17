@@ -2749,8 +2749,9 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-ImageFileExecutionOptions } }
         @{ScriptBlock = { Get-SessionManager } }
         @{ScriptBlock = { Get-WinSystemLocale } }
-        @{ScriptBlock = { cmdkey /list } }
         @{ScriptBlock = { Get-AppxPackage } }
+        @{ScriptBlock = { Get-SmbMapping } }
+        @{ScriptBlock = { cmdkey /list } }
 
         # These are just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
@@ -3986,7 +3987,11 @@ function Get-StoreProvider {
 
             if ($pstPath = $store.$($PropTags.PR_PROFILE_PST_PATH)) {
                 $props.PstPath = [System.Text.Encoding]::Unicode.GetString($pstPath, 0, $pstPath.Length - 2)
-                $props.PstSize = Get-ItemProperty $props.PstPath | Select-Object -ExpandProperty Length | Format-ByteSize
+                $props.PstSize = 'Unknown'
+
+                if ($size = Get-ItemProperty $props.PstPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Length | Format-ByteSize) {
+                    $props.PstSize = $size
+                }
             }
 
             if ($userSmtpEmailAddressBin = $store.$($PropTags.PR_PROFILE_USER_SMTP_EMAIL_ADDRESS)) {
@@ -4054,12 +4059,10 @@ function Get-MapiAccount {
 
     if ($ostPath = $emsmdb.$($PropTags.PR_PROFILE_OFFLINE_STORE_PATH)) {
         $props.OstPath = [System.Text.Encoding]::Unicode.GetString($ostPath, 0, $ostPath.Length - 2)
+        $props.OstSize = 'Unknown'
 
         if ($size = Get-ItemProperty $props.OstPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Length) {
             $props.OstSize = Format-ByteSize $size
-        }
-        else {
-            $props.OstSize = 'Unknown'
         }
     }
 
@@ -4174,6 +4177,7 @@ function Get-OutlookOption {
         New-Option -Name 'Send Mail Immediately' -DisplayName 'Send Mail Immediately' -Category Mail -Value $true
         New-Option -Name 'NewMailDesktopAlerts' -DisplayName 'Display a Desktop Alert' -Category Mail -Value $true
         New-Option -Name 'NewMailDesktopAlertsDRMPreview' -DisplayName 'Enable preview for Rights Protected messages' -Category Mail -Value $false
+        New-Option -Name 'ShowLegacySharingUX' -DisplayName 'Turn off Calendar Sharing REST API and use Legacy UI' -Category Calendar -Value $false
         New-Option -Name 'Autodetect_CodePageOut' -DisplayName 'Automatically select encoding for outgoing messages' -Category Advanced -Value $true
         New-Option -Name 'Default_CodePageOut' -DisplayName 'Preferred encoding for outgoing messages' -Category Advanced -Value $null
     )
@@ -4183,6 +4187,11 @@ function Get-OutlookOption {
     if ($prop = Join-Path $optionsPath 'Mail' | Get-ItemProperty -ErrorAction SilentlyContinue) {
         $PSDefaultParameterValues['Set-Option:Property'] = $prop
         Set-Option -Name 'Send Mail Immediately'
+    }
+
+    if ($prop = Join-Path $optionsPath 'Calendar' | Get-ItemProperty -ErrorAction SilentlyContinue) {
+        $PSDefaultParameterValues['Set-Option:Property'] = $prop
+        Set-Option -Name 'ShowLegacySharingUX'
     }
 
     if ($prop = Get-ItemProperty $prefPath -ErrorAction SilentlyContinue) {
