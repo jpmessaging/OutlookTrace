@@ -162,7 +162,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | TCO           | TCO trace                                                                                                      |
 | Dump          | Outlook's process dump                                                                                         |
 | CrashDump     | Crash dump for any process (see `CrashDumpTargets` above)                                                      |
-| HungDump      | Outlook's hung dump (When a window hung is detected, it generate a dump file)                                  |
+| HungDump      | Outlook's hung dump (When a window hung is detected, it generates a dump file)                                 |
 | WPR           | WPR (Windows Performance Recorder) ETW (OS must be Windows 10 or above)                                        |
 | WFP           | Windows Firewall diagnostic log                                                                                |
 | Performance   | Performance counter log (Process, Memory, LogicalDisk etc.)                                                    |
