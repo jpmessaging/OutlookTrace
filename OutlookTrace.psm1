@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2023-03-17'
+$Version = 'v2023-04-08'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -2194,7 +2194,7 @@ function Stop-PSR {
 
         # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hung.
         # The existing instance is supposed to signal an event and 'psr /stop' instance is waiting for this event to be signaled. But it seems this does not happen when there were no clicks.
-        # So to avoid this, the following code manually signal the handle so that 'psr /stop' shuts down.
+        # So to avoid this, the following code manually signals the handle so that 'psr /stop' shuts down.
         $PSR_CLEANUP_COMPLETED = '{CD3E5009-5C9D-4E9B-B5B6-CAE1D8799AE3}'
         $h = [System.Threading.EventWaitHandle]::OpenExisting($PSR_CLEANUP_COMPLETED)
         $null = $h.Set()
@@ -4001,8 +4001,13 @@ function Get-StoreProvider {
                 $props.PstPath = [System.Text.Encoding]::Unicode.GetString($pstPath, 0, $pstPath.Length - 2)
                 $props.PstSize = 'Unknown'
 
-                if ($size = Get-ItemProperty $props.PstPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Length | Format-ByteSize) {
-                    $props.PstSize = $size
+                if ($props.PstPath -and (Test-Path $props.PstPath)) {
+                    if ($size = Get-ItemProperty $props.PstPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Length | Format-ByteSize) {
+                        $props.PstSize = $size
+                    }
+                }
+                else {
+                    $props.PstSize = 'Path does not exist'
                 }
             }
 
@@ -4073,8 +4078,13 @@ function Get-MapiAccount {
         $props.OstPath = [System.Text.Encoding]::Unicode.GetString($ostPath, 0, $ostPath.Length - 2)
         $props.OstSize = 'Unknown'
 
-        if ($size = Get-ItemProperty $props.OstPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Length) {
-            $props.OstSize = Format-ByteSize $size
+        if ($props.OstPath -and (Test-Path $props.OstPath)) {
+            if ($size = Get-ItemProperty $props.OstPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Length) {
+                $props.OstSize = Format-ByteSize $size
+            }
+        }
+        else {
+            $props.OstSize = 'Path does not exist'
         }
     }
 
