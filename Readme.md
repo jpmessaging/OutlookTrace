@@ -43,11 +43,11 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
 7.  When traces have started successfully, it shows "Hit enter to stop".
 
-    Note: When `Dump` is included in Component parameter, you will be prompted with `Hit enter to save a process dump of Outlook. To quit, enter q:`. Hit enter key to save a dump file. For a hang issue, repeat the process to collect 3 dump files, with interval of about 30 seconds between saves. When finished, hit `q`.
+    Note: When `Dump` is included in Component parameter, you are prompted with `Hit enter to save a process dump of Outlook. To quit, enter q:`. Hit enter key to save a dump file. For a hang issue, repeat the process to collect 3 dump files, with interval of about 30 seconds between saves. When finished, hit `q`.
 
-    Note: When `Fiddler` is included in Component parameter, a dialog box [FiddlerCap Web Recorder] will appear. Use the following instructions to start capture, and then reproduce the issue
+    Note: When `Fiddler` is included in Component parameter, a dialog box [FiddlerCap Web Recorder] appears. Use the following instructions to start capture, and then reproduce the issue
 
-    ⚠️ When the target user is different from the one running the script, FiddlerCap will not start. The target user needs to start FiddlerCap.exe manually.
+    ⚠️ When the target user is different from the one running the script, FiddlerCap does not start. The target user needs to start FiddlerCap.exe manually.
 
     <details>
         <summary>How to start Fiddler capture</summary>
@@ -126,26 +126,6 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | Path      | Folder path where gathered data will be placed. It will be created if it does not exist |
 | Component | Diagnostics data to collect (see below)                                                 |
 
-### Optional parameters
-
-| Name               | Description                                                                                                                                         |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| NetshReportMode    | Netsh trace's report mode. Valid values: `None`, `Mini`, `Full` (Default: `None`)                                                                   |
-| LogFileMode        | ETW trace's mode. Valid values: `NewFile`, `Circular` (Default: `NewFile`)                                                                          |
-| MaxFileSizeMB      | Max file size for ETW trace files. By default, 256 MB when `NewFile` and 2048 MB when `Circular`                                                    |
-| ArchiveType        | Valid values: `Zip` or `Cab`. Zip is faster, but Cab is smaller (Default: `Zip`)                                                                    |
-| SkipArchive        | Switch to skip archiving (zip or cab)                                                                                                               |
-| SkipAutoUpdate     | Switch to skip auto update                                                                                                                          |
-| AutoFlush          | Switch to flush log data every time it's written (This is just for troubleshooting the script)                                                      |
-| PsrRecycleInterval | PSR recycle interval. A new instance of PSR is created after this interval (Default: `00:10:00`, Min: `00:01:00`, Max: `01:00:00`)                  |
-| User               | Target user whose configuration data will be collected. By default, it's the logon user (Note: Not necessarily the current user running the script) |
-| HungTimeout        | Timespan used to detect a hung window when `HungDump` is requested in Component (Default: `00:00:05`, Min: `00:00:01`, Max: `00:01:00`)             |
-| HungMonitorTarget  | Name of the target process to monitor a hung window (Default: `Outlook`)                                                                            |
-| MaxHungDumpCount   | Max number of hung dump files to be saved per process instance (Default: `3`, Min: `1`, Max: `10`)                                                  |
-| CrashDumpTargets   | Names of the target processes for crash dumps. When not specified, all processes will be the targets                                                |
-| WamSignOut         | Switch to sign out all WAM (Web Account Manager) accounts                                                                                           |
-| EnablePageHeap     | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                                |
-
 ### Possible values for `Component` parameter
 
 | Name          | Description                                                                                                    |
@@ -162,14 +142,34 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | TCO           | TCO trace                                                                                                      |
 | Dump          | Outlook's process dump                                                                                         |
 | CrashDump     | Crash dump for any process (see `CrashDumpTargets` above)                                                      |
-| HungDump      | Outlook's hung dump (When a window hung is detected, it generates a dump file)                                 |
+| HungDump      | Outlook's hung dump (When a window hung is detected, a dump file is generated)                                 |
 | WPR           | WPR (Windows Performance Recorder) ETW (OS must be Windows 10 or above)                                        |
 | WFP           | Windows Firewall diagnostic log                                                                                |
 | Performance   | Performance counter log (Process, Memory, LogicalDisk etc.)                                                    |
 | TTD           | Time Travel Debugging trace (OS must be Windows 10 or above)                                                   |
 | Recording     | Screen recording by [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)                               |
 
-**Note**: `Collect-OutlookInfo` tries to download FiddlerCap & Procmon when requested in `Component` parameter. If Internet access is not available, please download [FiddlerCap](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe) and/or [Procmon](https://download.sysinternals.com/files/ProcessMonitor.zip) and place them in `Path` folder before running the command.
+💡 `Collect-OutlookInfo` tries to download FiddlerCap, Procmon, and ZoomIt when `Component` parameter includes `Fiddler`, `Procmon`, and `Recording` respectively. If Internet access is not available, please download [FiddlerCap](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe), [Procmon](https://download.sysinternals.com/files/ProcessMonitor.zip), [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip) and place them in `Path` folder before running the command.
+
+### Optional parameters
+
+| Name               | Description                                                                                                                                    |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| NetshReportMode    | Netsh trace's report mode. Valid values: `None`, `Mini`, `Full` (Default: `None`)                                                              |
+| LogFileMode        | ETW trace's mode. Valid values: `NewFile`, `Circular` (Default: `NewFile`)                                                                     |
+| MaxFileSizeMB      | Max file size for ETW trace files. By default, 256 MB when `NewFile` and 2048 MB when `Circular`                                               |
+| ArchiveType        | Valid values: `Zip` or `Cab`. Zip is faster, but Cab is smaller (Default: `Zip`)                                                               |
+| SkipArchive        | Switch to skip archiving (zip or cab)                                                                                                          |
+| SkipAutoUpdate     | Switch to skip auto update                                                                                                                     |
+| AutoFlush          | Switch to flush log data every time it's written (This is just for troubleshooting the script)                                                 |
+| PsrRecycleInterval | PSR recycle interval. A new instance of PSR is created after this interval (Default: `00:10:00`, Min: `00:01:00`, Max: `01:00:00`)             |
+| User               | Target user whose configuration data is collected. By default, it's the logon user (Note: Not necessarily the current user running the script) |
+| HungTimeout        | Timespan used to detect a hung window when `HungDump` is requested in Component (Default: `00:00:05`, Min: `00:00:01`, Max: `00:01:00`)        |
+| HungMonitorTarget  | Name of the target process to monitor a hung window (Default: `Outlook`)                                                                       |
+| MaxHungDumpCount   | Max number of hung dump files to be saved per process instance (Default: `3`, Min: `1`, Max: `10`)                                             |
+| CrashDumpTargets   | Names of the target processes for crash dumps. When not specified, all processes are the targets                                               |
+| WamSignOut         | Switch to sign out all WAM (Web Account Manager) accounts                                                                                      |
+| EnablePageHeap     | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                           |
 
 ## License
 
