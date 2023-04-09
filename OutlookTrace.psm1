@@ -4148,7 +4148,7 @@ function Get-OutlookOption {
             [Parameter(Mandatory)]
             $DisplayName,
             [Parameter(Mandatory)]
-            [ValidateSet('Mail', 'Calendar', 'Advanced')]
+            [ValidateSet('Mail', 'Calendar', 'Advanced', 'Power')]
             $Category,
             $Value
         )
@@ -4178,7 +4178,7 @@ function Get-OutlookOption {
 
         if ($null -ne $regValue) {
             $option = $Options | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
-            $option.Value = & $Converter $regValue
+            $option.Value = & $Converter $regValue $Name
         }
     }
 
@@ -4193,6 +4193,7 @@ function Get-OutlookOption {
 
     $optionsPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Options"
     $prefPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Preferences"
+    $powerPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Power"
 
     # Options I'm interested
     $options = @(
@@ -4202,6 +4203,8 @@ function Get-OutlookOption {
         New-Option -Name 'ShowLegacySharingUX' -DisplayName 'Turn off Calendar Sharing REST API and use Legacy UI' -Category Calendar -Value $false
         New-Option -Name 'Autodetect_CodePageOut' -DisplayName 'Automatically select encoding for outgoing messages' -Category Advanced -Value $true
         New-Option -Name 'Default_CodePageOut' -DisplayName 'Preferred encoding for outgoing messages' -Category Advanced -Value $null
+        New-Option -Name 'HighCostMeteredNetworkBehavior' -DisplayName 'Behavior on a high cost metered network' -Category Power -Value 'Default'
+        New-Option -Name 'ConservativeMeteredNetworkBehavior' -DisplayName 'Behavior on a conservative metered network' -Category Power -Value 'Default'
     )
 
     $PSDefaultParameterValues['Set-Option:Options'] = $options
@@ -4226,6 +4229,26 @@ function Get-OutlookOption {
         $PSDefaultParameterValues['Set-Option:Property'] = $prop
         Set-Option -Name 'Autodetect_CodePageOut'
         Set-Option -Name 'Default_CodePageOut' -Converter { param ($regValue) [System.Text.Encoding]::GetEncoding($prop.Default_CodePageOut).WebName }
+    }
+
+    if ($prop = Get-ItemProperty $powerPath -ErrorAction SilentlyContinue) {
+        $PSDefaultParameterValues['Set-Option:Property'] = $prop
+
+        $meteredNetworkBehaviorConverter =  {
+            param (
+                $regValue,
+                $regName
+            )
+
+            switch ($regValue) {
+                0 { 'Default'; break }
+                1 { 'Ignore'; break  }
+                2 { if ($regName -eq 'ConservativeMeteredNetworkBehavior') { 'TreatAsHighCost' } else { 'Invalid' }; break }
+            }
+        }
+
+        Set-Option -Name 'HighCostMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter
+        Set-Option -Name 'ConservativeMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter 
     }
 
     $options
