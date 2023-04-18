@@ -4205,6 +4205,7 @@ function Get-OutlookOption {
         New-Option -Name 'Default_CodePageOut' -DisplayName 'Preferred encoding for outgoing messages' -Category Advanced -Value $null
         New-Option -Name 'HighCostMeteredNetworkBehavior' -DisplayName 'Behavior on a high cost metered network' -Category Power -Value 'Default'
         New-Option -Name 'ConservativeMeteredNetworkBehavior' -DisplayName 'Behavior on a conservative metered network' -Category Power -Value 'Default'
+        New-Option -Name 'BatteryMode' -DisplayName 'Battery mode' -Category Power -Value 'Default'
     )
 
     $PSDefaultParameterValues['Set-Option:Options'] = $options
@@ -4244,11 +4245,27 @@ function Get-OutlookOption {
                 0 { 'Default'; break }
                 1 { 'Ignore'; break  }
                 2 { if ($regName -eq 'ConservativeMeteredNetworkBehavior') { 'TreatAsHighCost' } else { 'Invalid' }; break }
+                default { 'Invalid'; break }
             }
         }
 
         Set-Option -Name 'HighCostMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter
         Set-Option -Name 'ConservativeMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter 
+
+        $batteryModeConverter =  {
+            param (
+                $regValue
+            )
+
+            switch ($regValue) {
+                0 { 'Default'; break }
+                1 { 'Always'; break }
+                2 { 'Never'; break }
+                default { 'Invalid'; break }
+            }
+        }
+
+        Set-Option -Name 'BatteryMode' -Converter $batteryModeConverter
     }
 
     $options
