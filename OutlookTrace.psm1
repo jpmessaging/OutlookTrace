@@ -2894,18 +2894,18 @@ function Invoke-ScriptBlock {
         $err = $($result = & $ScriptBlock @ArgumentList) 2>&1
 
         foreach ($e in $err) {
-            Write-Log "{$ScriptBlock} had a non-terminating error" -ErrorRecord $e -Category Warning
+            Write-Log "{$ScriptBlock} had a non-terminating error. $($e.ToString())" -ErrorRecord $e -Category Warning
         }
     }
     catch {
-        Write-Log "{$ScriptBlock} threw a terminating error" -ErrorRecord $_ -Category Error
+        Write-Log "{$ScriptBlock} threw a terminating error. $($_.ToString())" -ErrorRecord $_ -Category Error
     }
     finally {
         $ProgressPreference = $savedProgressPreference
     }
 
     $sw.Stop()
-    Write-Log "{$ScriptBlock} took $($sw.ElapsedMilliseconds) ms. $(if ($null -eq $result) {"It returned nothing."})"
+    Write-Log "{$ScriptBlock} took $($sw.ElapsedMilliseconds) ms.$(if ($null -eq $result) {" It returned nothing."})"
 
     if ($null -eq $result) {
         return
@@ -3638,33 +3638,39 @@ function Get-OutlookProfile {
         process {
             $profileName = $prof.PSChildName
 
-            if ($Name.Count -gt 0 -and $profileName -notin $Name) {
-                return
+            try {
+                if ($Name.Count -gt 0 -and $profileName -notin $Name) {
+                    return
+                }
+
+                $globalSection = Get-GlobalSection $prof
+                $mailAccounts = Get-MailAccount $prof
+                $storeProviders = Get-StoreProvider $prof
+
+                # Apply cache mode policy to MAPI accounts
+                $mailAccounts | Merge-CachedModePolicy -CachedModePolicy $cachedModePolicy
+
+                # Create a flattened object for data files.
+                $dataFiles = $storeProviders | Get-DataFile -MailAccounts $mailAccounts
+
+                [PSCustomObject]@{
+                    User           = $User
+                    Name           = $profileName
+                    Path           = $prof.Name
+                    IsDefault      = $profileName -eq $defaultProfile
+                    Accounts       = $mailAccounts | Select-Object -Property * -ExcludeProperty 'EmsmdbUid'
+                    StoreProviders = $storeProviders
+                    DataFiles      = $dataFiles
+                    OfflineState   = $globalSection.OfflineState
+                    CacheSyncMode  = $globalSection.CacheSyncMode
+                }
+                }
+            catch {
+                Write-Error -Message "Error parsing a profile '$profileName'. $_" -Exception $_.Exception
             }
-
-            $globalSection = Get-GlobalSection $prof
-            $mailAccounts = Get-MailAccount $prof
-            $storeProviders = Get-StoreProvider $prof
-
-            # Apply cache mode policy to MAPI accounts
-            $mailAccounts | Merge-CachedModePolicy -CachedModePolicy $cachedModePolicy
-
-            # Create a flattened object for data files.
-            $dataFiles = $storeProviders | Get-DataFile -MailAccounts $mailAccounts
-
-            [PSCustomObject]@{
-                User           = $User
-                Name           = $profileName
-                Path           = $prof.Name
-                IsDefault      = $profileName -eq $defaultProfile
-                Accounts       = $mailAccounts | Select-Object -Property * -ExcludeProperty 'EmsmdbUid'
-                StoreProviders = $storeProviders
-                DataFiles      = $dataFiles
-                OfflineState   = $globalSection.OfflineState
-                CacheSyncMode  = $globalSection.CacheSyncMode
+            finally {
+                $prof.Close()
             }
-
-            $prof.Close()
         }
     }
 }
