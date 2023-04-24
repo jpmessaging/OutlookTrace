@@ -4256,7 +4256,7 @@ function Get-OutlookOption {
         }
 
         Set-Option -Name 'HighCostMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter
-        Set-Option -Name 'ConservativeMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter 
+        Set-Option -Name 'ConservativeMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter
 
         $batteryModeConverter =  {
             param (
@@ -7490,27 +7490,28 @@ function Get-IMProvider {
         return
     }
 
-    [Guid]$clsid = [Guid]::Empty
-
-    switch ($defaultIMApp) {
-        'Teams' { $clsid = '00425F68-FFC1-445F-8EDF-EF78B84BA1C7'; break }
-        'Lync' { $clsid = 'A0651028-BA7A-4D71-877F-12E0175A5806'; break }
+    [Guid]$clsid = switch ($defaultIMApp) {
+        'Teams' { '00425F68-FFC1-445F-8EDF-EF78B84BA1C7'; break }
+        'Lync' { 'A0651028-BA7A-4D71-877F-12E0175A5806'; break }
+        'MsTeams' { '88435F68-FFC1-445F-8EDF-EF78B84BA1C7'; break }
+        default {  Write-Error "Failed to get CLSID of DefaultIMApp '$defaultIMApp'."; return }
     }
 
-    if ($clsid -eq [Guid]::Empty) {
-        Write-Error "Failed to get CLSID of DefaultIMApp $defaultIMApp."
-        return
+    # The new Teams client's executable is "ms-teams.exe".
+    $exeName = switch ($defaultIMApp) {
+        'MsTeams' { 'ms-teams'; break }
+        default { $defaultIMApp; break }
     }
 
     $isRunning = $false
-    $process = Get-Process -Name $defaultIMApp -ErrorAction SilentlyContinue | Select-Object -First 1
+    $process = Get-Process -Name $exeName -ErrorAction SilentlyContinue | Select-Object -First 1
 
     if ($process) {
         $isRunning = $true
         $process.Dispose()
     }
 
-    # If IM application is not runnning, bail because instantiating its COM object will start the app and can take a long time.
+    # Bail if IM application is not runnning because instantiating its COM object will start the app and can take a long time.
     if (-not $isRunning) {
         [PSCustomObject]@{
             DefaultIMApp = $defaultIMApp
@@ -7536,6 +7537,7 @@ function Get-IMProvider {
         # Get IUCOfficeIntegration
         [Guid]$IID_IUCOfficeIntegration = '6a222195-f65e-467f-8f77-eb180bd85288'
         $hr = [Runtime.InteropServices.Marshal]::QueryInterface($punk, [ref]$IID_IUCOfficeIntegration, [ref]$pIUCOfficeIntegration)
+
         if ($hr -ne 0) {
             Write-Error $("QueryInterface for IID $IID_IUCOfficeIntegration failed with 0x{0:x}" -f $hr)
         }
