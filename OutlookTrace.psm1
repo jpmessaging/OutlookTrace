@@ -3664,7 +3664,7 @@ function Get-OutlookProfile {
                     OfflineState   = $globalSection.OfflineState
                     CacheSyncMode  = $globalSection.CacheSyncMode
                 }
-                }
+            }
             catch {
                 Write-Error -Message "Error parsing a profile '$profileName'. $_" -Exception $_.Exception
             }
@@ -4241,7 +4241,7 @@ function Get-OutlookOption {
     if ($prop = Get-ItemProperty $powerPath -ErrorAction SilentlyContinue) {
         $PSDefaultParameterValues['Set-Option:Property'] = $prop
 
-        $meteredNetworkBehaviorConverter =  {
+        $meteredNetworkBehaviorConverter = {
             param (
                 $regValue,
                 $regName
@@ -4249,7 +4249,7 @@ function Get-OutlookOption {
 
             switch ($regValue) {
                 0 { 'Default'; break }
-                1 { 'Ignore'; break  }
+                1 { 'Ignore'; break }
                 2 { if ($regName -eq 'ConservativeMeteredNetworkBehavior') { 'TreatAsHighCost' } else { 'Invalid' }; break }
                 default { 'Invalid'; break }
             }
@@ -4258,7 +4258,7 @@ function Get-OutlookOption {
         Set-Option -Name 'HighCostMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter
         Set-Option -Name 'ConservativeMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter
 
-        $batteryModeConverter =  {
+        $batteryModeConverter = {
             param (
                 $regValue
             )
@@ -6838,6 +6838,9 @@ function Get-OutlookAddin {
         return
     }
 
+    $officeInfo = Get-OfficeInfo
+    $arch = Get-ImageInfo -Path $officeInfo.MapiDllFileInfo.ToString() | Select-Object -ExpandProperty Architecture
+
     $LoadBehavior = @{
         0  = 'None'
         1  = 'NoneLoaded'
@@ -6893,13 +6896,23 @@ function Get-OutlookAddin {
                     $null = & { 'InprocServer32'; 'LocalServer32'; 'RemoteServer32' } | & {
                         param([Parameter(ValueFromPipeline)]$comServerType)
                         process {
-                            # The order of keys matters here for speed.
-                            # Checking sub key of HKEY_CLASSES_ROOT\CLSID\ & HKEY_CLASSES_ROOT\WOW6432Node\CLSID\ are quite slow when the path does not exist (> 100 ms). Thus they are checked later.
                             & {
-                                'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\'
-                                'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID'
-                                'Registry::HKEY_CLASSES_ROOT\CLSID\'
-                                'Registry::HKEY_CLASSES_ROOT\WOW6432Node\CLSID\'
+                                # Depending on the arch type of Outlook/MAPI, change search path. If it is x86, search Wow6432 first.
+                                # The order of keys matters here for performance.
+                                # Checking sub key of HKEY_CLASSES_ROOT\CLSID\ & HKEY_CLASSES_ROOT\WOW6432Node\CLSID\ are quite slow when the path does not exist (> 100 ms). Thus they are checked later.
+                                if ($arch -eq 'x86') {
+                                    'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID'
+                                    'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\'
+                                    'Registry::HKEY_CLASSES_ROOT\WOW6432Node\CLSID\'
+                                    'Registry::HKEY_CLASSES_ROOT\CLSID\'
+                                }
+                                else {
+                                    # Must be x64
+                                    'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\'
+                                    'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID'
+                                    'Registry::HKEY_CLASSES_ROOT\CLSID\'
+                                    'Registry::HKEY_CLASSES_ROOT\WOW6432Node\CLSID\'
+                                }
                             }`
                             | Join-Path -ChildPath $props['CLSID'] `
                             | Join-Path -ChildPath $comServerType `
@@ -7494,7 +7507,7 @@ function Get-IMProvider {
         'Teams' { '00425F68-FFC1-445F-8EDF-EF78B84BA1C7'; break }
         'Lync' { 'A0651028-BA7A-4D71-877F-12E0175A5806'; break }
         'MsTeams' { '88435F68-FFC1-445F-8EDF-EF78B84BA1C7'; break }
-        default {  Write-Error "Failed to get CLSID of DefaultIMApp '$defaultIMApp'."; return }
+        default { Write-Error "Failed to get CLSID of DefaultIMApp '$defaultIMApp'."; return }
     }
 
     # The new Teams client's executable is "ms-teams.exe".
@@ -8389,6 +8402,69 @@ function Stop-Recording {
     }
 }
 
+function Get-ImageInfo {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        $Path
+    )
+
+    try {
+        $stream = [System.IO.File]::OpenRead($Path)
+        $reader = New-Object System.IO.BinaryReader $stream
+
+        # Read IMAGE_DOS_HEADER. The first 2 bytes is "MZ" (0x5a4d)
+        $magic = $reader.ReadUInt16()
+
+        if ($magic -ne 0x5a4d) {
+            Write-Error "This is not an executable image"
+            return
+        }
+
+        # Get NT header offset at 0x3c from the beginning.
+        $null = $reader.ReadBytes(0x3c - 2)
+        $offsetToNTHeader = $reader.ReadUInt32()
+
+        $reader.BaseStream.Position = $offsetToNTHeader
+
+        # Make sure the signature is 0x00004550
+        $signature = $reader.ReadUInt32()
+
+        if ($signature -ne 0x4550) {
+            Write-Error "Wrong signature for IMAGE_NT_HEADERS32"
+            return
+        }
+
+        # The first 4 bytes of IMAGE_FILE_HEADER is the machine architecture
+        # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-image_file_header
+        $machine = $reader.ReadUInt16()
+
+        $arch =
+        switch ($machine) {
+            0x014c { 'x86'; break }
+            0x0200 { 'IA64'; break }
+            0x8664 { 'x64'; break }
+            default { 'Unknown'; break }
+        }
+
+        [PSCustomObject]@{
+            Architecture = $arch
+        }
+    }
+    catch {
+        Write-Error -ErrorRecord $_
+    }
+    finally {
+        if ($reader) {
+            $reader.Close()
+        }
+
+        if ($stream) {
+            $stream.Close()
+        }
+    }
+}
+
 <#
 .SYNOPSIS
     Collect Microsoft Office Outlook related configuration & traces
@@ -9150,4 +9226,4 @@ if (-not ('Win32.Kernel32' -as [type])) {
 # Save this module path ("...\OutlookTrace.psm1") so that functions can easily find it when running in other runspaces.
 $Script:MyModulePath = $PSCommandPath
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-ImageInfo, Collect-OutlookInfo
