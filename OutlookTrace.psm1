@@ -4154,7 +4154,7 @@ function Get-OutlookOption {
             [Parameter(Mandatory)]
             $DisplayName,
             [Parameter(Mandatory)]
-            [ValidateSet('Mail', 'Calendar', 'Advanced', 'Power')]
+            [ValidateSet('Mail', 'Calendar', 'Advanced', 'Power', 'Security')]
             $Category,
             $Value
         )
@@ -4200,6 +4200,7 @@ function Get-OutlookOption {
     $optionsPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Options"
     $prefPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Preferences"
     $powerPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Power"
+    $securityPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Security"
 
     # Options I'm interested
     $options = @(
@@ -4212,6 +4213,7 @@ function Get-OutlookOption {
         New-Option -Name 'HighCostMeteredNetworkBehavior' -DisplayName 'Behavior on a high cost metered network' -Category Power -Value 'Default'
         New-Option -Name 'ConservativeMeteredNetworkBehavior' -DisplayName 'Behavior on a conservative metered network' -Category Power -Value 'Default'
         New-Option -Name 'BatteryMode' -DisplayName 'Battery mode' -Category Power -Value 'Default'
+        New-Option -Name 'MarkInternalAsUnsafe' -DisplayName 'Use Protected View for attachments received from internal senders' -Category Security -Value $false
     )
 
     $PSDefaultParameterValues['Set-Option:Options'] = $options
@@ -4272,6 +4274,11 @@ function Get-OutlookOption {
         }
 
         Set-Option -Name 'BatteryMode' -Converter $batteryModeConverter
+    }
+
+    if ($prop = Get-ItemProperty $securityPath -ErrorAction SilentlyContinue) {
+        $PSDefaultParameterValues['Set-Option:Property'] = $prop
+        Set-Option -Name 'MarkInternalAsUnsafe'
     }
 
     $options
