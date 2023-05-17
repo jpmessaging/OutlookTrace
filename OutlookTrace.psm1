@@ -8542,8 +8542,8 @@ function Collect-OutlookInfo {
         return
     }
 
-    if ($env:PROCESSOR_ARCHITEW6432 -and $PSVersionTable.PSVersion.Major -eq 2) {
-        Write-Error "32bit PowerShell 2.0 is running on 64bit OS. Please use 64bit PowerShell."
+    if ($env:PROCESSOR_ARCHITEW6432) {
+        Write-Error "32-bit PowerShell is running on 64-bit OS. Please use 64-bit PowerShell from C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
         return
     }
 
