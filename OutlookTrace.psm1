@@ -6621,7 +6621,11 @@ function Test-Autodiscover {
         [switch]$SkipMapiHttpCapability,
 
         # Force Basic auth
-        [switch]$ForceBasicAuth
+        [switch]$ForceBasicAuth,
+
+        # X-AnchorMailbox header value. If this parameter value is missing, $EmailAddress is used.
+        # To explicitly turn off X-AnchorMailbox header, specify $null for this parameter.
+        [string]$XAnchorMailbox
     )
 
     $body = @"
@@ -6690,6 +6694,17 @@ function Test-Autodiscover {
             if (-not $SkipMapiHttpCapability) {
                 $arguments['Headers'].Add('X-MapiHttpCapability', '1')
             }
+
+            # Add X-AnchorMailbox unless XAnchorMailbox param is explicitly given a null
+            # By default, use EmailAddress as X-AnchorMailbox.
+            if ($PSBoundParameters.ContainsKey('XAnchorMailbox')) {
+                if ($XAnchorMailbox) {
+                    $arguments['Headers'].Add('X-AnchorMailbox', $XAnchorMailbox)
+                }
+            }
+            else {
+                $arguments['Headers'].Add('X-AnchorMailbox', $EmailAddress)
+            }
         }
         else {
             $arguments = @{
@@ -6728,6 +6743,7 @@ function Test-Autodiscover {
 
             if ($redirectUrl) {
                 $result | Add-Member -MemberType ScriptMethod -Name 'ToString' -Force -Value { "Received a redirect URL $($this.Headers['Location'])" }
+
                 [PSCustomObject]@{
                     Step    = $step++
                     URI     = $uri
