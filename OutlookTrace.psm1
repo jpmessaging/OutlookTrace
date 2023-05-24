@@ -3576,25 +3576,27 @@ $KnownSections = @{
 }
 
 $PropTags = @{
-    PR_LAST_OFFLINESTATE_OFFLINE       = '00030398'
-    PR_SERVICE_UID                     = '01023d0c'
-    PR_STORE_PROVIDERS                 = '01023d00'
-    PR_RESOURCE_TYPE                   = '00033e03'
-    PR_RESOURCE_FLAGS                  = '00033009'
-    PR_DISPLAY_NAME                    = '001f3001'
-    PR_PROFILE_USER_SMTP_EMAIL_ADDRESS = '001f6641'
-    PR_PROFILE_PST_PATH                = '001f6700'
-    PR_EMSMDB_SECTION_UID              = '01023d15'
-    PR_CACHE_SYNC_MODE                 = '0003041f'
-    PR_PROFILE_OFFLINE_STORE_PATH      = '001f6610'
-    PR_EMSMDB_IDENTITY_UNIQUEID        = '001f3d1d'
-    PR_PROFILE_CONFIG_FLAGS            = '00036601'
-    PR_PROFILE_CONFIG_FLAGS_EX         = '1003666e'
-    PR_PROFILE_USER_FULL_NAME          = '001f663c'
-    PR_PROFILE_SYNC_MONTHS             = '00036649'
-    PR_PROFILE_SYNC_DAYS               = '0003665a'
-    PR_PROFILE_ALTERNATE_STORE_TYPE    = '001f65d0'
-    PR_PROFILE_TENANT_ID               = '001f6663'
+    PR_LAST_OFFLINESTATE_OFFLINE         = '00030398'
+    PR_SERVICE_UID                       = '01023d0c'
+    PR_STORE_PROVIDERS                   = '01023d00'
+    PR_RESOURCE_TYPE                     = '00033e03'
+    PR_RESOURCE_FLAGS                    = '00033009'
+    PR_DISPLAY_NAME                      = '001f3001'
+    PR_PROFILE_USER_SMTP_EMAIL_ADDRESS   = '001f6641'
+    PR_PROFILE_PST_PATH                  = '001f6700'
+    PR_EMSMDB_SECTION_UID                = '01023d15'
+    PR_CACHE_SYNC_MODE                   = '0003041f'
+    PR_PROFILE_OFFLINE_STORE_PATH        = '001f6610'
+    PR_EMSMDB_IDENTITY_UNIQUEID          = '001f3d1d'
+    PR_PROFILE_CONFIG_FLAGS              = '00036601'
+    PR_PROFILE_CONFIG_FLAGS_EX           = '1003666e'
+    PR_PROFILE_USER_FULL_NAME            = '001f663c'
+    PR_PROFILE_SYNC_MONTHS               = '00036649'
+    PR_PROFILE_SYNC_DAYS                 = '0003665a'
+    PR_PROFILE_ALTERNATE_STORE_TYPE      = '001f65d0'
+    PR_PROFILE_TENANT_ID                 = '001f6663'
+    PR_PROFILE_OFFICE365_MAILBOX         = '000b6659'
+    PR_PROFILE_EXCHANGE_CONSUMER_ACCOUNT = '000b665e'
 }
 
 function Get-OutlookProfile {
@@ -4057,6 +4059,8 @@ function Get-MapiAccount {
         $PropTags.PR_PROFILE_CONFIG_FLAGS_EX
         $PropTags.PR_PROFILE_SYNC_MONTHS
         $PropTags.PR_PROFILE_SYNC_DAYS
+        $PropTags.PR_PROFILE_OFFICE365_MAILBOX
+        $PropTags.PR_PROFILE_EXCHANGE_CONSUMER_ACCOUNT
     )
 
     $emsmdb = Join-Path $profRoot $emsmdbUid | Get-ItemProperty -Name $emsmdbProperties -ErrorAction SilentlyContinue
@@ -4099,6 +4103,14 @@ function Get-MapiAccount {
         $props.IsCachedMode = $configFlags.HasFlag([Win32.Mapi.ProfileConfigFlags]::CONFIG_OST_CACHE_PRIVATE)
         $props.DownloadPublicFolderFavorites = $configFlags.HasFlag([Win32.Mapi.ProfileConfigFlags]::CONFIG_OST_CACHE_PUBLIC)
         $props.DownloadSharedFolders = $configFlags.HasFlag([Win32.Mapi.ProfileConfigFlags]::CONFIG_OST_CACHE_DELEGATE_PIM)
+    }
+
+    if ($isOffice365MailboxBin = $emsmdb.$($PropTags.PR_PROFILE_OFFICE365_MAILBOX)) {
+        $props.IsOffice365Mailbox = [System.BitConverter]::ToInt16($isOffice365MailboxBin, 0) -eq 1
+    }
+
+    if ($isConsumerAccountBin = $emsmdb.$($PropTags.PR_PROFILE_EXCHANGE_CONSUMER_ACCOUNT)) {
+        $props.IsConsumerAccount = [System.BitConverter]::ToInt16($isConsumerAccountBin, 0) -eq 1
     }
 
     # Get Sync Window
@@ -4154,7 +4166,7 @@ function Get-OutlookOption {
             [Parameter(Mandatory)]
             $DisplayName,
             [Parameter(Mandatory)]
-            [ValidateSet('Mail', 'Calendar', 'Advanced', 'Power', 'Security')]
+            [ValidateSet('Mail', 'Calendar', 'Advanced', 'Power', 'Security', 'Setup')]
             $Category,
             $Value
         )
@@ -4174,8 +4186,8 @@ function Get-OutlookOption {
             $Name,
             [Parameter(Mandatory)]
             $Property,
-            # Default converter just converts 0 -> $false, otherwise $true.
-            [ScriptBlock]$Converter = { param ($val) if ($val -eq 0) { return $false } else { $true } },
+            # Default converter just converts non-zero to $true
+            [ScriptBlock]$Converter = { param ($val) $val -ne 0 },
             [Parameter(Mandatory)]
             $Options
         )
@@ -4201,6 +4213,7 @@ function Get-OutlookOption {
     $prefPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Preferences"
     $powerPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Power"
     $securityPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Security"
+    $setupPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Setup"
 
     # Options I'm interested
     $options = @(
@@ -4214,6 +4227,7 @@ function Get-OutlookOption {
         New-Option -Name 'ConservativeMeteredNetworkBehavior' -DisplayName 'Behavior on a conservative metered network' -Category Power -Value 'Default'
         New-Option -Name 'BatteryMode' -DisplayName 'Battery mode' -Category Power -Value 'Default'
         New-Option -Name 'MarkInternalAsUnsafe' -DisplayName 'Use Protected View for attachments received from internal senders' -Category Security -Value $false
+        New-Option -Name 'DisableOffice365SimplifiedAccountCreation' -DisplayName 'Using simplified account creation to add an account to Outlook' -Category Setup -Value $false
     )
 
     $PSDefaultParameterValues['Set-Option:Options'] = $options
@@ -4279,6 +4293,11 @@ function Get-OutlookOption {
     if ($prop = Get-ItemProperty $securityPath -ErrorAction SilentlyContinue) {
         $PSDefaultParameterValues['Set-Option:Property'] = $prop
         Set-Option -Name 'MarkInternalAsUnsafe'
+    }
+
+    if ($prop = Get-ItemProperty $setupPath -ErrorAction SilentlyContinue) {
+        $PSDefaultParameterValues['Set-Option:Property'] = $prop
+        Set-Option -Name 'DisableOffice365SimplifiedAccountCreation' #-Converter { param ($val) $val -eq 1 }
     }
 
     $options
@@ -8647,6 +8666,7 @@ function Collect-OutlookInfo {
 
     if (-not $SkipAutoUpdate) {
         $autoUpdate = Invoke-AutoUpdate
+
         if ($autoUpdate.Success) {
             $updatedSelf = Get-Command $MyInvocation.MyCommand.Name
 
@@ -8683,12 +8703,13 @@ function Collect-OutlookInfo {
     Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
 
     $sb = New-Object System.Text.StringBuilder
+
     foreach ($paramName in $PSBoundParameters.Keys) {
-        $var = Get-Variable $paramName -ErrorAction SilentlyContinue
-        if ($var) {
+        if ($var = Get-Variable $paramName -ErrorAction SilentlyContinue) {
             $null = $sb.Append("$($var.Name):$($var.Value -join ', '); ")
         }
     }
+
     Write-Log "Parameters $($sb.ToString())"
 
     try {
@@ -8697,9 +8718,9 @@ function Collect-OutlookInfo {
 
         # To use Start-Task, make sure to open runspaces first and close it when finished.
         # Currently MaxRunspaces is 8 or more because there are 8 tasks at most. 3 of them, outlookMonitorTask, psrTask, and hungMonitorTask are long running.
-        # Open-TaskRunspace -IncludeScriptVariables -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(8, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
+        $minimumMaxRunspacesCount = 8
         $vars = 'logWriter', 'PSDefaultParameterValues', 'MyModulePath', 'Emoji' | Get-Variable
-        Open-TaskRunspace -Variables $vars -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max(8, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
+        Open-TaskRunspace -Variables $vars -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max($minimumMaxRunspacesCount, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
 
         # Configure log file mode and max file size for ETW traces (OutlookTrace, WAM, LDAP, and CAPI)
         $PSDefaultParameterValues['Start-*Trace:LogFileMode'] = $LogFileMode
