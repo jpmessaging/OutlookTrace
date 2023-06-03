@@ -170,6 +170,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | CrashDumpTargets   | Names of the target processes for crash dumps. When not specified, all processes are the targets                                               |
 | WamSignOut         | Switch to sign out all WAM (Web Account Manager) accounts                                                                                      |
 | EnablePageHeap     | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                           |
+| SkipVersionCheck   | Switch to skip script version check                                                                                                            |
 
 ## License
 
