@@ -2103,6 +2103,14 @@ function Start-PSR {
         [switch]$UseJob
     )
 
+    # Make sure psr isn't running already.
+    $processes = @(Get-Process psr -ErrorAction SilentlyContinue)
+
+    if ($processes.Count -gt 0) {
+        Write-Error "PSR is already running. ($($processes.ID -join ','))"
+        return
+    }
+
     if (-not (Test-Path $Path -ErrorAction Stop)) {
         $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
@@ -2141,11 +2149,15 @@ function Start-PSR {
     )
 
     if ($UseJob) {
-        $process = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList $args -PassThru } -ArgumentList $psrArgs `
+        # When a job is used, System.Management.Automation.PSObject is returned.
+        $tempProcess = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList $args -PassThru } -ArgumentList $psrArgs `
         | Receive-Job -Wait -AutoRemoveJob
+
+        # Get System.Diagnostics.Process.
+        $process = Get-Process -Id $tempProcess.ID
     }
     else {
-        $process = Start-Process 'psr' -ArgumentList $psrArgs -PassThru
+        $process = Start-Process 'psr' -ArgumentList $psrArgs -PassThru -ErrorAction SilentlyContinue
     }
 
     if (-not $process) {
@@ -2155,22 +2167,50 @@ function Start-PSR {
 
     Write-Log "PSR (PID: $($process.Id)) started $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
 
-    if ($process.Dispose) {
-        $process.Dispose()
+    [PSCustomObject]@{
+        Process = $process
     }
 }
 
 function Stop-PSR {
     [CmdletBinding()]
     param (
+        # Object returned from Start-PSR
+        $StartResult,
         [switch]$UseJob
     )
 
-    $currentInstance = Get-Process -Name psr -ErrorAction SilentlyContinue
+    $currentInstance = $null
 
-    if (-not $currentInstance) {
-        Write-Error 'There is no psr.exe process'
-        return
+    if ($StartResult) {
+        $currentInstance = $StartResult.Process
+
+        if (-not $currentInstance -or $currentInstance.HasExited) {
+            Write-Error "psr.exe (PID: $($currentInstance.Id)) exited at $($currentInstance.ExitTime)"
+
+            if ($currentInstance.Dispose) {
+                $currentInstance.Dispose()
+            }
+
+            return
+        }
+    }
+    else {
+        $processes = @(Get-Process -Name psr -ErrorAction SilentlyContinue)
+
+        if ($processes.Count -eq 0) {
+            Write-Error 'There is no psr.exe process'
+            return
+        }
+        elseif ($processes.Count -eq 1) {
+            $currentInstance = $processes[0]
+        }
+        elseif ($processes.Count -gt 1) {
+            # Unexpected.
+            Write-Log "There are $($processes.Count) instances of psr.exe (PID: $($processes.ID -join ','))"
+            $processes | ForEach-Object { if ($_.Dispose) { $_.Dispose() } }
+            return
+        }
     }
 
     # "psr /stop" creates a new instance of psr.exe and it stops the instance currently running.
@@ -2184,7 +2224,10 @@ function Stop-PSR {
 
     Wait-Process -Id $currentInstance.Id -ErrorAction SilentlyContinue
     Write-Log "PSR (PID: $($currentInstance.Id)) is stopped"
-    $currentInstance.Dispose()
+
+    if ($currentInstance.Dispose) {
+        $currentInstance.Dispose()
+    }
 
     try {
         # Cannot use HasExited on stopInstance here, because when UseJob is used the returned object is a PSObject, not a System.Diagnostics.Process.
@@ -7285,10 +7328,10 @@ function Start-PsrMonitor {
     )
 
     while ($true) {
-        Start-PSR -Path $Path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')" -UseJob
+        $startResult = Start-PSR -Path $Path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')" -UseJob
         $null = $IsStartedEvent.Set()
         $canceled = $cancelToken.WaitHandle.WaitOne($WaitInterval)
-        Stop-PSR -UseJob
+        Stop-PSR -StartResult $startResult -UseJob
 
         if ($canceled) {
             Write-Log "PSR task cancellation is acknowledged"
@@ -8876,6 +8919,15 @@ function Collect-OutlookInfo {
 
         if ($Component -contains 'PSR') {
             Write-Progress -Status 'Starting PSR'
+
+            # Make sure psr isn't running already.
+            $psrProcesses = @(Get-Process psr -ErrorAction SilentlyContinue)
+
+            if ($psrProcesses.Count -gt 0) {
+                Write-Error "PSR is already running (PID: $($psrProcesses.ID -join ',')).`nPlease stop PSR first and run again."
+                return
+            }
+
             $psrCts = New-Object System.Threading.CancellationTokenSource
             $psrStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
             Write-Log "Starting a PSR task. PsrRecycleInterval: $PsrRecycleInterval"
