@@ -2939,7 +2939,7 @@ function Invoke-ScriptBlock {
     )
 
     $result = $null
-    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $start = [System.Diagnostics.Stopwatch]::GetTimestamp()
 
     # Suppress progress that may be written by the script block
     $savedProgressPreference = $ProgressPreference
@@ -2960,8 +2960,8 @@ function Invoke-ScriptBlock {
         $ProgressPreference = $savedProgressPreference
     }
 
-    $sw.Stop()
-    Write-Log "{$ScriptBlock} took $($sw.ElapsedMilliseconds) ms.$(if ($null -eq $result) {" It returned nothing."})"
+    $elapsed = [TimeSpan]::FromTicks([System.Diagnostics.Stopwatch]::GetTimestamp() - $start)
+    Write-Log "{$ScriptBlock} took $($elapsed.TotalMilliseconds) ms.$(if ($null -eq $result) {" It returned nothing."})"
 
     if ($null -eq $result) {
         return
