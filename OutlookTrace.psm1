@@ -2167,6 +2167,10 @@ function Start-PSR {
 
     Write-Log "PSR (PID: $($process.Id)) started $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
 
+    # Why acesss Hanle? To make ExitTime, ExitCode etc. available (Also need to run as admin)
+    # see https://stackoverflow.com/a/23797762/1479211
+    $null = $process.Handle
+
     [PSCustomObject]@{
         Process = $process
     }
@@ -2180,13 +2184,11 @@ function Stop-PSR {
         [switch]$UseJob
     )
 
-    $currentInstance = $null
-
     if ($StartResult) {
         $currentInstance = $StartResult.Process
 
         if (-not $currentInstance -or $currentInstance.HasExited) {
-            Write-Error "psr.exe (PID: $($currentInstance.Id)) exited at $($currentInstance.ExitTime)"
+            Write-Error "psr.exe (PID: $($currentInstance.Id)) has already exited. ExitTime: $($currentInstance.ExitTime) ExitCode: $($currentInstance.ExitCode)"
 
             if ($currentInstance.Dispose) {
                 $currentInstance.Dispose()
@@ -2199,14 +2201,15 @@ function Stop-PSR {
         $processes = @(Get-Process -Name psr -ErrorAction SilentlyContinue)
 
         if ($processes.Count -eq 0) {
-            Write-Error 'There is no psr.exe process'
+            Write-Error 'Cannot find psr.exe process'
             return
         }
         elseif ($processes.Count -eq 1) {
             $currentInstance = $processes[0]
+            $null = $currentInstance.Handle
         }
         elseif ($processes.Count -gt 1) {
-            # Unexpected.
+            # Unexpected to find multiple psr.exe instances.
             Write-Log "There are $($processes.Count) instances of psr.exe (PID: $($processes.ID -join ','))"
             $processes | ForEach-Object { if ($_.Dispose) { $_.Dispose() } }
             return
@@ -2215,34 +2218,34 @@ function Stop-PSR {
 
     # "psr /stop" creates a new instance of psr.exe and it stops the instance currently running.
     if ($UseJob) {
-        $stopInstance = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList '/stop' -PassThru } `
+        $tempStopInstance = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList '/stop' -PassThru } `
         | Receive-Job -Wait -AutoRemoveJob
+
+        $stopInstance = Get-Process -Id $tempStopInstance.ID -ErrorAction SilentlyContinue
     }
     else {
         $stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru
     }
 
-    Wait-Process -Id $currentInstance.Id -ErrorAction SilentlyContinue
-    Write-Log "PSR (PID: $($currentInstance.Id)) is stopped"
+    # Do not use Wait-Process here because it can fail with Access denied when running as non-admin
+    $currentInstance.WaitForExit()
+    Write-Log "PSR (PID: $($currentInstance.Id)) is stopped. ExitCode: $($currentInstance.ExitCode)"
 
     if ($currentInstance.Dispose) {
         $currentInstance.Dispose()
     }
 
     try {
-        # Cannot use HasExited on stopInstance here, because when UseJob is used the returned object is a PSObject, not a System.Diagnostics.Process.
-        if (-not (Get-Process -Id $stopInstance.Id -ErrorAction SilentlyContinue | & { process { $_.Dispose(); $true } })) {
-            return
-        }
-
         # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hung.
         # The existing instance is supposed to signal an event and 'psr /stop' instance is waiting for this event to be signaled. But it seems this does not happen when there were no clicks.
         # So to avoid this, the following code manually signals the handle so that 'psr /stop' shuts down.
-        $PSR_CLEANUP_COMPLETED = '{CD3E5009-5C9D-4E9B-B5B6-CAE1D8799AE3}'
-        $h = [System.Threading.EventWaitHandle]::OpenExisting($PSR_CLEANUP_COMPLETED)
-        $null = $h.Set()
-        Write-Log "PSR_CLEANUP_COMPLETED was manually signaled"
-        Wait-Process -Id $stopInstance.Id -ErrorAction SilentlyContinue
+        if (-not $stopInstance.HasExited) {
+            $PSR_CLEANUP_COMPLETED = '{CD3E5009-5C9D-4E9B-B5B6-CAE1D8799AE3}'
+            $h = [System.Threading.EventWaitHandle]::OpenExisting($PSR_CLEANUP_COMPLETED)
+            $null = $h.Set()
+            Write-Log "PSR_CLEANUP_COMPLETED was manually signaled"
+            $stopInstance.WaitForExit()
+        }
     }
     catch {
         Write-Log -ErrorRecord $_
