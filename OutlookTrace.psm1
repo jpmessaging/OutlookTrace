@@ -2103,6 +2103,11 @@ function Start-PSR {
         [switch]$UseJob
     )
 
+    if (-not (Get-Command 'psr.exe' -ErrorAction SilentlyContinue)) {
+        Write-Error "psr.exe is not available."
+        return
+    }
+
     # Make sure psr isn't running already.
     $processes = @(Get-Process psr -ErrorAction SilentlyContinue)
 
@@ -2114,6 +2119,7 @@ function Start-PSR {
     if (-not (Test-Path $Path -ErrorAction Stop)) {
         $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
+
     $Path = Resolve-Path $Path
 
     # File name must be ***.mht
@@ -2131,11 +2137,6 @@ function Start-PSR {
 
     if ($osMajor -gt 6 -or ($osMajor -eq 6 -and $osMinor -ge 3)) {
         $maxScreenshotCount = 300
-    }
-
-    if (-not (Get-Command 'psr.exe' -ErrorAction SilentlyContinue)) {
-        Write-Error "psr.exe is not available."
-        return
     }
 
     $outputFile = Join-Path $Path -ChildPath $FileName
@@ -2168,7 +2169,7 @@ function Start-PSR {
     Write-Log "PSR (PID: $($process.Id)) started $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
 
     # Why acesss Hanle? To make ExitTime, ExitCode etc. available (Also need to run as admin)
-    # see https://stackoverflow.com/a/23797762/1479211
+    # See https://stackoverflow.com/a/23797762/1479211
     $null = $process.Handle
 
     [PSCustomObject]@{
@@ -2218,13 +2219,18 @@ function Stop-PSR {
 
     # "psr /stop" creates a new instance of psr.exe and it stops the instance currently running.
     if ($UseJob) {
-        $tempStopInstance = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList '/stop' -PassThru } `
+        $tempStopInstance = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList '/stop' -PassThru -ErrorAction SilentlyContinue } `
         | Receive-Job -Wait -AutoRemoveJob
 
         $stopInstance = Get-Process -Id $tempStopInstance.ID -ErrorAction SilentlyContinue
     }
     else {
-        $stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru
+        $stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru -ErrorAction SilentlyContinue
+    }
+
+    if (-not $stopInstance) {
+        Write-Error "Failed to run psr.exe /stop"
+        return
     }
 
     # Do not use Wait-Process here because it can fail with Access denied when running as non-admin
@@ -2236,6 +2242,10 @@ function Stop-PSR {
     }
 
     try {
+        if ($stopInstance.WaitForExit(1000)) {
+            return
+        }
+
         # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hung.
         # The existing instance is supposed to signal an event and 'psr /stop' instance is waiting for this event to be signaled. But it seems this does not happen when there were no clicks.
         # So to avoid this, the following code manually signals the handle so that 'psr /stop' shuts down.
@@ -7331,10 +7341,10 @@ function Start-PsrMonitor {
     )
 
     while ($true) {
-        $startResult = Start-PSR -Path $Path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')" -UseJob
+        $startResult = Start-PSR -Path $Path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')" #-UseJob
         $null = $IsStartedEvent.Set()
         $canceled = $cancelToken.WaitHandle.WaitOne($WaitInterval)
-        Stop-PSR -StartResult $startResult -UseJob
+        Stop-PSR -StartResult $startResult # -UseJob
 
         if ($canceled) {
             Write-Log "PSR task cancellation is acknowledged"
