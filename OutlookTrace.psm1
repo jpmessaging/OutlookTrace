@@ -2099,8 +2099,7 @@ function Start-PSR {
         [parameter(Mandatory = $true)]
         $Path,
         $FileName = "PSR.mht",
-        [switch]$ShowGUI,
-        [switch]$UseJob
+        [switch]$ShowGUI
     )
 
     if (-not (Get-Command 'psr.exe' -ErrorAction SilentlyContinue)) {
@@ -2149,28 +2148,18 @@ function Start-PSR {
         }
     )
 
-    if ($UseJob) {
-        # When a job is used, System.Management.Automation.PSObject is returned.
-        $tempProcess = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList $args -PassThru } -ArgumentList $psrArgs `
-        | Receive-Job -Wait -AutoRemoveJob
+    $err = $($process = Start-Process 'psr' -ArgumentList $psrArgs -PassThru) 2>&1
 
-        # Get System.Diagnostics.Process.
-        $process = Get-Process -Id $tempProcess.ID
-    }
-    else {
-        $process = Start-Process 'psr' -ArgumentList $psrArgs -PassThru -ErrorAction SilentlyContinue
-    }
-
-    if (-not $process) {
-        Write-Error "PSR failed to start"
+    if (-not $process -or $process.HasExited) {
+        Write-Error "PSR failed to start. $err" -Exception $err.Exception
         return
     }
 
-    Write-Log "PSR (PID: $($process.Id)) started $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
-
-    # Why acesss Hanle? To make ExitTime, ExitCode etc. available (Also need to run as admin)
-    # See https://stackoverflow.com/a/23797762/1479211
+    # Why access Handle? To make ExitTime, ExitCode etc available. See blow:
+    # https://stackoverflow.com/questions/10262231/obtaining-exitcode-using-start-process-and-waitforexit-instead-of-wait/23797762#23797762
     $null = $process.Handle
+
+    Write-Log "PSR (PID: $($process.Id)) started $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
 
     [PSCustomObject]@{
         Process = $process
@@ -2181,20 +2170,24 @@ function Stop-PSR {
     [CmdletBinding()]
     param (
         # Object returned from Start-PSR
-        $StartResult,
-        [switch]$UseJob
+        $StartResult
     )
 
     if ($StartResult) {
         $currentInstance = $StartResult.Process
 
-        if (-not $currentInstance -or $currentInstance.HasExited) {
-            Write-Error "psr.exe (PID: $($currentInstance.Id)) has already exited. ExitTime: $($currentInstance.ExitTime) ExitCode: $($currentInstance.ExitCode)"
-
-            if ($currentInstance.Dispose) {
+        try {
+            # WaitForExit(0) is used here instead of HasExited in order to detect the following 2 conditions with one shot:
+            # 1. The actual process has exited already, but System.Diagnostics.Process has not been disposed yet.
+            # 2. System.Diagnostics.Process has been disposed (i.e. invalid input). WaitForExit() throws an exception "No process is associated with this object".
+            if ($currentInstance.WaitForExit(0)) {
+                Write-Error "psr.exe (PID: $($currentInstance.Id)) has already exited. ExitTime: $($currentInstance.ExitTime), ExitCode: $($currentInstance.ExitCode)"
                 $currentInstance.Dispose()
+                return
             }
-
+        }
+        catch {
+            Write-Error -Message "Process object passed by StartResult parameter has been disposed already. $_" -Exception $_.Exception
             return
         }
     }
@@ -2218,18 +2211,10 @@ function Stop-PSR {
     }
 
     # "psr /stop" creates a new instance of psr.exe and it stops the instance currently running.
-    if ($UseJob) {
-        $tempStopInstance = Start-Job -ScriptBlock { Start-Process 'psr' -ArgumentList '/stop' -PassThru -ErrorAction SilentlyContinue } `
-        | Receive-Job -Wait -AutoRemoveJob
-
-        $stopInstance = Get-Process -Id $tempStopInstance.ID -ErrorAction SilentlyContinue
-    }
-    else {
-        $stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru -ErrorAction SilentlyContinue
-    }
+    $err = $($stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru)
 
     if (-not $stopInstance) {
-        Write-Error "Failed to run psr.exe /stop"
+        Write-Error "Failed to run psr.exe /stop. $err" -Exception $err.Exception
         return
     }
 
@@ -7341,10 +7326,10 @@ function Start-PsrMonitor {
     )
 
     while ($true) {
-        $startResult = Start-PSR -Path $Path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')" #-UseJob
+        $startResult = Start-PSR -Path $Path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')"
         $null = $IsStartedEvent.Set()
         $canceled = $cancelToken.WaitHandle.WaitOne($WaitInterval)
-        Stop-PSR -StartResult $startResult # -UseJob
+        Stop-PSR -StartResult $startResult
 
         if ($canceled) {
             Write-Log "PSR task cancellation is acknowledged"
