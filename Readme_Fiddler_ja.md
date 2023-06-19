@@ -21,6 +21,8 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
     powershell -ExecutionPolicy Bypass
     ```
 
+    💡 上記の手順を実行した際に「新しいクロスプラットフォームの PowerShell をお試しください」と表示される場合がありますが、そのまま手順を続けてください。
+
 8. OutlookTrace.psm1 をインポートします。
 
     ```

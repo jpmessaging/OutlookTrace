@@ -21,6 +21,8 @@ Fiddler トレースや Process Monitor ログ、そして ZoomIt によるス�
     powershell -ExecutionPolicy Bypass
     ```
 
+    💡 上記の手順を実行した際に「新しいクロスプラットフォームの PowerShell をお試しください」と表示される場合がありますが、そのまま手順を続けてください。
+
 5. OutlookTrace.psm1 をインポートします。
 
     ```
