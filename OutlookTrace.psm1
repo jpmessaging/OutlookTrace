@@ -326,6 +326,12 @@ namespace Win32
 
         [DllImport("kernel32.dll", ExactSpelling = true)]
         public static extern void RtlZeroMemory(IntPtr dst, int length);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        public static extern SafeFileMappingHandle OpenFileMappingW(uint dwDesiredAccess, bool bInheritHandle, string lpName);
+
+        [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+        public static extern bool CloseHandle(IntPtr handle);
     }
 
     // ETW Logging Mode Constants for logman
@@ -498,6 +504,16 @@ namespace Win32
         public static extern uint StringFromCLSID([MarshalAs(UnmanagedType.LPStruct)] Guid refclsid, out IntPtr pClsidString);
     }
 
+    public class SafeFileMappingHandle : SafeHandleZeroOrMinusOneIsInvalid
+    {
+        public SafeFileMappingHandle() : base(true) {}
+
+        override protected bool ReleaseHandle()
+        {
+            return Win32.Kernel32.CloseHandle(handle);
+        }
+    }
+
     // SafeHandle-derived class for the native memory that should be freed by GlobalFree.
     public class SafeGlobalFreeHandle: SafeHandleZeroOrMinusOneIsInvalid
     {
@@ -549,6 +565,25 @@ namespace Win32
             Marshal.FreeCoTaskMem(handle);
             return true;
         }
+    }
+
+    public static class Shell32
+    {
+        // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ne-shellapi-query_user_notification_state
+        public enum QUERY_USER_NOTIFICATION_STATE
+        {
+            QUNS_NOT_PRESENT             = 1,
+            QUNS_BUSY                    = 2,
+            QUNS_RUNNING_D3D_FULL_SCREEN = 3,
+            QUNS_PRESENTATION_MODE       = 4,
+            QUNS_ACCEPTS_NOTIFICATIONS   = 5,
+            QUNS_QUIET_TIME              = 6,
+            QUNS_APP                     = 7
+        };
+
+        // https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shqueryusernotificationstate
+        [DllImport("shell32.dll")]
+        public static extern uint SHQueryUserNotificationState(out QUERY_USER_NOTIFICATION_STATE pquns);
     }
 
     public static class User32
@@ -8548,6 +8583,42 @@ function Get-ImageInfo {
     }
 }
 
+function Get-PresentationMode
+{
+    [CmdletBinding()]
+    param()
+
+    $state = [Win32.Shell32+QUERY_USER_NOTIFICATION_STATE]::QUNS_NOT_PRESENT
+    $hr = [Win32.Shell32]::SHQueryUserNotificationState([ref]$state)
+
+    if ($hr -gt 0) {
+        Write-Error "SHQueryUserNotificationState failed with $hr"
+        return
+    }
+
+    $PAGE_READONLY = 2;
+    $fileMap = 'Local\FullScreenPresentationModeInfo'
+
+    [Win32.SafeFileMappingHandle]$handle = [Win32.Kernel32]::OpenFileMappingW($PAGE_READONLY, $false, $fileMap)
+
+    $fileMapExist = -not $handle.IsInvalid
+    $handle.Dispose()
+
+    if ($state -ne [Win32.Shell32+QUERY_USER_NOTIFICATION_STATE]::QUNS_ACCEPTS_NOTIFICATIONS -and $state -ne [Win32.Shell32+QUERY_USER_NOTIFICATION_STATE]::QUNS_QUIET_TIME) {
+        $isPresentationMode = $true
+    }
+    else {
+        $isPresentationMode = $fileMapExist
+    }
+
+    [PSCustomObject]@{
+        User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        IsPresentationMode = $isPresentationMode
+        NotificationState = $state
+        PresentationFileMapExist = $fileMapExist
+    }
+}
+
 <#
 .SYNOPSIS
 Check if this sript is too old.
@@ -8829,6 +8900,7 @@ function Collect-OutlookInfo {
             $PSDefaultParameterValues['Invoke-ScriptBlock:Path'] = $OfficeDir
             Invoke-ScriptBlock { Get-OfficeInfo }
             Invoke-ScriptBlock { Get-ClickToRunConfiguration }
+            Invoke-ScriptBlock { Get-PresentationMode }
             Invoke-ScriptBlock { param($User) Get-OutlookProfile @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-OutlookAddin @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-OutlookOption @PSBoundParameters }
@@ -9344,4 +9416,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-ImageInfo, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-ImageInfo, Get-PresentationMode, Collect-OutlookInfo
