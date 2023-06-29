@@ -4242,7 +4242,7 @@ function Get-OutlookOption {
             [Parameter(Mandatory)]
             $DisplayName,
             [Parameter(Mandatory)]
-            [ValidateSet('Mail', 'Calendar', 'Advanced', 'Power', 'Security', 'Setup')]
+            [ValidateSet('Mail', 'Calendar', 'Tasks', 'Advanced', 'Power', 'Security', 'Setup')]
             $Category,
             $Value
         )
@@ -4297,6 +4297,7 @@ function Get-OutlookOption {
         New-Option -Name 'NewMailDesktopAlerts' -DisplayName 'Display a Desktop Alert' -Category Mail -Value $true
         New-Option -Name 'NewMailDesktopAlertsDRMPreview' -DisplayName 'Enable preview for Rights Protected messages' -Category Mail -Value $false
         New-Option -Name 'ShowLegacySharingUX' -DisplayName 'Turn off Calendar Sharing REST API and use Legacy UI' -Category Calendar -Value $false
+        New-Option -Name 'OpenTasksWithToDoApp' -DisplayName 'When opening from a reminder, open tasks with ToDo App' -Category Tasks -Value $false
         New-Option -Name 'Autodetect_CodePageOut' -DisplayName 'Automatically select encoding for outgoing messages' -Category Advanced -Value $true
         New-Option -Name 'Default_CodePageOut' -DisplayName 'Preferred encoding for outgoing messages' -Category Advanced -Value $null
         New-Option -Name 'HighCostMeteredNetworkBehavior' -DisplayName 'Behavior on a high cost metered network' -Category Power -Value 'Default'
@@ -4322,6 +4323,7 @@ function Get-OutlookOption {
         $PSDefaultParameterValues['Set-Option:Property'] = $prop
         Set-Option -Name 'NewMailDesktopAlerts'
         Set-Option -Name 'NewmailDesktopAlertsDRMPreview'
+        Set-Option -Name 'OpenTasksWithToDoApp'
     }
 
     if ($prop = Join-Path $optionsPath 'MSHTML\International\' | Get-ItemProperty -ErrorAction SilentlyContinue) {
