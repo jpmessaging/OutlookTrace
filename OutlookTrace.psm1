@@ -2267,8 +2267,8 @@ function Stop-PSR {
         }
 
         # When there were no clicks, the instance of 'psr /stop' remains after the existing instance exits. This causes a hung.
-        # The existing instance is supposed to signal an event and 'psr /stop' instance is waiting for this event to be signaled. But it seems this does not happen when there were no clicks.
-        # So to avoid this, the following code manually signals the handle so that 'psr /stop' shuts down.
+        # The existing instance is supposed to signal an event which 'psr /stop' instance waits for. But it seems this does not happen when there were no clicks.
+        # So to avoid this, the following code manually signals the event so that 'psr /stop' shuts down.
         if (-not $stopInstance.HasExited) {
             $PSR_CLEANUP_COMPLETED = '{CD3E5009-5C9D-4E9B-B5B6-CAE1D8799AE3}'
             $h = [System.Threading.EventWaitHandle]::OpenExisting($PSR_CLEANUP_COMPLETED)
@@ -2567,7 +2567,7 @@ function Resolve-User {
     }
 
     if ($null -eq $sid -or $null -eq $account) {
-        Write-Error "Cannot resolve $Identity."
+        Write-Error "Cannot resolve $Identity"
         return
     }
 
@@ -2634,6 +2634,11 @@ function Get-UserRegistryRoot {
 
     if ($User) {
         $resolvedUser = Resolve-User $User
+
+        if (-not $resolvedUser) {
+            return
+        }
+
         $userRegRoot = "HKEY_USERS\$($resolvedUser.Sid)"
 
         if (-not ($userRegRoot -and (Test-Path "Registry::$userRegRoot"))) {
@@ -4447,6 +4452,10 @@ function Save-CachedAutodiscover {
         [string]$User
     )
 
+    if ($User -and -not (Resolve-User $User)) {
+        return
+    }
+
     if (-not (Test-Path $Path)) {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
@@ -4481,6 +4490,10 @@ function Remove-CachedAutodiscover {
         # Target user name
         [string]$User
     )
+
+    if ($User -and -not (Resolve-User $User)) {
+        return
+    }
 
     Get-CachedAutodiscoverLocation -User $User | & {
         param ([Parameter(ValueFromPipeline)]$cachePath)
@@ -5970,7 +5983,7 @@ function Enable-PageHeap {
         return
     }
 
-    Disable-PageHeap -ProcessName $ProcessName
+    Disable-PageHeap -ProcessName $ProcessName -ErrorAction SilentlyContinue
 
     $IFEO = 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
     $imageKeyPath = Join-Path $IFEO $ProcessName
@@ -5979,8 +5992,22 @@ function Enable-PageHeap {
         $null = New-Item $IFEO -Name $ProcessName
     }
 
+    $success = $true
+
     foreach ($kvp in @(@{Name = 'GlobalFlag'; Value = 0x2000000 }, @{Name = 'PageHeapFlags'; Value = 3 })) {
         $null = New-ItemProperty $imageKeyPath -Name $kvp.Name -Value $kvp.Value
+
+        # Don't use -ErrorVariable because StopUpstreamCommandsException might populate it
+        # https://github.com/PowerShell/PowerShell/pull/10840
+        if (-not $?) {
+            $success = $false
+            break
+        }
+    }
+
+    if ($success) {
+        Write-Log "PageHeap is enabled for $ProcessName"
+        $true
     }
 }
 
@@ -6004,8 +6031,18 @@ function Disable-PageHeap {
         return
     }
 
+    $success = $true
+
     foreach ($name in @('GlobalFlag', 'PageHeapFlags')) {
-        Remove-ItemProperty $imageKeyPath -Name $name -ErrorAction SilentlyContinue
+        Remove-ItemProperty $imageKeyPath -Name $name
+
+        if (-not $?) {
+            $success = $false
+        }
+    }
+
+    if ($success) {
+        Write-Log "PageHeap is disabled for $ProcessName"
     }
 }
 
@@ -7349,6 +7386,106 @@ function Start-ProcessMonitoring {
 
 <#
 .SYNOPSIS
+    Start enumerating processes
+.DESCRIPTION
+    This command starts enumerating Win32 processes until canceled via a CancellationToken, and it repeats with the given interval.
+    For processes whose name matches the NamePattern parameter, their User and Environment Variables are also retrieved.
+#>
+function Start-ProcessCapture {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        # Folder path to save process list
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        # Regex Pattern of process names to fetch details
+        [string]$NamePattern,
+        [System.Threading.CancellationToken]$CancelToken,
+        [TimeSpan]$Interval = [TimeSpan]::FromSeconds(1),
+        # This is just for testing
+        [Switch]$EnablePerfCheck
+    )
+
+    if (-not (Test-Path $Path)) {
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
+    }
+
+    # PowerShell 4's Get-Process has -IncludeUserName parameter. Use it if available; otherwise fall back to WMI.
+    $includeUserNameAvailable = $null -ne (Get-Command -Name 'Get-Process' -ParameterName 'IncludeUserName' -ErrorAction SilentlyContinue)
+
+    # Using a Hash table is much faster than Where-Object.
+    $hashSet = @{}
+
+    while ($true) {
+        $start = [System.Diagnostics.Stopwatch]::GetTimestamp()
+
+        Get-CimInstance Win32_Process | & {
+            param ([Parameter(ValueFromPipeline)]$win32Process)
+            process {
+                $key = "$($win32Process.ProcessId),$($win32Process.CreationDate)"
+
+                if ($hashSet.ContainsKey($key)) {
+                    return
+                }
+
+                $obj = @{
+                    Name         = $win32Process.Name
+                    Id           = $win32Process.ProcessId
+                    CreationDate = $win32Process.CreationDate
+                    Path         = $win32Process.path
+                    CommandLine  = $win32Process.CommandLine
+                }
+
+                # For processes specified in NamePattern parameter, save its User & Environment Variables.
+                if ($win32Process.ProcessName -match $NamePattern) {
+                    Write-Log "Found a new instance of $($win32Process.ProcessName) (PID:$($win32Process.ProcessId))"
+
+                    if ($includeUserNameAvailable) {
+                        if ($proc = Get-Process -Id $win32Process.ProcessId -IncludeUserName -ErrorAction SilentlyContinue) {
+                            $obj.Add('User', $proc.UserName)
+                            $obj.Add('EnvironmentVariables', $proc.StartInfo.EnvironmentVariables)
+                            $proc.Dispose()
+                        }
+                    }
+                    else {
+                        try {
+                            # GetOwner() could fail if the process has exited. Not likely, but be defensive here.
+                            $owner = Invoke-CimMethod -InputObject $win32Process -MethodName 'GetOwner'
+                            $obj.Add('User', "$($owner.Domain)\$($owner.User)")
+                        }
+                        catch {
+                            Write-Error "Invoke-CimMethod with GetOwner failed for $(win32Process.Name)" -Exception $_.Exception
+                        }
+
+                        if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
+                            $obj.Add('EnvironmentVariables', $proc.StartInfo.EnvironmentVariables)
+                            $proc.Dispose()
+                        }
+                    }
+                }
+
+                $hashSet.Add($key, [PSCustomObject]$obj)
+            }
+        }
+
+        if ($EnablePerfCheck) {
+            $elapsed = [TimeSpan]::FromTicks([System.Diagnostics.Stopwatch]::GetTimestamp() - $start)
+            Write-Log "Processing Win32_Process took $($elapsed.TotalMilliseconds) ms"
+        }
+
+        if ($CancelToken.IsCancellationRequested) {
+            Write-Log "Cancel request acknowledged."
+            break
+        }
+
+        Start-Sleep -Seconds $Interval.TotalSeconds
+    }
+
+    $hashSet.Values | Export-Clixml -Path (Join-Path $Path 'Win32_Process.xml')
+}
+
+<#
+.SYNOPSIS
     Start PSR as a task and restart after some time until canceled.
     This creates PSR_***.mht in $Path. When $Circular, only files writen within the last 1 hour will be kept.
 #>
@@ -8585,8 +8722,7 @@ function Get-ImageInfo {
     }
 }
 
-function Get-PresentationMode
-{
+function Get-PresentationMode {
     [CmdletBinding()]
     param()
 
@@ -8614,10 +8750,72 @@ function Get-PresentationMode
     }
 
     [PSCustomObject]@{
-        User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-        IsPresentationMode = $isPresentationMode
-        NotificationState = $state
+        User                     = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        IsPresentationMode       = $isPresentationMode
+        NotificationState        = $state
         PresentationFileMapExist = $fileMapExist
+    }
+}
+
+function Add-LoopbackExempt {
+    [CmdletBinding()]
+    param(
+        [string]$PackageFamiliyName
+    )
+
+    if (-not (Get-Command 'CheckNetIsolation.exe')) {
+        Write-Error "CheckNetIsolation.exe is not available"
+        return
+    }
+
+    if (-not $PSBoundParameters.ContainsKey('PackageFamiliyName')) {
+        $PackageFamiliyName = (Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin').PackageFamilyName
+
+        if (-not $PackageFamiliyName) {
+            Write-Error "PackageFamiliyName parameter was not provided and Microsoft.AAD.BrokerPlugin is not found"
+            return
+        }
+    }
+
+    # Check if it's already added.
+    $found = CheckNetIsolation.exe LoopbackExempt -s | & {
+        process {
+            if (Select-String -InputObject $_ -Pattern $PackageFamiliyName -SimpleMatch -Quiet) {
+                $true
+            }
+        }
+    } | Select-Object -First 1
+
+    if ($found) {
+        Write-Error "$PackageFamiliyName is already in LoopbackExempt"
+        return
+    }
+
+    # Add it (Note: package name MUST be double-quoted)
+    $null = CheckNetIsolation.exe LoopbackExempt -a -n="$PackageFamiliyName"
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Log "$PackageFamiliyName is added to LoopbackExempt"
+        $true
+    }
+    else {
+        Write-Error "CheckNetIsolation failed with $LASTEXITCODE"
+    }
+}
+
+function Remove-LoopbackExempt {
+    [CmdletBinding()]
+    param(
+        $PackageFamiliyName = (Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin').PackageFamilyName
+    )
+
+    $null = CheckNetIsolation.exe LoopbackExempt -d -n="$PackageFamiliyName"
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Log "$PackageFamiliyName is removed from LoopbackExempt"
+    }
+    else {
+        Write-Error "CheckNetIsolation.exe failed with $LASTEXITCODE"
     }
 }
 
@@ -8696,6 +8894,8 @@ function Collect-OutlookInfo {
         [switch]$WamSignOut,
         # Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)
         [switch]$EnablePageHeap,
+        # Switch to add Microsoft.AAD.BrokerPlugin to Loopback Exempt
+        [switch]$EnableLoopbackExempt,
         # Skip script version check.
         [switch]$SkipVersionCheck
     )
@@ -8703,7 +8903,7 @@ function Collect-OutlookInfo {
     $runAsAdmin = Test-RunAsAdministrator
 
     # Explicitly check admin rights depending on the request.
-    if (-not $runAsAdmin -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump' -or $EnablePageHeap)) {
+    if (-not $runAsAdmin -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump' -or $EnablePageHeap -or $EnableLoopbackExempt)) {
         Write-Warning "Please run as administrator."
         return
     }
@@ -8831,7 +9031,7 @@ function Collect-OutlookInfo {
         Set-ThreadCulture 'en-US' 2>&1 | Write-Log -Category Error
 
         # To use Start-Task, make sure to open runspaces first and close it when finished.
-        # Currently MaxRunspaces is 8 or more because there are 8 tasks at most. 3 of them, outlookMonitorTask, psrTask, and hungMonitorTask are long running.
+        # Currently MaxRunspaces is 8 or more because there are 8 tasks at most. 3 of them, processCaptureTask, psrTask, and hungMonitorTask are long running.
         $minimumMaxRunspacesCount = 8
         $vars = 'logWriter', 'PSDefaultParameterValues', 'MyModulePath', 'Emoji' | Get-Variable
         Open-TaskRunspace -Variables $vars -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max($minimumMaxRunspacesCount, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
@@ -8859,8 +9059,7 @@ function Collect-OutlookInfo {
 
         # Enable PageHeap for outlook.exe
         if ($EnablePageHeap) {
-            Enable-PageHeap -ProcessName 'outlook.exe' -ErrorAction Stop
-            Write-Log "Page Heap is enabled for outlook.exe."
+            $pageHeapEnabled = Enable-PageHeap -ProcessName 'outlook.exe' -ErrorAction Stop
         }
 
         Write-Log "Starting traces"
@@ -8875,9 +9074,11 @@ function Collect-OutlookInfo {
             $MSIPCDir = Join-Path $ConfigDir 'MSIPC'
             $EventDir = Join-Path $ConfigDir 'EventLog'
 
+            $null = New-Item -Path $OSDir -ItemType Directory -ErrorAction Stop
+            $targetUser | Export-Clixml -Path (Join-Path $OSDir 'User.xml')
+
             $PSDefaultParameterValues['Write-Progress:Activity'] = 'Saving configuration'
             $PSDefaultParameterValues['Write-Progress:Status'] = 'Please wait'
-
             Write-Progress -PercentComplete 0
 
             # First start tasks that might take a while.
@@ -8898,6 +9099,17 @@ function Collect-OutlookInfo {
 
             Write-Progress -PercentComplete 40
 
+            Write-Log "Starting processCaptureTask."
+            $processCaptureTaskCts = New-Object System.Threading.CancellationTokenSource
+            $processCaptureTask = Start-Task { param ($Path, $NamePattern, $CancelToken) Start-ProcessCapture @PSBoundParameters } `
+                -ArgumentList @{
+                Path        = $OSDir
+                NamePattern = 'outlook|fiddler|explorer|backgroundTaskHost'
+                CancelToken = $processCaptureTaskCts.Token
+            }
+
+            Write-Progress -PercentComplete 60
+
             $PSDefaultParameterValues['Invoke-ScriptBlock:ArgumentList'] = @{ User = $targetUser }
             $PSDefaultParameterValues['Invoke-ScriptBlock:Path'] = $OfficeDir
             Invoke-ScriptBlock { Get-OfficeInfo }
@@ -8916,7 +9128,7 @@ function Collect-OutlookInfo {
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:ArgumentList')
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:Path')
 
-            Write-Progress -PercentComplete 60
+            Write-Progress -PercentComplete 80
 
             Invoke-ScriptBlock { param($User, $Path) Save-CachedAutodiscover @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'Cached AutoDiscover' }
             Invoke-ScriptBlock { param($User, $Path) Save-CachedOutlookConfig @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'Cached OutlookConfig' }
@@ -8924,29 +9136,18 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($User, $Path) Save-DLP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'DLP' }
             Invoke-ScriptBlock { param($User, $Path) Save-CLP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'CLP' }
 
-            Write-Progress -PercentComplete 80
-
-            # Names of processes whose owner info is also saved.
-            $processesWithOwner = @('Outlook', 'Fiddler*', 'explorer')
-            Invoke-ScriptBlock { param($Path, $Name) Save-Process @PSBoundParameters } -ArgumentList @{ Path = $OSDir; Name = $processesWithOwner }
-
-            if ($targetUser) {
-                $targetUser | Export-Clixml -Path (Join-Path $OSDir 'User.xml')
-            }
-
-            if ($Component.Count -gt 1) {
-                # The user might start & stop Outlook while tracing. In order to capture Outlook's instances, run a task to check Outlook.exe periodically.
-                Write-Log "Starting outlookMonitorTask."
-                $outlookMonitorTaskCts = New-Object System.Threading.CancellationTokenSource
-                $outlookMonitorTask = Start-Task { param ($Path, $Name, $CancelToken) Start-ProcessMonitoring @PSBoundParameters } `
-                    -ArgumentList @{
-                    Path        = $OSDir
-                    Name        = $processesWithOwner
-                    CancelToken = $outlookMonitorTaskCts.Token
-                }
-            }
-
             Write-Progress -Completed
+        }
+
+        # Add Microsoft.AAD.BrokerPlugin to Loopback Exempt list if that's appropriate. If it is already added, Add-LoopbackExempt does nothing.
+        $loopbackExemptAdded = $false
+
+        if ($EnableLoopbackExempt -or $Component -contains 'Fiddler' -or $Component -contains 'Netsh') {
+            $($loopbackExemptAdded = Add-LoopbackExempt) 2>&1 | Write-Log -Category Warning
+
+            if ($loopbackExemptAdded -and $OSDir) {
+                CheckNetIsolation.exe LoopbackExempt -s | Set-Content -Path (Join-Path $OSDir 'LoopbackExempt.txt')
+            }
         }
 
         $PSDefaultParameterValues['Write-Progress:Activity'] = 'Starting traces'
@@ -9306,10 +9507,10 @@ function Collect-OutlookInfo {
 
         # Wait for the tasks started earlier and save the event logs
         if ($Component -contains 'Configuration') {
-            if ($outlookMonitorTask) {
-                Write-Progress -Status 'Stopping monitor task'
-                $outlookMonitorTaskCts.Cancel()
-                $outlookMonitorTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
+            if ($processCaptureTask) {
+                Write-Progress -Status 'Stopping processCaptureTask'
+                $processCaptureTaskCts.Cancel()
+                $processCaptureTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
             }
 
             if ($startSuccess) {
@@ -9351,17 +9552,14 @@ function Collect-OutlookInfo {
                 $officeModuleInfoTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 Write-Log "officeRegistryTask is complete."
             }
-
-            # Save process list again after traces
-            if ($startSuccess -and $Component.Count -gt 1) {
-                Write-Progress -Status 'Saving process list'
-                Invoke-ScriptBlock { param($Path, $Name) Save-Process @PSBoundParameters } -ArgumentList @{ Path = $OSDir; Name = $processesWithOwner } 2>&1 | Write-Log -Category Error
-            }
         }
 
-        if ($EnablePageHeap) {
+        if ($pageHeapEnabled) {
             Disable-PageHeap -ProcessName 'outlook.exe' 2>&1 | Write-Log -Category Error -PassThru
-            Write-Log "Page Heap disabled."
+        }
+
+        if ($loopbackExemptAdded) {
+            Remove-LoopbackExempt 2>&1 | Write-Log -Category Error -PassThru
         }
 
         Write-Progress -Completed
