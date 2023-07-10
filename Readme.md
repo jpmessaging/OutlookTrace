@@ -153,24 +153,25 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 
 ### Optional parameters
 
-| Name               | Description                                                                                                                                    |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| NetshReportMode    | Netsh trace's report mode. Valid values: `None`, `Mini`, `Full` (Default: `None`)                                                              |
-| LogFileMode        | ETW trace's mode. Valid values: `NewFile`, `Circular` (Default: `NewFile`)                                                                     |
-| MaxFileSizeMB      | Max file size for ETW trace files. By default, 256 MB when `NewFile` and 2048 MB when `Circular`                                               |
-| ArchiveType        | Valid values: `Zip` or `Cab`. Zip is faster, but Cab is smaller (Default: `Zip`)                                                               |
-| SkipArchive        | Switch to skip archiving (zip or cab)                                                                                                          |
-| SkipAutoUpdate     | Switch to skip auto update                                                                                                                     |
-| AutoFlush          | Switch to flush log data every time it's written (This is just for troubleshooting the script)                                                 |
-| PsrRecycleInterval | PSR recycle interval. A new instance of PSR is created after this interval (Default: `00:10:00`, Min: `00:01:00`, Max: `01:00:00`)             |
-| User               | Target user whose configuration data is collected. By default, it's the logon user (Note: Not necessarily the current user running the script) |
-| HungTimeout        | Timespan used to detect a hung window when `HungDump` is requested in Component (Default: `00:00:05`, Min: `00:00:01`, Max: `00:01:00`)        |
-| HungMonitorTarget  | Name of the target process to monitor a hung window (Default: `Outlook`)                                                                       |
-| MaxHungDumpCount   | Max number of hung dump files to be saved per process instance (Default: `3`, Min: `1`, Max: `10`)                                             |
-| CrashDumpTargets   | Names of the target processes for crash dumps. When not specified, all processes are the targets                                               |
-| WamSignOut         | Switch to sign out all WAM (Web Account Manager) accounts                                                                                      |
-| EnablePageHeap     | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                           |
-| SkipVersionCheck   | Switch to skip script version check                                                                                                            |
+| Name                 | Description                                                                                                                                    |
+| -------------------  | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| NetshReportMode      | Netsh trace's report mode. Valid values: `None`, `Mini`, `Full` (Default: `None`)                                                              |
+| LogFileMode          | ETW trace's mode. Valid values: `NewFile`, `Circular` (Default: `NewFile`)                                                                     |
+| MaxFileSizeMB        | Max file size for ETW trace files. By default, 256 MB when `NewFile` and 2048 MB when `Circular`                                               |
+| ArchiveType          | Valid values: `Zip` or `Cab`. Zip is faster, but Cab is smaller (Default: `Zip`)                                                               |
+| SkipArchive          | Switch to skip archiving (zip or cab)                                                                                                          |
+| SkipAutoUpdate       | Switch to skip auto update                                                                                                                     |
+| AutoFlush            | Switch to flush log data every time it's written (This is just for troubleshooting the script)                                                 |
+| PsrRecycleInterval   | PSR recycle interval. A new instance of PSR is created after this interval (Default: `00:10:00`, Min: `00:01:00`, Max: `01:00:00`)             |
+| User                 | Target user whose configuration data is collected. By default, it's the logon user (Note: Not necessarily the current user running the script) |
+| HungTimeout          | Timespan used to detect a hung window when `HungDump` is requested in Component (Default: `00:00:05`, Min: `00:00:01`, Max: `00:01:00`)        |
+| HungMonitorTarget    | Name of the target process to monitor a hung window (Default: `Outlook`)                                                                       |
+| MaxHungDumpCount     | Max number of hung dump files to be saved per process instance (Default: `3`, Min: `1`, Max: `10`)                                             |
+| CrashDumpTargets     | Names of the target processes for crash dumps. When not specified, all processes are the targets                                               |
+| WamSignOut           | Switch to sign out all WAM (Web Account Manager) accounts                                                                                      |
+| EnablePageHeap       | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                           |
+| EnableLoopbackExempt | Switch to add Microsoft.AAD.BrokerPlugin to Loopback Exempt                                                                                    |
+| SkipVersionCheck     | Switch to skip script version check                                                                                                            |
 
 ## License
 
