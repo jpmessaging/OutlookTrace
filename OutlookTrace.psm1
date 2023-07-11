@@ -9142,7 +9142,7 @@ function Collect-OutlookInfo {
         # Check if Microsoft.AAD.BrokerPlugin is avaiable.
         if (Get-Command 'Get-AppxPackage') {
             if (-not (Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin')) {
-                Write-Log -Message "Microsoft.AAD.BrokerPlugin is not avaiable" -Category Error
+                Write-Log -Message "Microsoft.AAD.BrokerPlugin is not available" -Category Error
             }
         }
 
