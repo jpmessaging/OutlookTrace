@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2023-07-09'
+$Version = 'v2023-07-10'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -7432,7 +7432,7 @@ function Start-ProcessCapture {
                     Name         = $win32Process.Name
                     Id           = $win32Process.ProcessId
                     CreationDate = $win32Process.CreationDate
-                    Path         = $win32Process.path
+                    Path         = $win32Process.Path
                     CommandLine  = $win32Process.CommandLine
                 }
 
@@ -9137,6 +9137,13 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($User, $Path) Save-CLP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'CLP' }
 
             Write-Progress -Completed
+        }
+
+        # Check if Microsoft.AAD.BrokerPlugin is avaiable.
+        if (Get-Command 'Get-AppxPackage') {
+            if (-not (Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin')) {
+                Write-Log -Message "Microsoft.AAD.BrokerPlugin is not avaiable" -Category Error
+            }
         }
 
         # Add Microsoft.AAD.BrokerPlugin to Loopback Exempt list if that's appropriate. If it is already added, Add-LoopbackExempt does nothing.
