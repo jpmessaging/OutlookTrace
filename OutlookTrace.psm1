@@ -1182,6 +1182,7 @@ function Wait-Task {
 
 # Helper function to format an error message from an ErrorRecord of task.
 function Format-TaskError {
+    [OutputType([string])]
     param(
         $Task,
         [System.Management.Automation.ErrorRecord]$ErrorRecord,
@@ -1287,6 +1288,7 @@ function Stop-Task {
 
 function Test-RunAsAdministrator {
     [CmdletBinding()]
+    [OutputType([bool])]
     param()
 
     ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]'Administrator')
@@ -3298,7 +3300,6 @@ function MarshalString {
     $null = [Win32.Kernel32]::GlobalFree($Ptr)
 }
 
-
 <#
 .SYNOPSIS
     Get proxy auto config (PAC) URL & file of WinInet proxy settings.
@@ -4246,6 +4247,7 @@ function Get-MapiAccount {
 
 function Format-ByteSize {
     [CmdletBinding()]
+    [OutputType([string])]
     param (
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
         $Size
@@ -6021,6 +6023,7 @@ function Enable-DWWin {
 
 function Enable-PageHeap {
     [CmdletBinding()]
+    [OutputType([bool])]
     param(
         [Parameter(Mandatory = $true)]
         [string]$ProcessName
@@ -8882,6 +8885,7 @@ It returns $false if ValidTimeSpan has passed since ReleaseDate.
 #>
 function Test-ScriptExpiration {
     [CmdletBinding()]
+    [OutputType([bool])]
     param(
         [DateTime]$ReleaseDate = [DateTime]::Parse($Version.Substring(1)),
         [TimeSpan]$ValidTimeSpan = $Script:ValidTimeSpan
