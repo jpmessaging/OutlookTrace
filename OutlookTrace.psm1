@@ -969,7 +969,7 @@ function Get-Elapsed {
     [CmdletBinding()]
     [OutputType([TimeSpan])]
     param(
-        [Parameter(Mandatory,ValueFromPipeline)]
+        [Parameter(Mandatory, ValueFromPipeline)]
         [long]$StartingTimestamp,
         [long]$EndingTimestamp
     )
@@ -1188,11 +1188,14 @@ function Format-TaskError {
         [switch]$Terminating
     )
 
-    $msg = New-Object System.Text.StringBuilder "Task $(if ($Task.Name) { $Task.Name } else { "{$($Task.ScriptBlock)}" }) had a $(if (-not $Terminating) {'non-'})terminating error."
-    $null = $msg.Append(' ').Append($ErrorRecord.Exception.GetType().Name).Append(': ').Append($ErrorRecord.Exception.Message)
+    $msg = New-Object System.Text.StringBuilder "Task $(if ($Task.Name) { $Task.Name } else { "{$($Task.ScriptBlock)}" }) had a $(if (-not $Terminating) {'non-'})terminating error "
+    $null = $msg.Append($ErrorRecord.ScriptStackTrace.Split([System.Environment]::NewLine)[0]).Append('; ')
 
-    if ($ErrorRecord.ScriptStackTrace) {
-        $null = $msg.Append(' ').Append($ErrorRecord.ScriptStackTrace.Split([System.Environment]::NewLine)[0])
+    if ($ErrorRecord.ErrorDetails.Message) {
+        $null = $msg.Append($ErrorRecord.ErrorDetails.Message)
+    }
+    else {
+        $null = $msg.Append($ErrorRecord.Exception.Message)
     }
 
     $msg.ToString()
@@ -7486,10 +7489,18 @@ function Start-ProcessCapture {
                     Write-Log "Found a new instance of $($win32Process.ProcessName) (PID:$($win32Process.ProcessId))"
 
                     if ($includeUserNameAvailable) {
-                        if ($proc = Get-Process -Id $win32Process.ProcessId -IncludeUserName -ErrorAction SilentlyContinue) {
+                        # When not running as admin, Get-Prcess -IncludeUserName generates a non-terminating error, even with "-ErrorAction SilentlyContinue".
+                        # To really suppress the error, I could wrap it with Invoke-Command where $ErrorActionPreference is set to 'SilentlyContinue'. But let's just capture the error.
+                        $err = $($proc = Get-Process -Id $win32Process.ProcessId -IncludeUserName -ErrorAction SilentlyContinue) 2>&1
+
+                        if ($proc) {
                             $obj.Add('User', $proc.UserName)
                             $obj.Add('EnvironmentVariables', $proc.StartInfo.EnvironmentVariables)
                             $proc.Dispose()
+                        }
+
+                        foreach ($_ in $err) {
+                            Write-Error -Message "Get-Process -IncludeUserName failed for $($win32Process.Name) (PID:$($win32Process.ProcessId))" -Exception $_.Exception
                         }
                     }
                     else {
