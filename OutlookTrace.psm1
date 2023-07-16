@@ -957,6 +957,31 @@ function Close-Log {
     }
 }
 
+function Get-Timestamp {
+    [CmdletBinding()]
+    [OutputType([long])]
+    param()
+
+    [System.Diagnostics.Stopwatch]::GetTimestamp()
+}
+
+function Get-Elapsed {
+    [CmdletBinding()]
+    [OutputType([TimeSpan])]
+    param(
+        [Parameter(Mandatory,ValueFromPipeline)]
+        [long]$StartingTimestamp,
+        [long]$EndingTimestamp
+    )
+
+    if ($PSBoundParameters.ContainsKey('EndingTimestamp')) {
+        [TimeSpan]::FromTicks($EndingTimestamp - $StartingTimestamp)
+    }
+    else {
+        [TimeSpan]::FromTicks([System.Diagnostics.Stopwatch]::GetTimestamp() - $StartingTimestamp)
+    }
+}
+
 <#
 .SYNOPSIS
 Create a runspace pool so that Start-Task commands can use it.
@@ -2964,7 +2989,7 @@ function Invoke-ScriptBlock {
     )
 
     $result = $null
-    $start = [System.Diagnostics.Stopwatch]::GetTimestamp()
+    $start = Get-Timestamp
 
     # Suppress progress that may be written by the script block
     $savedProgressPreference = $ProgressPreference
@@ -2985,7 +3010,7 @@ function Invoke-ScriptBlock {
         $ProgressPreference = $savedProgressPreference
     }
 
-    $elapsed = [TimeSpan]::FromTicks([System.Diagnostics.Stopwatch]::GetTimestamp() - $start)
+    $elapsed = Get-Elapsed $start
     Write-Log "{$ScriptBlock} took $($elapsed.TotalMilliseconds) ms.$(if ($null -eq $result) {" It returned nothing."})"
 
     if ($null -eq $result) {
@@ -7417,7 +7442,7 @@ function Start-ProcessCapture {
     $hashSet = @{}
 
     while ($true) {
-        $start = [System.Diagnostics.Stopwatch]::GetTimestamp()
+        $start = Get-Timestamp
 
         Get-CimInstance Win32_Process | & {
             param ([Parameter(ValueFromPipeline)]$win32Process)
@@ -7469,7 +7494,7 @@ function Start-ProcessCapture {
         }
 
         if ($EnablePerfCheck) {
-            $elapsed = [TimeSpan]::FromTicks([System.Diagnostics.Stopwatch]::GetTimestamp() - $start)
+            $elapsed = Get-Elapsed $start
             Write-Log "Processing Win32_Process took $($elapsed.TotalMilliseconds) ms"
         }
 
@@ -9142,7 +9167,7 @@ function Collect-OutlookInfo {
         # Check if Microsoft.AAD.BrokerPlugin is avaiable.
         if (Get-Command 'Get-AppxPackage') {
             if (-not (Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin')) {
-                Write-Log -Message "Microsoft.AAD.BrokerPlugin is not available" -Category Error
+                Write-Log -Message "Microsoft.AAD.BrokerPlugin is not available. To fix, run: Add-AppxPackage -Register C:\Windows\SystemApps\Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy\Appxmanifest.xml -DisableDevelopmentMode -ForceApplicationShutdown" -Category Error
             }
         }
 
