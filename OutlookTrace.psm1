@@ -7493,17 +7493,16 @@ function Start-ProcessCapture {
 
                     if ($includeUserNameAvailable) {
                         # When not running as admin, Get-Prcess -IncludeUserName generates a non-terminating error, even with "-ErrorAction SilentlyContinue".
-                        # To really suppress the error, I could wrap it with Invoke-Command where $ErrorActionPreference is set to 'SilentlyContinue'. But let's just capture the error.
-                        $err = $($proc = Get-Process -Id $win32Process.ProcessId -IncludeUserName -ErrorAction SilentlyContinue) 2>&1
+                        # To suppress the error, wrap it with Invoke-Command where $ErrorActionPreference is set to 'SilentlyContinue'.
+                        $proc = Invoke-Command -ScriptBlock {
+                            $ErrorActionPreference = [System.Management.Automation.ActionPreference]::SilentlyContinue
+                            Get-Process -Id $win32Process.ProcessId -IncludeUserName
+                        }
 
                         if ($proc) {
                             $obj.Add('User', $proc.UserName)
                             $obj.Add('EnvironmentVariables', $proc.StartInfo.EnvironmentVariables)
                             $proc.Dispose()
-                        }
-
-                        foreach ($_ in $err) {
-                            Write-Error -Message "Get-Process -IncludeUserName failed for $($win32Process.Name) (PID:$($win32Process.ProcessId))" -Exception $_.Exception
                         }
                     }
                     else {
