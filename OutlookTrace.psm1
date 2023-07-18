@@ -7513,7 +7513,7 @@ function Start-ProcessCapture {
                                 $obj.Add('User', "$($owner.Domain)\$($owner.User)")
                             }
                             catch {
-                                Write-Error "Invoke-CimMethod with GetOwner failed for $(win32Process.Name)" -Exception $_.Exception
+                                Write-Error "Invoke-CimMethod with GetOwner failed for $($win32Process.Name)" -Exception $_.Exception
                             }
 
                             if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
