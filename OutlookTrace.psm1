@@ -7473,56 +7473,61 @@ function Start-ProcessCapture {
         Get-CimInstance Win32_Process | & {
             param ([Parameter(ValueFromPipeline)]$win32Process)
             process {
-                $key = "$($win32Process.ProcessId),$($win32Process.CreationDate)"
+                try {
+                    $key = "$($win32Process.ProcessId),$($win32Process.CreationDate)"
 
-                if ($hashSet.ContainsKey($key)) {
-                    return
-                }
+                    if ($hashSet.ContainsKey($key)) {
+                        return
+                    }
 
-                $obj = @{
-                    Name         = $win32Process.Name
-                    Id           = $win32Process.ProcessId
-                    CreationDate = $win32Process.CreationDate
-                    Path         = $win32Process.Path
-                    CommandLine  = $win32Process.CommandLine
-                }
+                    $obj = @{
+                        Name         = $win32Process.Name
+                        Id           = $win32Process.ProcessId
+                        CreationDate = $win32Process.CreationDate
+                        Path         = $win32Process.Path
+                        CommandLine  = $win32Process.CommandLine
+                    }
 
-                # For processes specified in NamePattern parameter, save its User & Environment Variables.
-                if ($win32Process.ProcessName -match $NamePattern) {
-                    Write-Log "Found a new instance of $($win32Process.ProcessName) (PID:$($win32Process.ProcessId))"
+                    # For processes specified in NamePattern parameter, save its User & Environment Variables.
+                    if ($win32Process.ProcessName -match $NamePattern) {
+                        Write-Log "Found a new instance of $($win32Process.ProcessName) (PID:$($win32Process.ProcessId))"
 
-                    if ($includeUserNameAvailable) {
-                        # When not running as admin, Get-Prcess -IncludeUserName generates a non-terminating error, even with "-ErrorAction SilentlyContinue".
-                        # To suppress the error, wrap it with Invoke-Command where $ErrorActionPreference is set to 'SilentlyContinue'.
-                        $proc = Invoke-Command -ScriptBlock {
-                            $ErrorActionPreference = [System.Management.Automation.ActionPreference]::SilentlyContinue
-                            Get-Process -Id $win32Process.ProcessId -IncludeUserName
+                        if ($includeUserNameAvailable) {
+                            # When not running as admin, Get-Prcess -IncludeUserName generates a non-terminating error, even with "-ErrorAction SilentlyContinue".
+                            # To suppress the error, wrap it with Invoke-Command where $ErrorActionPreference is set to 'SilentlyContinue'.
+                            $proc = Invoke-Command -ScriptBlock {
+                                $ErrorActionPreference = [System.Management.Automation.ActionPreference]::SilentlyContinue
+                                Get-Process -Id $win32Process.ProcessId -IncludeUserName
+                            }
+
+                            if ($proc) {
+                                $obj.Add('User', $proc.UserName)
+                                $obj.Add('EnvironmentVariables', $proc.StartInfo.EnvironmentVariables)
+                                $proc.Dispose()
+                            }
                         }
+                        else {
+                            try {
+                                # GetOwner() could fail if the process has exited. Not likely, but be defensive here.
+                                $owner = Invoke-CimMethod -InputObject $win32Process -MethodName 'GetOwner'
+                                $obj.Add('User', "$($owner.Domain)\$($owner.User)")
+                            }
+                            catch {
+                                Write-Error "Invoke-CimMethod with GetOwner failed for $(win32Process.Name)" -Exception $_.Exception
+                            }
 
-                        if ($proc) {
-                            $obj.Add('User', $proc.UserName)
-                            $obj.Add('EnvironmentVariables', $proc.StartInfo.EnvironmentVariables)
-                            $proc.Dispose()
+                            if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
+                                $obj.Add('EnvironmentVariables', $proc.StartInfo.EnvironmentVariables)
+                                $proc.Dispose()
+                            }
                         }
                     }
-                    else {
-                        try {
-                            # GetOwner() could fail if the process has exited. Not likely, but be defensive here.
-                            $owner = Invoke-CimMethod -InputObject $win32Process -MethodName 'GetOwner'
-                            $obj.Add('User', "$($owner.Domain)\$($owner.User)")
-                        }
-                        catch {
-                            Write-Error "Invoke-CimMethod with GetOwner failed for $(win32Process.Name)" -Exception $_.Exception
-                        }
 
-                        if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
-                            $obj.Add('EnvironmentVariables', $proc.StartInfo.EnvironmentVariables)
-                            $proc.Dispose()
-                        }
-                    }
+                    $hashSet.Add($key, [PSCustomObject]$obj)
                 }
-
-                $hashSet.Add($key, [PSCustomObject]$obj)
+                finally {
+                    $win32Process.Dispose()
+                }
             }
         }
 
