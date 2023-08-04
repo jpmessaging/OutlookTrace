@@ -9203,9 +9203,17 @@ function Collect-OutlookInfo {
             Write-Progress -Completed
         }
 
-        # Check if Microsoft.AAD.BrokerPlugin is avaiable.
+        # Check if Microsoft.AAD.BrokerPlugin is available.
         if (Get-Command 'Get-AppxPackage') {
-            if (-not (Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin')) {
+            # Get-AppxPackage could throw a terminating error.
+            try {
+                $brokerPlugin = Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin'
+            }
+            catch {
+                Write-Log -Message "Get-AppxPackage failed for Microsoft.AAD.BrokerPlugin" -Exception $_.Exception -Category Error
+            }
+
+            if (-not $brokerPlugin) {
                 Write-Log -Message "Microsoft.AAD.BrokerPlugin is not available. To fix, run: Add-AppxPackage -Register C:\Windows\SystemApps\Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy\Appxmanifest.xml -DisableDevelopmentMode -ForceApplicationShutdown" -Category Error
             }
         }
