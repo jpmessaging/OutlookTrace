@@ -4331,6 +4331,7 @@ function Get-OutlookOption {
         New-Option -Name 'Send Mail Immediately' -DisplayName 'Send Mail Immediately' -Category Mail -Value $true
         New-Option -Name 'NewMailDesktopAlerts' -DisplayName 'Display a Desktop Alert' -Category Mail -Value $true
         New-Option -Name 'NewMailDesktopAlertsDRMPreview' -DisplayName 'Enable preview for Rights Protected messages' -Category Mail -Value $false
+        New-Option -Name 'SaveSent' -DisplayName 'Save copies of messages in the Sent Items folder' -Category Mail -Value $true
         New-Option -Name 'ShowLegacySharingUX' -DisplayName 'Turn off Calendar Sharing REST API and use Legacy UI' -Category Calendar -Value $false
         New-Option -Name 'OpenTasksWithToDoApp' -DisplayName 'When opening from a reminder, open tasks with ToDo App' -Category Tasks -Value $false
         New-Option -Name 'Autodetect_CodePageOut' -DisplayName 'Automatically select encoding for outgoing messages' -Category Advanced -Value $true
@@ -4359,6 +4360,7 @@ function Get-OutlookOption {
         Set-Option -Name 'NewMailDesktopAlerts'
         Set-Option -Name 'NewmailDesktopAlertsDRMPreview'
         Set-Option -Name 'OpenTasksWithToDoApp'
+        Set-Option -Name 'SaveSent'
     }
 
     if ($prop = Join-Path $optionsPath 'MSHTML\International\' | Get-ItemProperty -ErrorAction SilentlyContinue) {
@@ -9210,7 +9212,7 @@ function Collect-OutlookInfo {
                 $brokerPlugin = Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin'
             }
             catch {
-                Write-Log -Message "Get-AppxPackage failed for Microsoft.AAD.BrokerPlugin" -Exception $_.Exception -Category Error
+                Write-Log -Message "Get-AppxPackage failed for Microsoft.AAD.BrokerPlugin" -ErrorRecord $_ -Category Error
             }
 
             if (-not $brokerPlugin) {
