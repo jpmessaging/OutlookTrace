@@ -2958,6 +2958,7 @@ function Save-NetworkInfo {
         @{ScriptBlock = { Get-NetConnectionProfile } }
         @{ScriptBlock = { Get-NetFirewallProfile } }
         @{ScriptBlock = { Show-NetFirewallRule } }
+        @{ScriptBlock = { Get-Content $(Join-Path $env:SystemRoot 'System32\drivers\etc\hosts') }; FileName = 'hosts.txt' }
         @{ScriptBlock = { ipconfig /all } }
 
         # Dump Windows Firewall config
