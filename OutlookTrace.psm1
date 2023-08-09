@@ -8823,24 +8823,30 @@ function Get-PresentationMode {
     }
 }
 
+function Get-AADBrokerPlugin {
+    [CmdletBinding()]
+    param()
+
+    # Get-AppxPackage could throw a terminating error
+    try {
+        Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin'
+    }
+    catch {
+        Write-Error -Message "Get-AppxPackage Microsoft.AAD.BrokerPlugin threw a terminating error" -Exception $_.Exception
+    }
+}
+
 function Add-LoopbackExempt {
     [CmdletBinding()]
+    [OutputType([bool])]
     param(
+        [Parameter(Mandatory = $true)]
         [string]$PackageFamiliyName
     )
 
     if (-not (Get-Command 'CheckNetIsolation.exe')) {
         Write-Error "CheckNetIsolation.exe is not available"
         return
-    }
-
-    if (-not $PSBoundParameters.ContainsKey('PackageFamiliyName')) {
-        $PackageFamiliyName = (Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin').PackageFamilyName
-
-        if (-not $PackageFamiliyName) {
-            Write-Error "PackageFamiliyName parameter was not provided and Microsoft.AAD.BrokerPlugin is not found"
-            return
-        }
     }
 
     # Check if it's already added.
@@ -8872,7 +8878,8 @@ function Add-LoopbackExempt {
 function Remove-LoopbackExempt {
     [CmdletBinding()]
     param(
-        $PackageFamiliyName = (Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin').PackageFamilyName
+        [Parameter(Mandatory = $true)]
+        [string]$PackageFamiliyName
     )
 
     $null = CheckNetIsolation.exe LoopbackExempt -d -n="$PackageFamiliyName"
@@ -9207,25 +9214,13 @@ function Collect-OutlookInfo {
         }
 
         # Check if Microsoft.AAD.BrokerPlugin is available.
-        if (Get-Command 'Get-AppxPackage') {
-            # Get-AppxPackage could throw a terminating error.
-            try {
-                $brokerPlugin = Get-AppxPackage -Name 'Microsoft.AAD.BrokerPlugin'
-            }
-            catch {
-                Write-Log -Message "Get-AppxPackage failed for Microsoft.AAD.BrokerPlugin" -ErrorRecord $_ -Category Error
-            }
-
-            if (-not $brokerPlugin) {
-                Write-Log -Message "Microsoft.AAD.BrokerPlugin is not available. To fix, run: Add-AppxPackage -Register C:\Windows\SystemApps\Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy\Appxmanifest.xml -DisableDevelopmentMode -ForceApplicationShutdown" -Category Error
-            }
-        }
+        $($brokerPlugin = Get-AADBrokerPlugin) 2>&1 | Write-Log -Category Warning
 
         # Add Microsoft.AAD.BrokerPlugin to Loopback Exempt list if that's appropriate. If it is already added, Add-LoopbackExempt does nothing.
         $loopbackExemptAdded = $false
 
-        if ($EnableLoopbackExempt -or $Component -contains 'Fiddler' -or $Component -contains 'Netsh') {
-            $($loopbackExemptAdded = Add-LoopbackExempt) 2>&1 | Write-Log -Category Warning
+        if ($brokerPlugin -and ($EnableLoopbackExempt -or $Component -contains 'Fiddler' -or $Component -contains 'Netsh')) {
+            $($loopbackExemptAdded = Add-LoopbackExempt $brokerPlugin.PackageFamilyName) 2>&1 | Write-Log -Category Warning
 
             if ($loopbackExemptAdded -and $OSDir) {
                 CheckNetIsolation.exe LoopbackExempt -s | Set-Content -Path (Join-Path $OSDir 'LoopbackExempt.txt')
@@ -9570,7 +9565,7 @@ function Collect-OutlookInfo {
 
         if ($hungDumpStarted) {
             $hungDumpCts.Cancel()
-            $(Receive-Task $hungMonitorTask -AutoRemoveTask) 2>&1 | Write-Log
+            Receive-Task $hungMonitorTask -AutoRemoveTask 2>&1 | Write-Log -Category Error
         }
 
         if ($crashDumpStarted) {
@@ -9641,7 +9636,7 @@ function Collect-OutlookInfo {
         }
 
         if ($loopbackExemptAdded) {
-            Remove-LoopbackExempt 2>&1 | Write-Log -Category Error -PassThru
+            Remove-LoopbackExempt $brokerPlugin.PackageFamilyName 2>&1 | Write-Log -Category Error -PassThru
         }
 
         Write-Progress -Completed
