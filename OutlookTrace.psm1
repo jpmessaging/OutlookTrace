@@ -9459,7 +9459,7 @@ function Collect-OutlookInfo {
         }
 
         Write-Progress -Completed
-        $waitStart = Get-Date
+        $waitStart = Get-Timestamp
 
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted) {
             Write-Log "Waiting for the user to stop"
@@ -9478,7 +9478,7 @@ function Collect-OutlookInfo {
         throw
     }
     finally {
-        Write-Log "Stopping traces. $(if ($waitStart) { "Wait duration: $((Get-Date) - $waitStart)" })"
+        Write-Log "Stopping traces. $(if ($waitStart) { "Wait duration: $(Get-Elapsed $waitStart)" })"
 
         $PSDefaultParameterValues['Write-Progress:Activity'] = 'Stopping traces'
 
