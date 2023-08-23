@@ -8185,7 +8185,6 @@ function Get-OfficeIdentity {
             # Persisted                  = $identity.Persisted -eq 1
             SignedOut                  = $identity.SignedOut -eq 1
             ConnectedExperienceEnabled = $connectedExperience.Enabled
-            # ConnectedExperiencePendingChanges             = $connectedExperience.PendingChanges
         }
     }
 }
@@ -8198,11 +8197,20 @@ function Get-ConnectedExperience {
         $Identity
     )
 
+    if (-not $userRegRoot) {
+        $userRegRoot = Get-UserRegistryRoot
+
+        if (-not $userRegRoot) {
+            return
+        }
+    }
+
+    # Check Office's roaming settings.
     $profileName = $Identity.PSChildName
     $roamingSettingsPath = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Roaming\Identities' `
     | Join-Path -ChildPath $profileName | Join-Path -ChildPath 'Settings\1272\{00000000-0000-0000-0000-000000000000}'
 
-    if (-not $roamingSettingsPath) {
+    if (-not (Test-Path $roamingSettingsPath)) {
         Write-Log "Cannot find roaming settings for $profileName."
         return
     }
@@ -8226,15 +8234,57 @@ function Get-ConnectedExperience {
     }
 
     # 1 == Enabled, 2 == Disabled
-    $enabled = $false
-
-    if ($value -eq 1 -or $null -eq $value) {
-        $enabled = $true
+    switch ($value) {
+        1 { $enabled = $true; break; }
+        2 { $enabled = $false; break;}
+        default { $enabled = $null }
     }
 
     [PSCustomObject]@{
         Enabled        = $enabled
         PendingChanges = $null -ne $pendingChanges
+    }
+}
+
+
+<#
+Use policy settings to manage privacy controls for Microsoft 365 Apps for enterprise
+https://learn.microsoft.com/en-us/deployoffice/privacy/manage-privacy-controls
+
+| Policy setting                                                                     | Registry setting                   | Values                          |
+| ---------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------- |
+| Configure the level of client software diagnostic data sent by Office to Microsoft | SendTelemetry                      | 1=Required 2=Optional 3=Neither |
+| Allow the use of connected experiences in Office that analyze content              | UserContentDisabled                | 1=Enabled 2=Disabled            |
+| Allow the use of connected experiences in Office that download online content      | DownloadContentDisabled            | 1=Enabled 2=Disabled            |
+| Allow the use of additional optional connected experiences in Office               | ControllerConnectedServicesEnabled | 1=Enabled 2=Disabled            |
+| Allow the use of connected experiences in Office                                   | DisconnectedState                  | 1=Enabled 2=Disabled            |
+#>
+function Get-PrivacyPolicy {
+    [CmdletBinding()]
+    param(
+        $User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    $privacyPolicyPath = Join-Path $userRegRoot 'Software\Policies\Microsoft\office\16.0\common\privacy'
+
+    if (Test-Path $privacyPolicyPath) {
+        $privacyPolicy = Get-ItemProperty $privacyPolicyPath -ErrorAction SilentlyContinue
+
+        [PSCustomObject]@{
+            ConnectedExperiencesEnabled = switch ($privacyPolicy.DisconnectedState) { 1 { $true; break}; 2 { $false; break } default { $null }}
+            # "Additional connected experiences"
+            ControllerConnectedServicesEnabled = switch ($privacyPolicy.ControllerConnectedServicesEnabled) { 1 { $true; break}; 2 { $false; break } default { $null }}
+            # Despite the name, 2 means disabled.
+            DownloadedContentEnabled = switch ($privacyPolicy.DownloadContentDisabled) { 1 { $true; break}; 2 { $false; break } default { $null }}
+            UserContentEnabled = switch ($privacyPolicy.UserContentDisabled) { 1 { $true; break}; 2 { $false; break } default { $null }}
+            Path = $privacyPolicyPath.Substring(10)
+        }
     }
 }
 
@@ -9216,6 +9266,7 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($User) Get-UseOnlineContent @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-OfficeIdentityConfig @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-OfficeIdentity @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-PrivacyPolicy @PSBoundParameters }
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:ArgumentList')
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:Path')
 
@@ -9710,4 +9761,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Collect-OutlookInfo
