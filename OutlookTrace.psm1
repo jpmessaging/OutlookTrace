@@ -8236,7 +8236,7 @@ function Get-ConnectedExperience {
     # 1 == Enabled, 2 == Disabled
     switch ($value) {
         1 { $enabled = $true; break; }
-        2 { $enabled = $false; break;}
+        2 { $enabled = $false; break; }
         default { $enabled = $null }
     }
 
@@ -8276,14 +8276,24 @@ function Get-PrivacyPolicy {
     if (Test-Path $privacyPolicyPath) {
         $privacyPolicy = Get-ItemProperty $privacyPolicyPath -ErrorAction SilentlyContinue
 
+        # Convert 1 -> $true, 2 -> $false, else $null
+        $converter = {
+            param($value)
+            switch ($value) {
+                1 { $true; break }
+                2 { $false; break }
+                default { $null }
+            }
+        }
+
         [PSCustomObject]@{
-            ConnectedExperiencesEnabled = switch ($privacyPolicy.DisconnectedState) { 1 { $true; break}; 2 { $false; break } default { $null }}
+            ConnectedExperiencesEnabled        = & $converter $privacyPolicy.DisconnectedState
             # "Additional connected experiences"
-            ControllerConnectedServicesEnabled = switch ($privacyPolicy.ControllerConnectedServicesEnabled) { 1 { $true; break}; 2 { $false; break } default { $null }}
+            ControllerConnectedServicesEnabled = & $converter $privacyPolicy.ControllerConnectedServicesEnabled
             # Despite the name, 2 means disabled.
-            DownloadedContentEnabled = switch ($privacyPolicy.DownloadContentDisabled) { 1 { $true; break}; 2 { $false; break } default { $null }}
-            UserContentEnabled = switch ($privacyPolicy.UserContentDisabled) { 1 { $true; break}; 2 { $false; break } default { $null }}
-            Path = $privacyPolicyPath.Substring(10)
+            DownloadedContentEnabled           = & $converter $privacyPolicy.DownloadContentDisabled
+            UserContentEnabled                 = & $converter $privacyPolicy.UserContentDisabled
+            Path                               = $privacyPolicyPath.Substring(10)
         }
     }
 }
@@ -8955,7 +8965,7 @@ function Get-AnsiCodePage {
 
     [PSCustomObject]@{
         CurrentAnsiCodePage = $acp
-        SystemAnsiCodePage = $systemAcp
+        SystemAnsiCodePage  = $systemAcp
     }
 }
 
@@ -8973,6 +8983,66 @@ function Test-ScriptExpiration {
     )
 
     [DateTime]::Now - $ReleaseDate -le $ValidTimeSpan
+}
+
+<#
+.SYNOPSIS
+Wait until user enters Enter key or Ctrl+C.
+This is only possible when Console is available.
+Console is not available in PowerShell ISE and in this case Ctrl+C will interrupt.
+#>
+function Wait-EnterOrControlC {
+    [CmdletBinding()]
+    param()
+
+    # Check if a console is available, and if so, manually detect Enter key and Ctrl+C.
+    $consoleAvailable = $false
+
+    try {
+        $Host.UI.RawUI.FlushInputBuffer()
+        [Console]::TreatControlCAsInput = $true
+        $consoleAvailable = $true
+    }
+    catch {
+        # Ignore
+    }
+
+    if ($consoleAvailable) {
+        $detectedKey = $null
+
+        while ($true) {
+            if ([Console]::KeyAvailable) {
+                [ConsoleKeyInfo]$keyInfo = [Console]::ReadKey($true)
+
+                # Enter or Ctrl+C exits the wait loop
+                if ($keyInfo.Key -eq [ConsoleKey]::Enter) {
+                    Write-Log "Enter key is detected"
+                    $detectedKey = 'Enter'
+                }
+                elseif (($keyInfo.Modifiers -band [ConsoleModifiers]'Control') -and ($keyInfo.Key -eq [ConsoleKey]::C)) {
+                    Write-Log "Ctrl+C is detected"
+                    $detectedKey = 'Ctrl+C'
+                }
+
+                if ($detectedKey) {
+                    break
+                }
+            }
+        }
+
+        [Console]::TreatControlCAsInput = $false
+    }
+    else {
+        # Read-Host is not used here because it'd block background tasks.
+        # When using UI.ReadLine(), Ctrl+C cannot be detected.
+        $null = $host.UI.ReadLine()
+        $detectedKey = 'Enter'
+    }
+
+    [PSCustomObject]@{
+        Key                = $detectedKey
+        IsConsoleAvailable = $consoleAvailable
+    }
 }
 
 <#
@@ -9514,13 +9584,13 @@ function Collect-OutlookInfo {
 
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted) {
             Write-Log "Waiting for the user to stop"
-
-            # Read-Host is not used here because it'd block background tasks.
             Write-Host 'Hit enter to stop: ' -NoNewline
-            $null = $host.UI.ReadLine()
+            $waitResult = Wait-EnterOrControlC
         }
 
-        $startSuccess = $true
+        if (-not $waitResult -or $waitResult.Key -eq 'Enter') {
+            $startSuccess = $true
+        }
     }
     catch {
         # Log & save the exception so that I can analyze later. Then rethrow.
@@ -9711,6 +9781,11 @@ function Collect-OutlookInfo {
         Reset-ThreadCulture 2>&1 | Write-Log -Category Error
         Close-TaskRunspace 2>&1 | Write-Log -Category Error
         Close-Log
+    }
+
+    # Bail if something failed or user interruped with Ctrl+C.
+    if (-not $startSuccess) {
+        return
     }
 
     $archiveName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
