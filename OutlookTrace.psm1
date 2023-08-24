@@ -9031,6 +9031,7 @@ function Wait-EnterOrControlC {
         }
 
         [Console]::TreatControlCAsInput = $false
+        Write-Host
     }
     else {
         # Read-Host is not used here because it'd block background tasks.
