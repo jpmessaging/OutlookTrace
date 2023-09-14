@@ -126,6 +126,29 @@ namespace Win32
 
     public static class Advapi32
     {
+        // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool OpenProcessToken(
+            SafeProcessHandle ProcessToken,
+            System.Security.Principal.TokenAccessLevels DesiredAccess,
+            out IntPtr TokenHandle);
+
+        // https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool GetTokenInformation(
+            IntPtr TokenHandle, //SafeAccessTokenHandle TokenHandle,
+            int TokenInformationClass,
+            out TOKEN_ELEVATION TokenElevation,
+            uint TokenInformationLength,
+            out uint ReturnLength);
+
+        // https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_elevation
+        [StructLayout(LayoutKind.Sequential)]
+        public struct TOKEN_ELEVATION
+        {
+            public bool TokenIsElevated;
+        }
+
         // https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-event_trace_properties
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         public struct EVENT_TRACE_PROPERTIES
@@ -335,6 +358,15 @@ namespace Win32
 
         [DllImport("Kernel32.dll")]
         public static extern uint GetACP();
+
+        [DllImport("kernel32.dll", ExactSpelling = true)]
+        public static extern SafeProcessHandle OpenProcess(
+            uint dwDesiredAccess,
+            [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle,
+            int dwProcessId);
+
+        public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        public const uint PROCESS_QUERY_INFORMATION = 0x0400;
     }
 
     // ETW Logging Mode Constants for logman
@@ -1295,6 +1327,80 @@ function Test-RunAsAdministrator {
     param()
 
     ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]'Administrator')
+}
+
+function Test-ProcessElevated {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [int]$ProcessId
+    )
+
+    begin {
+        $debugPrivilegeEnabled = $false
+        # Enable Debug privilege if possible
+        try {
+            [System.Diagnostics.Process]::EnterDebugMode()
+            $debugPrivilegeEnabled = $true
+        }
+        catch {
+            Write-Log -Message "EnterDebugMode failed" -ErrorRecord $_ -Category Warning
+        }
+    }
+    
+    process {
+        $hProcess = $null
+
+        try {
+            $hProcess = [Win32.Kernel32]::OpenProcess([Win32.Kernel32]::PROCESS_QUERY_LIMITED_INFORMATION, $false, $ProcessId)
+
+            if (-not $hProcess -or $hProcess.IsInvalid) {
+                Write-Error "OpenProcess failed for $ProcessId with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                return
+            }
+
+            [IntPtr]$token = [IntPtr]::Zero
+            
+            if (-not [Win32.Advapi32]::OpenProcessToken($hProcess, [System.Security.Principal.TokenAccessLevels]::Query, [ref]$token)) {
+                Write-Error "OpenProcessToken failed for $ProcessId with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                return
+            }
+
+            # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class
+            $TokenElevation = 20
+
+            $length = 0;
+            $elevation = New-Object Win32.Advapi32+TOKEN_ELEVATION
+
+            if (-not [Win32.Advapi32]::GetTokenInformation(
+                    $token,
+                    $TokenElevation,
+                    [ref]$elevation,
+                    [System.Runtime.InteropServices.Marshal]::SizeOf([type]'Win32.Advapi32+TOKEN_ELEVATION'),
+                    [ref]$length)) {
+                Write-Error "GetTokenInformation failed with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                return
+            }
+
+            $elevation.TokenIsElevated
+        }
+        finally {
+            if ($token) {
+                $null = [Win32.Kernel32]::CloseHandle($token)
+            }
+
+            if ($hProcess) {
+                $hProcess.Dispose()
+            }
+        }
+    }
+
+    end {
+        if ($debugPrivilegeEnabled) {
+            [System.Diagnostics.Process]::LeaveDebugMode()
+        }
+    }
 }
 
 function Compress-Folder {
@@ -5629,7 +5735,7 @@ function Stop-TTD {
     }
 }
 
-function Attach-TTD {
+function Attach-TTTracer {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
     param(
@@ -5702,6 +5808,266 @@ function Attach-TTD {
         $stderrContent = Get-Content $stderr
         $exitCodeHex = "0x{0:x}" -f $process.ExitCode
         Write-Error "tttracer.exe failed to attach. ExitCode: $exitCodeHex; Error: $err.`n$stderrContent"
+    }
+}
+
+
+<#
+.SYNOPSIS
+    Download TTD.appinstaller & its msixbundle file from https://aka.ms/ttd/download
+#>
+function Download-TTD {
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
+    param(
+        [Parameter(Mandatory)]
+        # Path to download files
+        [string]$Path
+    )
+
+    $downloadUrl = 'https://aka.ms/ttd/download'
+
+    if (-not (Test-Path $Path)) {
+        $null = New-Item -Path $Path -ItemType Directory -ErrorAction Stop
+    }
+
+    $Path = Resolve-Path $Path
+ 
+    # First, download appinstaller XML file.
+    $appInstallerPath = Join-Path $Path 'TTD.appinstaller'
+
+    if (-not (Test-Path $appInstallerPath)) {
+        $err = Invoke-Command -ScriptBlock {
+            $ProgressPreference = "SilentlyContinue";
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $appInstallerPath
+        } 2>&1
+
+        if (-not (Test-Path $appInstallerPath)) {
+            Write-Error -Message "Failed to download TTD.appinstaller from $downloadUrl. $err"
+            return
+        }
+    }
+
+    # From appinstaller XML, extract MainBundle URI
+    $ns = @{ ns = 'http://schemas.microsoft.com/appx/appinstaller/2018' }
+    $mainBundle = Select-Xml -Path $appInstallerPath -Namespace $ns -XPath '//ns:MainBundle[@Name="Microsoft.TimeTravelDebugging"]' `
+    | Select-Object -ExpandProperty Node
+
+    if (-not $mainBundle.Uri) {
+        Write-Error "Failed to find MainBundle element in TTD.appinstaller"
+        return
+    }
+
+    # Download TTD.msixbundle
+    $msixName = Split-Path $mainBundle.Uri -Leaf
+    $msixBundlePath = Join-Path $Path $msixName
+
+    $err = Invoke-Command -ScriptBlock {
+        $ProgressPreference = "SilentlyContinue";
+        Invoke-WebRequest -Uri $mainBundle.Uri -OutFile $msixBundlePath
+    } 2>&1
+
+    if (-not (Test-Path $msixBundlePath)) {
+        Write-Error "Failed to download $mainBundle.Uri. $err"
+        return
+    }
+
+    [PSCustomObject]@{
+        MsixBundlePath = $msixBundlePath
+    }
+}
+
+function Install-TTD {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
+        # Path to TTD.msixbundle file
+        $MsixBundlePath
+    )
+
+    Invoke-Command {
+        $ProgressPreference = "SilentlyContinue";
+        Add-AppxPackage -Path $MsixBundlePath
+    }
+}
+
+function Uninstall-TTD {
+    [CmdletBinding()]
+    param()
+
+    $package = Get-AppxPackage -Name 'Microsoft.TimeTravelDebugging'
+
+    Invoke-Command {
+        $ProgressPreference = "SilentlyContinue";
+        Remove-AppxPackage -Package $package
+    }
+}
+
+function Start-TTDMonitor {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        # Output folder path
+        $Path,
+        # Name of executable (such as outlook.exe)
+        [Parameter(Mandatory)]
+        $ExecutableName,
+        [Alias('CmdLineFilter')]
+        [string]$CommandlineFilter
+    )
+
+    if (-not (Test-Path $Path)) {
+        $null = New-Item -Path $Path -ItemType Directory -ErrorAction Stop
+    }
+    
+    $Path = Resolve-Path $Path
+
+    # Make sure extension is ".exe"
+    if (-not ([System.IO.Path]::GetExtension($ExecutableName))) {
+        $ExecutableName = "$ExecutableName.exe"
+    }
+
+    $outPath = $Path.ToString()
+
+    if ($outPath.IndexOf(' ') -gt 0) {
+        $outPath = "`"$outPath`""
+    }
+
+    $ttdArgs = @(
+        '-acceptEula'
+        '-timestampFileName'
+        '-out', $outPath
+        '-monitor', $ExecutableName
+
+        if ($CommandlineFilter) {
+            '-cmdLineFilter', $CommandlineFilter
+        }
+    )
+
+    $process = Start-Process 'ttd.exe' -ArgumentList $ttdArgs -WindowStyle Hidden -PassThru
+
+    [PSCustomObject]@{
+        Process = $process
+    }
+}
+
+function Stop-TTDMonitor {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
+        [System.Diagnostics.Process]$Process
+    )
+
+    # Check if the target process is ttd
+    if ($Process.Name -ne 'TTD') {
+        Write-Error "Given process is not TTD"
+        return
+    }
+
+    Stop-Process -InputObject $Process
+    $Process.Dispose()
+}
+
+function Cleanup-TTD {
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
+    param(
+    )
+
+    # Clean up ProcLaunchMon
+    & ttd.exe -cleanup
+}
+
+
+function Attach-TTD {
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
+    param(
+        [Parameter(Mandatory)]
+        # Output folder path
+        $Path,
+        [Parameter(Mandatory)]
+        # Target Process ID
+        [ValidateRange(4, [int]::MaxValue)]
+        [int]$ProcessId, 
+        [switch]$ShowUI
+    )
+
+    # Validate input args
+    if (0 -ne ($ProcessId % 4)) {
+        Write-Error "Invalid Process ID: $ProcessId"
+        return
+    }
+
+    if ($process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+        $process.Dispose()
+    }
+    else {
+        Write-Error "Cannot find a process with $ProcessId"
+        return
+    }
+
+    # Make sure ttd.exe is available.
+    $ttd = Get-Command 'ttd.exe' -ErrorAction SilentlyContinue
+
+    if (-not $ttd) {
+        Write-Error "TTD is not available"
+        return
+    }
+
+    # If Path contains spaces, surround by double-quotes
+    Write-Host "given path: $Path"
+
+    $outPath = $Path
+
+    if ($outPath.IndexOf(' ') -gt 0) {
+        $outPath = "`"$outPath`""
+    }
+    
+    Write-Host "outPath: $outPath"
+
+    # Attach
+    $ttdArgs = @(
+        '-acceptEula'
+        '-timestampFileName'
+        '-out', $outPath
+        '-attach', $ProcessId
+
+        if (-not $ShowUI) {
+            '-noUI'
+        }
+    )
+
+    $process = Start-Process 'ttd.exe' -ArgumentList $ttdArgs -WindowStyle Hidden -PassThru
+
+    [PSCustomObject]@{
+        Process = $process
+    }
+}
+
+function Detach-TTD {
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
+    param(
+        [int]$ProcessId
+    )
+
+    if (-not $PSBoundParameters.ContainsKey('ProcessId')) {
+        $null = & ttd.exe -stop all
+    }
+    else {
+        if ($process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+            $process.Dispose()
+        }
+        else {
+            return
+        }
+
+        $null = & ttd.exe -stop $ProcessId
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to detach TT$(if ($ProcessId) { " from $ProcessId" })"
     }
 }
 
@@ -9837,4 +10203,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Collect-OutlookInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Test-ProcessElevated
