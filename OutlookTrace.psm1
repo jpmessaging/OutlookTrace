@@ -136,7 +136,7 @@ namespace Win32
         // https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation
         [DllImport("advapi32.dll", SetLastError = true)]
         public static extern bool GetTokenInformation(
-            IntPtr TokenHandle, //SafeAccessTokenHandle TokenHandle,
+            IntPtr TokenHandle,
             int TokenInformationClass,
             out TOKEN_ELEVATION TokenElevation,
             uint TokenInformationLength,
@@ -1333,13 +1333,16 @@ function Test-ProcessElevated {
     [CmdletBinding()]
     [OutputType([bool])]
     param(
-        [Parameter(Mandatory)]
-        [int]$ProcessId
+        [Parameter(Mandatory, ValueFromPipeline, Position = 0, ParameterSetName = 'ProcessId')]
+        [int]$ProcessId,
+        [Parameter(Mandatory, ValueFromPipeline, Position = 0, ParameterSetName = 'Process')]
+        [System.Diagnostics.Process]$Process
     )
 
     begin {
-        $debugPrivilegeEnabled = $false
         # Enable Debug privilege if possible
+        $debugPrivilegeEnabled = $false
+
         try {
             [System.Diagnostics.Process]::EnterDebugMode()
             $debugPrivilegeEnabled = $true
@@ -1350,20 +1353,24 @@ function Test-ProcessElevated {
     }
     
     process {
+        if ($Process) {
+            $ProcessId = $Process.Id
+        }
+
         $hProcess = $null
 
         try {
             $hProcess = [Win32.Kernel32]::OpenProcess([Win32.Kernel32]::PROCESS_QUERY_LIMITED_INFORMATION, $false, $ProcessId)
 
             if (-not $hProcess -or $hProcess.IsInvalid) {
-                Write-Error "OpenProcess failed for $ProcessId with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                Write-Error "OpenProcess failed for PID $ProcessId with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
                 return
             }
 
-            [IntPtr]$token = [IntPtr]::Zero
+            [IntPtr]$hToken = [IntPtr]::Zero
             
-            if (-not [Win32.Advapi32]::OpenProcessToken($hProcess, [System.Security.Principal.TokenAccessLevels]::Query, [ref]$token)) {
-                Write-Error "OpenProcessToken failed for $ProcessId with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+            if (-not [Win32.Advapi32]::OpenProcessToken($hProcess, [System.Security.Principal.TokenAccessLevels]::Query, [ref]$hToken)) {
+                Write-Error "OpenProcessToken failed for PID $ProcessId with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
                 return
             }
 
@@ -1374,7 +1381,7 @@ function Test-ProcessElevated {
             $elevation = New-Object Win32.Advapi32+TOKEN_ELEVATION
 
             if (-not [Win32.Advapi32]::GetTokenInformation(
-                    $token,
+                    $hToken,
                     $TokenElevation,
                     [ref]$elevation,
                     [System.Runtime.InteropServices.Marshal]::SizeOf([type]'Win32.Advapi32+TOKEN_ELEVATION'),
@@ -1386,8 +1393,8 @@ function Test-ProcessElevated {
             $elevation.TokenIsElevated
         }
         finally {
-            if ($token) {
-                $null = [Win32.Kernel32]::CloseHandle($token)
+            if ($hToken) {
+                $null = [Win32.Kernel32]::CloseHandle($hToken)
             }
 
             if ($hProcess) {
