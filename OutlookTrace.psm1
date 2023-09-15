@@ -127,14 +127,14 @@ namespace Win32
     public static class Advapi32
     {
         // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken
-        [DllImport("advapi32.dll", SetLastError = true)]
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
         public static extern bool OpenProcessToken(
             SafeProcessHandle ProcessToken,
             System.Security.Principal.TokenAccessLevels DesiredAccess,
             out IntPtr TokenHandle);
 
         // https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation
-        [DllImport("advapi32.dll", SetLastError = true)]
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
         public static extern bool GetTokenInformation(
             IntPtr TokenHandle,
             int TokenInformationClass,
@@ -344,7 +344,7 @@ namespace Win32
         [DllImport("kernel32.dll", CallingConvention = CallingConvention.StdCall)]
         public static extern IntPtr GlobalFree(IntPtr hMem);
 
-        [DllImport("kernel32.dll")]
+        [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
         public static extern bool IsWow64Process(SafeHandle hProcess, out bool wow64Process);
 
         [DllImport("kernel32.dll", ExactSpelling = true)]
@@ -356,10 +356,10 @@ namespace Win32
         [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
         public static extern bool CloseHandle(IntPtr handle);
 
-        [DllImport("Kernel32.dll")]
+        [DllImport("Kernel32.dll", ExactSpelling = true)]
         public static extern uint GetACP();
 
-        [DllImport("kernel32.dll", ExactSpelling = true)]
+        [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
         public static extern SafeProcessHandle OpenProcess(
             uint dwDesiredAccess,
             [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle,
@@ -1351,26 +1351,25 @@ function Test-ProcessElevated {
             Write-Log -Message "EnterDebugMode failed" -ErrorRecord $_ -Category Warning
         }
     }
-    
+
     process {
         if ($Process) {
             $ProcessId = $Process.Id
         }
 
         $hProcess = $null
+        $hToken = [IntPtr]::Zero
 
         try {
             $hProcess = [Win32.Kernel32]::OpenProcess([Win32.Kernel32]::PROCESS_QUERY_LIMITED_INFORMATION, $false, $ProcessId)
 
             if (-not $hProcess -or $hProcess.IsInvalid) {
-                Write-Error "OpenProcess failed for PID $ProcessId with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                Write-Error "OpenProcess failed for PID $ProcessId with error code $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
                 return
             }
 
-            [IntPtr]$hToken = [IntPtr]::Zero
-            
             if (-not [Win32.Advapi32]::OpenProcessToken($hProcess, [System.Security.Principal.TokenAccessLevels]::Query, [ref]$hToken)) {
-                Write-Error "OpenProcessToken failed for PID $ProcessId with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                Write-Error "OpenProcessToken failed for PID $ProcessId with error code $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
                 return
             }
 
@@ -1386,7 +1385,7 @@ function Test-ProcessElevated {
                     [ref]$elevation,
                     [System.Runtime.InteropServices.Marshal]::SizeOf([type]'Win32.Advapi32+TOKEN_ELEVATION'),
                     [ref]$length)) {
-                Write-Error "GetTokenInformation failed with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                Write-Error "GetTokenInformation failed with error code $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
                 return
             }
 
@@ -5839,7 +5838,7 @@ function Download-TTD {
     }
 
     $Path = Resolve-Path $Path
- 
+
     # First, download appinstaller XML file.
     $appInstallerPath = Join-Path $Path 'TTD.appinstaller'
 
@@ -5926,7 +5925,7 @@ function Start-TTDMonitor {
     if (-not (Test-Path $Path)) {
         $null = New-Item -Path $Path -ItemType Directory -ErrorAction Stop
     }
-    
+
     $Path = Resolve-Path $Path
 
     # Make sure extension is ".exe"
@@ -5996,7 +5995,7 @@ function Attach-TTD {
         [Parameter(Mandatory)]
         # Target Process ID
         [ValidateRange(4, [int]::MaxValue)]
-        [int]$ProcessId, 
+        [int]$ProcessId,
         [switch]$ShowUI
     )
 
@@ -6030,7 +6029,7 @@ function Attach-TTD {
     if ($outPath.IndexOf(' ') -gt 0) {
         $outPath = "`"$outPath`""
     }
-    
+
     Write-Host "outPath: $outPath"
 
     # Attach
@@ -7860,11 +7859,32 @@ function Start-ProcessCapture {
                         return
                     }
 
+                    # Check if process is elevated except for "System Idle Process" (PID 0) and "System" (PID 4))
+                    $isElevated = $null
+
+                    if ($win32Process.ProcessId -gt 4) {
+                        $err = $($isElevated = Test-ProcessElevated -ProcessId $win32Process.ProcessId) 2>&1
+
+                        if ($err) {
+                            $errMsg = "Test-ProcessElevated failed for $($win32Process.Name) (PID: $($win32Process.ProcessId))"
+
+                            # Maybe the process is gone already. In this case, OpenProcess would fail with ERROR_INVALID_PARAMETER (87).
+                            if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
+                                Write-Log $errMsg -ErrorRecord $err -Category Error
+                                $proc.Dispose()
+                            }
+                            else {
+                                Write-Log "$errMsg because the process has already exited" -ErrorRecord $err -Category Warning
+                            }
+                        }
+                    }
+
                     $obj = @{
                         Name         = $win32Process.Name
                         Id           = $win32Process.ProcessId
                         CreationDate = $win32Process.CreationDate
                         Path         = $win32Process.Path
+                        Elevated     = $isElevated
                         CommandLine  = $win32Process.CommandLine
                     }
 
@@ -9485,10 +9505,10 @@ function Collect-OutlookInfo {
         [switch]$SkipVersionCheck
     )
 
-    $runAsAdmin = Test-RunAsAdministrator
+    $isElevated = Test-ProcessElevated $pid
 
     # Explicitly check admin rights depending on the request.
-    if (-not $runAsAdmin -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump' -or $EnablePageHeap -or $EnableLoopbackExempt)) {
+    if (-not $isElevated -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump' -or $EnablePageHeap -or $EnableLoopbackExempt)) {
         Write-Warning "Please run as administrator."
         return
     }
@@ -9597,7 +9617,7 @@ function Collect-OutlookInfo {
     Write-Log "Script Version: $Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString())); PID: $pid"
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
-    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin: $runAsAdmin"
+    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); IsElevated: $isElevated"
     Write-Log "Target user: $($targetUser.Name) ($($targetUser.Sid))"
     Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
 
@@ -10210,4 +10230,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Collect-OutlookInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Test-ProcessElevated
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Collect-OutlookInfo
