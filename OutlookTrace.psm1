@@ -9362,6 +9362,81 @@ function Get-AnsiCodePage {
     }
 }
 
+function Save-GPResult {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [Parameter(Mandatory)]
+        # Destination folder path
+        [string]$Path,
+        [string]$User,
+        [string]$FileName = 'GPResult',
+        [ValidateSet('TEXT', 'HTML', 'XML')]
+        [Parameter(Mandatory)]
+        [string]$Format = 'TEXT'
+    )
+
+    if (-not (Get-Command 'gpresult.exe' -ErrorAction SilentlyContinue)) {
+        Write-Log "gpresult.exe is not available"
+        return
+    }
+
+    $argList = New-Object System.Collections.Generic.List[string]
+
+    if ($User) {
+        $argList.Add('/USER')
+        $argList.Add($User)
+    }
+
+    $fileName = [System.IO.Path]::GetFileNameWithoutExtension($FileName)
+
+    switch ($Format) {
+        'TEXT' {
+            $filePath = Join-Path $Path "$fileName.txt"
+            $argList.Add('/V')
+            break
+        }
+        'HTML' {
+            $filePath = Join-Path $Path "$fileName.htm"
+            $argList.Add('/H')
+            break
+        }
+        'XML' {
+            $filePath = Join-Path $Path "$fileName.xml"
+            $argList.Add('/X')
+            break
+        }
+    }
+
+    # Add file path argument for HTML & XML
+    if ($Format -eq 'HTML' -or $Format -eq 'XML') {
+        # If file path contains spaces, it must be double-quoted.
+        if ($filePath.IndexOf(' ') -ge 0) {
+            $filePath = "`"$filePath`""
+        }
+
+        $argList.Add($filePath)
+    }
+
+    $startProcArgs = @{
+        ArgumentList = $argList
+        WindowStyle  = 'Hidden'
+        Wait         = $true
+    }
+
+    if ($Format -eq 'TEXT') {
+        # TODO: Using -RedirectStandardOutput is very slow. Refactor later by configuring System.Diagnostics.Process with StartInfo
+        $startProcArgs['RedirectStandardOutput'] = $filePath
+    }
+
+    $start = Get-Timestamp
+    Write-Log "Running gpresult.exe $argList"
+
+    Start-Process 'gpresult.exe' @startProcArgs
+
+    $elapsed = Get-Elapsed $start
+    Write-Log "gpresult.exe took $elapsed"
+}
+
 <#
 .SYNOPSIS
 Check if this sript is too old.
@@ -9704,7 +9779,7 @@ function Collect-OutlookInfo {
 
             Write-Progress -PercentComplete 40
 
-            Write-Log "Starting processCaptureTask."
+            Write-Log "Starting processCaptureTask"
             $processCaptureTaskCts = New-Object System.Threading.CancellationTokenSource
             $processCaptureTask = Start-Task { param ($Path, $NamePattern, $CancelToken) Start-ProcessCapture @PSBoundParameters } `
                 -ArgumentList @{
@@ -9713,6 +9788,8 @@ function Collect-OutlookInfo {
                 CancelToken = $processCaptureTaskCts.Token
             }
 
+            Write-Log "Starting gpresultTask"
+            $gpresultTask = Start-Task { param ($Path, $User, $Format) Save-GPResult @PSBoundParameters } -ArgumentList @{ Path = $OSDir; User = $targetUser; Format = 'HTML' }
             Write-Progress -PercentComplete 60
 
             $PSDefaultParameterValues['Invoke-ScriptBlock:ArgumentList'] = @{ User = $targetUser }
@@ -10161,6 +10238,12 @@ function Collect-OutlookInfo {
                 $officeModuleInfoTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 Write-Log "officeRegistryTask is complete."
             }
+
+            if ($gpresultTask) {
+                Write-Progress -Status 'Saving GPResult'
+                $gpresultTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
+                Write-Log "gpresultTask is complete."
+            }
         }
 
         if ($pageHeapEnabled) {
@@ -10230,4 +10313,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Collect-OutlookInfo
