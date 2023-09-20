@@ -8019,7 +8019,7 @@ function Start-ProcessCapture {
 
                     # For processes specified in NamePattern parameter, save its User & Environment Variables.
                     if ($win32Process.ProcessName -match $NamePattern) {
-                        Write-Log "Found a new instance of $($win32Process.ProcessName) (PID:$($win32Process.ProcessId))"
+                        Write-Log "Found a new instance of $($win32Process.ProcessName) (PID:$($win32Process.ProcessId), Elevated: $isElevated)"
 
                         if ($includeUserNameAvailable) {
                             # When not running as admin, Get-Prcess -IncludeUserName generates a non-terminating error, even with "-ErrorAction SilentlyContinue".
