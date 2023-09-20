@@ -1326,7 +1326,7 @@ function Test-RunAsAdministrator {
     [OutputType([bool])]
     param()
 
-    ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]'Administrator')
+    Test-ProcessElevated -ProcessId $PID
 }
 
 function Test-ProcessElevated {
@@ -9697,10 +9697,10 @@ function Collect-OutlookInfo {
         [string]$TTDCommandlineFilter
     )
 
-    $isElevated = Test-ProcessElevated $pid
+    $runAsAdmin = Test-RunAsAdministrator
 
     # Explicitly check admin rights depending on the request.
-    if (-not $isElevated -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump' -or $EnablePageHeap -or $EnableLoopbackExempt)) {
+    if (-not $runAsAdmin -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump' -or $EnablePageHeap -or $EnableLoopbackExempt)) {
         Write-Warning "Please run as administrator."
         return
     }
@@ -9809,7 +9809,7 @@ function Collect-OutlookInfo {
     Write-Log "Script Version: $Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString())); PID: $pid"
     Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
-    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); IsElevated: $isElevated"
+    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin: $runAsAdmin"
     Write-Log "Target user: $($targetUser.Name) ($($targetUser.Sid))"
     Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
 
