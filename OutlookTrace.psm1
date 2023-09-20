@@ -3876,6 +3876,20 @@ function Get-OutlookProfile {
                 $mailAccounts = Get-MailAccount $prof
                 $storeProviders = Get-StoreProvider $prof
 
+                # Check default account
+                foreach ($store in $storeProviders) {
+                    if ($store.ResourceFlags.HasFlag([Win32.Mapi.ResourceFlags]::STATUS_DEFAULT_STORE)) {
+                        foreach ($account in $mailAccounts) {
+                            if ($account.DisplayName -eq $store.DisplayName) {
+                                $account.IsDefaultAccount = $true
+                                break
+                            }
+                        }
+
+                        break
+                    }
+                }
+
                 # Apply cache mode policy to MAPI accounts
                 $mailAccounts | Merge-CachedModePolicy -CachedModePolicy $cachedModePolicy
 
@@ -4075,9 +4089,9 @@ function Get-MailAccount {
             $AccountManagerCLSIDs.CLSID_OlkMAPIAccount { Get-MapiAccount $account; break }
         }
 
-        if ($i -eq 0) {
-            $acct.IsDefaultAccount = $true
-        }
+        # if ($i -eq 0) {
+        #     $acct.IsDefaultAccount = $true
+        # }
 
         $acct.Profile = $Profile.PSChildName
         $acct
