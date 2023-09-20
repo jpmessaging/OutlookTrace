@@ -4,11 +4,14 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 
 [ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2023-09-14/OutlookTrace.psm1)
 
-Fiddler トレースや Process Monitor ログ、そして ZoomIt によるスクリーン レコーディングも含めて採取する場合には以下から事前にダウンロードできます:
+Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン レコーディング、そして TTD トレースも含めて採取する場合には以下から事前にダウンロードできます:
 
 - [FiddlerCapSetup](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe)
 - [Process Monitor](https://download.sysinternals.com/files/ProcessMonitor.zip)
 - [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)
+- [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-173-0/TTD.msixbundle)
+
+いずれも `Collect-OutlookInfo` の `-Path` パラメータで指定するフォルダ配下に配置ください。  
 
 ## 利用方法
 

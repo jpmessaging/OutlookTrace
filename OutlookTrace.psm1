@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2023-09-14'
+$Version = 'v2023-09-18'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -5582,7 +5582,7 @@ There are 2 modes of execution:
     Start tttracer.exe and begin monitoring the new process instance of the given executable.
     This mode does not start the executable.
 #>
-function Start-TTD {
+function Start-TTTracer {
     [CmdletBinding()]
     param(
         # Folder to save to.
@@ -5671,10 +5671,10 @@ function Start-TTD {
     } -PassThru
 }
 
-function Stop-TTD {
+function Stop-TTTracer {
     [CmdletBinding()]
     param(
-        # The returned object of Start-TTD
+        # The returned object of Stop-TTTracer
         [Parameter(Mandatory = $true)]
         $Descriptor,
         [switch]$AutoRemove
@@ -5828,7 +5828,8 @@ function Download-TTD {
     param(
         [Parameter(Mandatory)]
         # Path to download files
-        [string]$Path
+        [string]$Path,
+        [switch]$SkipCache
     )
 
     $downloadUrl = 'https://aka.ms/ttd/download'
@@ -5839,14 +5840,35 @@ function Download-TTD {
 
     $Path = Resolve-Path $Path
 
+    if (-not $SkipCache) {
+        # See if TTD.msixbundle exists locally.
+        $msixBundlePath = Join-Path $Path 'TTD.msixbundle'
+
+        if (Test-Path $msixBundlePath) {
+            Write-Log "Found cached $msixBundlePath"
+
+            [PSCustomObject]@{
+                MsixBundlePath = $msixBundlePath
+            }
+
+            return
+        }
+    }
+
     # First, download appinstaller XML file.
     $appInstallerPath = Join-Path $Path 'TTD.appinstaller'
 
     if (-not (Test-Path $appInstallerPath)) {
-        $err = Invoke-Command -ScriptBlock {
-            $ProgressPreference = "SilentlyContinue";
-            Invoke-WebRequest -Uri $downloadUrl -OutFile $appInstallerPath
-        } 2>&1
+        # Invoke-WebRequest throws a terminating error if host name cannot be resolved.
+        try {
+            $err = $(Invoke-Command -ScriptBlock {
+                $ProgressPreference = "SilentlyContinue";
+                Invoke-WebRequest -Uri $downloadUrl -OutFile $appInstallerPath
+            }) 2>&1
+        }
+        catch {
+            $err = $_
+        }
 
         if (-not (Test-Path $appInstallerPath)) {
             Write-Error -Message "Failed to download TTD.appinstaller from $downloadUrl. $err"
@@ -5868,10 +5890,15 @@ function Download-TTD {
     $msixName = Split-Path $mainBundle.Uri -Leaf
     $msixBundlePath = Join-Path $Path $msixName
 
-    $err = Invoke-Command -ScriptBlock {
-        $ProgressPreference = "SilentlyContinue";
-        Invoke-WebRequest -Uri $mainBundle.Uri -OutFile $msixBundlePath
-    } 2>&1
+    try {
+        $err = $(Invoke-Command -ScriptBlock {
+            $ProgressPreference = "SilentlyContinue";
+            Invoke-WebRequest -Uri $mainBundle.Uri -OutFile $msixBundlePath
+        }) 2>&1
+    }
+    catch {
+        $err = $_
+    }
 
     if (-not (Test-Path $msixBundlePath)) {
         Write-Error "Failed to download $mainBundle.Uri. $err"
@@ -5891,6 +5918,8 @@ function Install-TTD {
         $MsixBundlePath
     )
 
+    Write-Log "Installing TTD. Invoking 'Add-AppxPackage -Path $MsixBundlePath'"
+
     Invoke-Command {
         $ProgressPreference = "SilentlyContinue";
         Add-AppxPackage -Path $MsixBundlePath
@@ -5902,6 +5931,14 @@ function Uninstall-TTD {
     param()
 
     $package = Get-AppxPackage -Name 'Microsoft.TimeTravelDebugging'
+
+    if (-not $package) {
+        Write-Error -Message "TTD is not installed. Cannot find AppxPackage 'Microsoft.TimeTravelDebugging'"
+        return
+    }
+
+    Cleanup-TTD
+    Write-Log "Uninstalling TTD. Invoking 'Remove-AppxPackage -Package $package'"
 
     Invoke-Command {
         $ProgressPreference = "SilentlyContinue";
@@ -5946,23 +5983,55 @@ function Start-TTDMonitor {
         '-monitor', $ExecutableName
 
         if ($CommandlineFilter) {
+            # As of TTD 1.11.173.0, cmdLineFilter arg must not start with / or - (e.g., '/f' or '-cleanviews' does not work)
+            if ($CommandlineFilter.StartsWith('/') -or $CommandlineFilter.StartsWith('-')) {
+                $CommandlineFilter = $CommandlineFilter.Substring(1)
+                Write-Log "CommandlineFilter cannot start with / or -. Modified to '$CommandlineFilter'"
+            }
+
             '-cmdLineFilter', $CommandlineFilter
         }
     )
 
-    $process = Start-Process 'ttd.exe' -ArgumentList $ttdArgs -WindowStyle Hidden -PassThru
+    $stderr = Join-Path $Path 'stderr.txt'
+    Write-Log "Invoking ttd.exe $($ttdArgs -join ' ')"
+
+    $process = Start-Process 'ttd.exe' -ArgumentList $ttdArgs -WindowStyle Hidden -RedirectStandardError $stderr -PassThru
+
+    # Make sure ttd.exe started successfully
+    Start-Sleep -Seconds 1
+
+    if (-not $process -or $process.HasExited) {
+        if (Test-Path $stderr) {
+            $errText = [IO.File]::ReadAllText($stderr)
+        }
+
+        Write-Error "ttd.exe failed to start. $errText"
+        return
+    }
+
+    Write-Log "ttd.exe (PID: $($process.Id)) has successfully started"
 
     [PSCustomObject]@{
         Process = $process
+        StandardError = $stderr
     }
 }
 
 function Stop-TTDMonitor {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'InputObject')]
     param(
-        [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
+        [Parameter(ParameterSetName = 'InputObject', Mandatory, ValueFromPipeline)]
+        # Output of Start-TTDMonitor
+        $InputObject,
+        [Parameter(ParameterSetName = 'Process', Mandatory, ValueFromPipeline)]
+        # TTD.exe process
         [System.Diagnostics.Process]$Process
     )
+
+    if ($InputObject) {
+        $Process = $InputObject.Process
+    }
 
     # Check if the target process is ttd
     if ($Process.Name -ne 'TTD') {
@@ -5970,8 +6039,16 @@ function Stop-TTDMonitor {
         return
     }
 
+    Write-Log "Stopping ttd.exe (PID: $($Process.Id))"
     Stop-Process -InputObject $Process
+    $Process.WaitForExit()
     $Process.Dispose()
+
+    if ($InputObject) {
+        if ((Test-Path $InputObject.StandardError) -and -not (Get-Content $InputObject.StandardError)) {
+            Remove-Item $InputObject.StandardError 2>&1 | Write-Log -Category Warning
+        }
+    }
 }
 
 function Cleanup-TTD {
@@ -5981,9 +6058,13 @@ function Cleanup-TTD {
     )
 
     # Clean up ProcLaunchMon
-    & ttd.exe -cleanup
-}
+    Write-Log "Invoking 'ttd.exe -cleanup'"
+    $null = & ttd.exe -cleanup
 
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "ttd.exe -cleanup failed with $LASTEXITCODE"
+    }
+}
 
 function Attach-TTD {
     [CmdletBinding()]
@@ -5996,7 +6077,7 @@ function Attach-TTD {
         # Target Process ID
         [ValidateRange(4, [int]::MaxValue)]
         [int]$ProcessId,
-        [switch]$ShowUI
+        [switch]$NoUI
     )
 
     # Validate input args
@@ -6021,16 +6102,18 @@ function Attach-TTD {
         return
     }
 
-    # If Path contains spaces, surround by double-quotes
-    Write-Host "given path: $Path"
+    if (-not (Test-Path $Path)) {
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
+    }
 
+    $Path = Resolve-Path $Path | Select-Object -ExpandProperty Path
+
+    # If Path contains spaces, surround by double-quotes
     $outPath = $Path
 
     if ($outPath.IndexOf(' ') -gt 0) {
         $outPath = "`"$outPath`""
     }
-
-    Write-Host "outPath: $outPath"
 
     # Attach
     $ttdArgs = @(
@@ -6039,41 +6122,73 @@ function Attach-TTD {
         '-out', $outPath
         '-attach', $ProcessId
 
-        if (-not $ShowUI) {
+        if ($NoUI) {
             '-noUI'
         }
     )
 
-    $process = Start-Process 'ttd.exe' -ArgumentList $ttdArgs -WindowStyle Hidden -PassThru
+    $stderr = Join-Path $Path 'stderr.txt'
+    Write-Log "Invoking ttd.exe $($ttdArgs -join ' ')"
+
+    $process = Start-Process 'ttd.exe' -ArgumentList $ttdArgs -WindowStyle Hidden -RedirectStandardError $stderr -PassThru
+
+    Start-Sleep -Seconds 1
+
+    if (-not $process -or $process.HasExited) {
+        if (Test-Path $stderr) {
+            $errText = [IO.File]::ReadAllText($stderr)
+        }
+
+        Write-Error "ttd.exe failed to attach to the target (PID: $ProcessId). $errText"
+        return
+    }
 
     [PSCustomObject]@{
-        Process = $process
+        Process = $process # ttd.exe process
+        ProcessId = $ProcessId # target process PID
+        StandardError = $stderr
     }
 }
 
 function Detach-TTD {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'InputObject')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
     param(
+        [Parameter(ParameterSetName = 'InputObject', ValueFromPipeline)]
+        # Output of Attach-TTD
+        $InputObject,
+        # Target Process ID (Not ttd.exe's PID)
+        [Parameter(ParameterSetName = 'ProcessId')]
         [int]$ProcessId
     )
 
-    if (-not $PSBoundParameters.ContainsKey('ProcessId')) {
+    if ($InputObject) {
+        $ProcessId = $InputObject.ProcessId
+    }
+
+    if (-not $ProcessId) {
+        Write-Log "Detaching TTD. Invoking 'ttd.exe -stop all'"
         $null = & ttd.exe -stop all
     }
     else {
-        if ($process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
-            $process.Dispose()
-        }
-        else {
-            return
-        }
-
+        Write-Log "Detaching TTD. Invoking 'ttd.exe -stop $ProcessId'"
         $null = & ttd.exe -stop $ProcessId
     }
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to detach TT$(if ($ProcessId) { " from $ProcessId" })"
+        Write-Error "Failed to detach TTD $(if ($ProcessId) { " from $ProcessId" })"
+        return
+    }
+
+    if ($InputObject) {
+        if ($InputObject.Process) {
+            $InputObject.Process.WaitForExit()
+            $InputObject.Process.Dispose()
+        }
+
+        if ((Test-Path $InputObject.StandardError) -and -not (Get-Content $InputObject.StandardError)) {
+            Remove-Item $InputObject.StandardError 2>&1 | Write-Log -Category Warning
+        }
     }
 }
 
@@ -9577,7 +9692,9 @@ function Collect-OutlookInfo {
         # Switch to add Microsoft.AAD.BrokerPlugin to Loopback Exempt
         [switch]$EnableLoopbackExempt,
         # Skip script version check.
-        [switch]$SkipVersionCheck
+        [switch]$SkipVersionCheck,
+        # Command line filter for TTD monitor
+        [string]$TTDCommandlineFilter
     )
 
     $isElevated = Test-ProcessElevated $pid
@@ -10007,39 +10124,34 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'TTD') {
-            # If Outlook is already running, attach to it. Otherwise, start TTD with OnLaunch option and ask the user to start Outlook.
+            Write-Progress -Status 'Starting TTD'
+
+            # First make sure TTD.exe is available; Otherwise locate or download.
+            if (-not (Get-Command 'ttd.exe' -ErrorAction SilentlyContinue)) {
+                $ttdDownloadPath = Join-Path $Path 'TTD'
+                Download-TTD -Path $ttdDownloadPath -ErrorAction Stop | Install-TTD
+            }
+
+            # Log version
+            if ($TTDPackage = Get-AppxPackage -Name 'Microsoft.TimeTravelDebugging') {
+                Write-Log "Using Microsoft.TimeTravelDebugging version $($TTDPackage.Version)"
+            }
+
+            $ttdRunPath = (Join-Path $tempPath 'TTD')
+
+            # If Outlook is already running, attach to it. Otherwise, start monitoring for outlook.exe.
             if ($outlookProcess = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue) {
-                Write-Log "TTD attaching to Outlook (PID $($outlookProcess.Id))."
-                $ttd = Attach-TTD -Path (Join-Path $tempPath 'TTD')  -ProcessID  $outlookProcess.Id -ErrorAction Stop
+                Write-Log "Attaching TTD to Outlook (PID $($outlookProcess.Id))."
+                $ttdProcess = Attach-TTD -Path $ttdRunPath -ProcessID $outlookProcess.Id -ErrorAction Stop
             }
             else {
-                $outlookExe = $null
-                $officeInfo = Get-OfficeInfo
-                $executables = @(Get-ChildItem -Path $officeInfo.InstallPath -Filter 'Outlook.exe' -File -Recurse)
+                $ttdMonitorArgs = $null
 
-                if ($executables.Count -eq 1) {
-                    $outlookExe = $executables[0]
-                }
-                else {
-                    # For ClickToRun, there might be more than one Outlook.exe; downloaded Outlook.exe under the Office installation path.
-                    # e.g. C:\Program Files\Microsoft Office\Updates\Download\PackageFiles\7ABA93E3-58C2-4BEE-AB49-3438C9F29D70\root\Office16\Outlook.exe
-                    # Pick the one without 'PackageFiles' in the path.
-                    $outlookExe = $executables | Where-Object { $_.FullName -notlike '*PackageFiles*' } | Select-Object -First 1
+                if ($TTDCommandlineFilter) {
+                    $ttdMonitorArgs = @{ CommandlineFilter = $TTDCommandlineFilter }
                 }
 
-                # Start monitoring launch of Outlook
-                $ttd = Start-TTD -Path (Join-Path $tempPath 'TTD') -Executable $outlookExe.FullName -OnLaunch -ErrorAction Stop
-                Write-Host "Please start Outlook now." -ForegroundColor Green
-
-                while (-not ($outlookProcess = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue)) {
-                    Start-Sleep -Seconds 3
-                }
-
-                Write-Log "Outlook.exe (PID: $($outlookProcess.Id)) detected"
-                $outlookProcess.EnableRaisingEvents = $true
-                $ttd.TargetProcess = $outlookProcess
-
-                Write-Host "Outlook has started (PID: $($ttd.TargetProcess.Id)). It might take some time for Outlook to appear." -ForegroundColor Green
+                $ttdProcess = Start-TTDMonitor -Path $ttdRunPath -ExecutableName 'outlook.exe' @ttdMonitorArgs -ErrorAction Stop
             }
 
             $ttdStarted = $true
@@ -10095,31 +10207,15 @@ function Collect-OutlookInfo {
         if ($ttdStarted) {
             Write-Progress -Status 'Stopping TTD trace'
 
-            $($stopResult = Stop-TTD $ttd) 2>&1 | Write-Log
-            Write-Log "Stop-TTD Message: $($stopResult.Message)"
-
-            # Outlook might be holding the TTD file.
-            # Tell the user to stop Outlook and wait for the process to shutdown.
-            if (-not $ttd.TargetProcess.HasExited) {
-                Write-Log "Waiting for the user to shutdown Outlook."
-                Write-Host "TTD Tracing is stopped. Please shutdown Outlook" -ForegroundColor Green
-                Write-Progress -Status 'Stopping TTD trace. Please shutdown Outlook.'
-
-                # Wait for Outlook to be stopped. Nudge the user once in a while.
-                while ($true) {
-                    $timeout = $(Wait-Process -InputObject $ttd.TargetProcess -Timeout 30 -ErrorAction Continue) 2>&1
-                    if ($timeout) {
-                        Write-Host "Please shutdown Outlook." -ForegroundColor Yellow
-                    }
-                    else {
-                        Write-Host "Outlook is closed. Moving on." -ForegroundColor Green
-                        break
-                    }
-                }
+            # Having ProcessId means it's attached.
+            if ($ttdProcess.ProcessId) {
+                $ttdProcess | Detach-TTD 2>&1 | Write-Log -Category Error -PassThru
+            }
+            else {
+                $ttdProcess | Stop-TTDMonitor 2>&1 | Write-Log -Category Error -PassThru
             }
 
-            Write-Log "Outlook ExitCode: $($ttd.TargetProcess.ExitCode), ExitTime: $(if ($ttd.TargetProcess.ExitTime) {$ttd.TargetProcess.ExitTime.ToString('o')}), ElapsedTime: $($ttd.TargetProcess.ExitTime - $ttd.TargetProcess.StartTime)"
-            $ttd.Dispose()
+            Uninstall-TTD
         }
 
         if ($netshTraceStarted) {
@@ -10313,4 +10409,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Start-TTD, Stop-TTD, Attach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Collect-OutlookInfo
