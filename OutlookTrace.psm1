@@ -5885,6 +5885,8 @@ function Download-TTD {
                 $ProgressPreference = "SilentlyContinue";
                 Invoke-WebRequest -Uri $downloadUrl -OutFile $appInstallerPath
             }) 2>&1
+
+            Write-Log "TTD.appinstaller is successfully downloaded from $downloadUrl"
         }
         catch {
             $err = $_
@@ -5915,6 +5917,8 @@ function Download-TTD {
             $ProgressPreference = "SilentlyContinue";
             Invoke-WebRequest -Uri $mainBundle.Uri -OutFile $msixBundlePath
         }) 2>&1
+
+        Write-Log "$msixName is successfully downloaded from $($mainBundle.Uri)"
     }
     catch {
         $err = $_
@@ -6014,7 +6018,7 @@ function Start-TTDMonitor {
     )
 
     $stderr = Join-Path $Path 'stderr.txt'
-    Write-Log "Invoking ttd.exe $($ttdArgs -join ' ')"
+    Write-Log "Invoking 'ttd.exe $($ttdArgs -join ' ')'"
 
     $process = Start-Process 'ttd.exe' -ArgumentList $ttdArgs -WindowStyle Hidden -RedirectStandardError $stderr -PassThru
 
@@ -10148,7 +10152,7 @@ function Collect-OutlookInfo {
 
             # First make sure TTD.exe is available; Otherwise locate or download.
             if (-not (Get-Command 'ttd.exe' -ErrorAction SilentlyContinue)) {
-                $ttdDownloadPath = Join-Path $Path 'TTD'
+                $ttdDownloadPath = Join-Path $Path 'TTD Installer'
                 Download-TTD -Path $ttdDownloadPath -ErrorAction Stop | Install-TTD
             }
 
