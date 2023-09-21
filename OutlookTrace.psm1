@@ -906,7 +906,13 @@ function Write-Log {
     process {
         # If ErrorRecord is provided, use it.
         if ($ErrorRecord) {
-            $Message = "$Message; [ErrorRecord] ExceptionType: $($ErrorRecord.Exception.GetType().Name), Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
+            $errorDetails = $null
+
+            if ($ErrorRecord.ErrorDetails.Message -ne $ErrorRecord.Exception.Message) {
+                $errorDetails = $ErrorRecord.ErrorDetails.Message
+            }
+
+            $Message = "$Message; [ErrorRecord] $(if ($errorDetails) { "ErrorDetails: $errorDetails, " })ExceptionType: $($ErrorRecord.Exception.GetType().Name), Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
         }
 
         # Ignore null or an empty string.
