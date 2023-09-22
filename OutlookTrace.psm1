@@ -2326,6 +2326,10 @@ function Start-PSR {
 
     $outputFile = Join-Path $Path -ChildPath $FileName
 
+    if ($outputFile.IndexOf(' ') -ge 0) {
+        $outputFile = "`"$outputFile`""
+    }
+
     $psrArgs = @(
         '/start', '/maxsc', $maxScreenshotCount, '/maxlogsize', '10', '/output', $outputFile, '/exitonsave', '1', '/noarc', '1'
 
@@ -9805,7 +9809,7 @@ function Collect-OutlookInfo {
         if ($autoUpdate.Success) {
             $updatedSelf = Get-Command $MyInvocation.MyCommand.Name
 
-            # Get the list of current parameters that's also available in the updated cmdlet
+            # Get the list of current parameters that are also available in the updated cmdlet
             $params = @{}
 
             foreach ($_ in $PSBoundParameters.GetEnumerator()) {
@@ -9818,7 +9822,38 @@ function Collect-OutlookInfo {
                 $params.Add('SkipAutoUpdate', $true)
             }
 
-            & $updatedSelf @params
+            $expression = New-Object System.Text.StringBuilder -ArgumentList "$($updatedSelf.Name)"
+
+            foreach ($param in $params.GetEnumerator()) {
+                $null = $expression.Append(" -$($param.Key)")
+
+                # If this is a Switch parameter, no need to add its value
+                if ($updatedSelf.Parameters[$param.Key].SwitchParameter) {
+                    continue
+                }
+
+                if ($null -ne $param.Value) {
+                    $value = $param.Value
+
+                    if ($param.Value -is [string] -and $param.Value.IndexOf(' ') -ge 0) {
+                        # Make sure to use single-quote here because the final expression will be embedded in a string.
+                        $value = "'$value'"
+                    }
+                    elseif ($param.Value -is [System.Collections.ICollection]) {
+                        $value = $param.Value -join ','
+                    }
+
+                    $null = $expression.Append(" $value")
+                }
+            }
+
+            Write-Warning "OutlookTrace.psm1 was auto updated. Continue with the new PowerShell instance"
+            Write-Verbose "New PowerShell instance is going to execute: $expression"
+
+            $currentProcess = Get-Process -Id $PID
+            $powerShellExe = $currentProcess.Path
+
+            & $powerShellExe -NoLogo -NoExit -Command "& { Import-Module $PSCommandPath -DisableNameChecking -Force -ErrorAction Stop; $expression}"
             return
         }
     }
@@ -9837,15 +9872,29 @@ function Collect-OutlookInfo {
     Write-Log "Target user: $($targetUser.Name) ($($targetUser.Sid))"
     Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
 
-    $sb = New-Object System.Text.StringBuilder
+    $myParameters = New-Object System.Text.StringBuilder
+    $myCommand = Get-Command $MyInvocation.MyCommand.Name
 
-    foreach ($paramName in $PSBoundParameters.Keys) {
-        if ($var = Get-Variable $paramName -ErrorAction SilentlyContinue) {
-            $null = $sb.Append("$($var.Name):$($var.Value -join ', '); ")
+    foreach ($param in $PSBoundParameters.GetEnumerator()) {
+        $null = $myParameters.Append(" -$($param.Key)")
+
+        if ($myCommand.Parameters[$param.Key].SwitchParameter) {
+            continue
         }
+
+        $value = $param.Value
+
+        if ($value -is [string] -and $value.IndexOf(' ') -ge 0) {
+            $value = "'$value'"
+        }
+        elseif ($param.Value -is [System.Collections.ICollection]) {
+            $value = $param.Value -join ', '
+        }
+
+        $null = $myParameters.Append(" $value")
     }
 
-    Write-Log "Parameters $($sb.ToString())"
+    Write-Log "Invocation: $($myCommand.Name)$($myParameters.ToString())"
 
     try {
         # Set thread culture to en-US for consitent logging.
