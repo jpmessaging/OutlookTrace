@@ -1015,11 +1015,13 @@ function Get-Elapsed {
         [long]$EndingTimestamp
     )
 
-    if ($PSBoundParameters.ContainsKey('EndingTimestamp')) {
-        [TimeSpan]::FromTicks($EndingTimestamp - $StartingTimestamp)
-    }
-    else {
-        [TimeSpan]::FromTicks([System.Diagnostics.Stopwatch]::GetTimestamp() - $StartingTimestamp)
+    process {
+        if ($PSBoundParameters.ContainsKey('EndingTimestamp')) {
+            [TimeSpan]::FromTicks($EndingTimestamp - $StartingTimestamp)
+        }
+        else {
+            [TimeSpan]::FromTicks([System.Diagnostics.Stopwatch]::GetTimestamp() - $StartingTimestamp)
+        }
     }
 }
 
@@ -5886,9 +5888,9 @@ function Download-TTD {
         # Invoke-WebRequest throws a terminating error if host name cannot be resolved.
         try {
             $err = $(Invoke-Command -ScriptBlock {
-                $ProgressPreference = "SilentlyContinue";
-                Invoke-WebRequest -Uri $downloadUrl -OutFile $appInstallerPath
-            }) 2>&1
+                    $ProgressPreference = "SilentlyContinue";
+                    Invoke-WebRequest -Uri $downloadUrl -OutFile $appInstallerPath
+                }) 2>&1
 
             Write-Log "TTD.appinstaller is successfully downloaded from $downloadUrl"
         }
@@ -5918,9 +5920,9 @@ function Download-TTD {
 
     try {
         $err = $(Invoke-Command -ScriptBlock {
-            $ProgressPreference = "SilentlyContinue";
-            Invoke-WebRequest -Uri $mainBundle.Uri -OutFile $msixBundlePath
-        }) 2>&1
+                $ProgressPreference = "SilentlyContinue";
+                Invoke-WebRequest -Uri $mainBundle.Uri -OutFile $msixBundlePath
+            }) 2>&1
 
         Write-Log "$msixName is successfully downloaded from $($mainBundle.Uri)"
     }
@@ -6041,7 +6043,7 @@ function Start-TTDMonitor {
     Write-Log "ttd.exe (PID: $($process.Id)) has successfully started"
 
     [PSCustomObject]@{
-        Process = $process
+        Process       = $process
         StandardError = $stderr
     }
 }
@@ -6172,8 +6174,8 @@ function Attach-TTD {
     }
 
     [PSCustomObject]@{
-        Process = $process # ttd.exe process
-        ProcessId = $ProcessId # target process PID
+        Process       = $process # ttd.exe process
+        ProcessId     = $ProcessId # target process PID
         StandardError = $stderr
     }
 }
@@ -9659,6 +9661,91 @@ function Wait-EnterOrControlC {
 
 <#
 .SYNOPSIS
+    Helper function that returns a string of command expression with given parameters.
+
+.EXAMPLE
+    Get-CommandExpression -Command Get-Process -Parameters @{ Name = 'Outlook' }
+
+.EXAMPLE
+    Get-CommandExpression -Invocation $MyInvocation
+
+.NOTES
+    This function does not check if the given parameters belong to the same ParameterSets.
+    So, there is no guarantee that the output expression runs successfully.
+
+    For example, the following returns "Get-Process -Name Outlook -Id 123", but "Name" & "Id" parameters cannot be used simultaneously.
+
+    Get-CommandExpression -Command Get-Process -Parameters @{ Name = 'Outlook'; Id = '123' }
+#>
+function Get-CommandExpression {
+    [CmdletBinding(PositionalBinding = $false)]
+    [OutputType([string])]
+    param(
+        [Parameter(ParameterSetName = 'Command', Mandatory)]
+        $Command,
+        [Parameter(ParameterSetName = 'Command', Mandatory)]
+        [hashtable]$Parameters,
+        [Parameter(ParameterSetName = 'Invocation', Mandatory)]
+        [System.Management.Automation.InvocationInfo]
+        $Invocation
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq 'Invocation') {
+        $Command = $Invocation.MyCommand
+        $Parameters = $Invocation.BoundParameters
+    }
+
+    if ($Command -is [string]) {
+        $Command = Get-Command $Command -ErrorAction SilentlyContinue
+
+        if (-not $Command) {
+            Write-Error "Cannot find $Command"
+            return
+        }
+    }
+
+    if ($Command -isnot [System.Management.Automation.CommandInfo]) {
+        Write-Error "Need a CommandInfo for Command paramter"
+        return
+    }
+
+    # It is expected to be passed a FunctionInfo or CmdletInfo. Anything else (such as ScriptInfo) is not really expected while it just returns an empty string
+    if ($Command -isnot [System.Management.Automation.FunctionInfo] -or $Command -isnot [System.Management.Automation.CmdletInfo]) {
+        Write-Verbose "Passed Command is of type $($Command.GetType().FullName)"
+    }
+
+    $sb = New-Object System.Text.StringBuilder -ArgumentList $Command.Name
+
+    foreach ($param in $Parameters.GetEnumerator()) {
+        # Skip if the given paramter name is not available
+        if (-not $Command.Parameters.ContainsKey($param.Key)) {
+            continue
+        }
+
+        $null = $sb.Append(" -$($param.Key)")
+
+        # If this is a Switch parameter, no need to add value
+        if ($Command.Parameters[$param.Key].SwitchParameter) {
+            continue
+        }
+
+        $value = $param.Value
+
+        if ($value -is [string] -and $value.IndexOf(' ') -ge 0) {
+            $value = "'$value'"
+        }
+        elseif ($param.Value -is [System.Collections.ICollection]) {
+            $value = $param.Value -join ', '
+        }
+
+        $null = $sb.Append(" $value")
+    }
+
+    $sb.ToString()
+}
+
+<#
+.SYNOPSIS
     Collect Microsoft Office Outlook related configuration & traces
 .DESCRIPTION
     This will collect different kinds of traces & log files depending on the value specified in the "Component" parameter.
@@ -9807,51 +9894,16 @@ function Collect-OutlookInfo {
         $autoUpdate = Invoke-AutoUpdate
 
         if ($autoUpdate.Success) {
-            $updatedSelf = Get-Command $MyInvocation.MyCommand.Name
+            # Get the list of current parameters that are also available in the updated cmdlet (+ SkipAutoUpdate)
+            $PSBoundParameters.Add('SkipAutoUpdate', $true)
+            $expression = Get-CommandExpression -Command $MyInvocation.MyCommand -Parameters $PSBoundParameters
 
-            # Get the list of current parameters that are also available in the updated cmdlet
-            $params = @{}
-
-            foreach ($_ in $PSBoundParameters.GetEnumerator()) {
-                if ($updatedSelf.Parameters.ContainsKey($_.Key)) {
-                    $params.Add($_.Key, $_.Value)
-                }
-            }
-
-            if ($updatedSelf.Parameters.ContainsKey('SkipAutoUpdate')) {
-                $params.Add('SkipAutoUpdate', $true)
-            }
-
-            $expression = New-Object System.Text.StringBuilder -ArgumentList "$($updatedSelf.Name)"
-
-            foreach ($param in $params.GetEnumerator()) {
-                $null = $expression.Append(" -$($param.Key)")
-
-                # If this is a Switch parameter, no need to add its value
-                if ($updatedSelf.Parameters[$param.Key].SwitchParameter) {
-                    continue
-                }
-
-                if ($null -ne $param.Value) {
-                    $value = $param.Value
-
-                    if ($param.Value -is [string] -and $param.Value.IndexOf(' ') -ge 0) {
-                        # Make sure to use single-quote here because the final expression will be embedded in a string.
-                        $value = "'$value'"
-                    }
-                    elseif ($param.Value -is [System.Collections.ICollection]) {
-                        $value = $param.Value -join ','
-                    }
-
-                    $null = $expression.Append(" $value")
-                }
-            }
-
-            Write-Warning "OutlookTrace.psm1 was auto updated. Continue with the new PowerShell instance"
-            Write-Verbose "New PowerShell instance is going to execute: $expression"
+            Write-Warning "OutlookTrace.psm1 was auto updated. Continuing with a new PowerShell instance"
+            Write-Verbose "New PowerShell instance is going to execute: '$expression'"
 
             $currentProcess = Get-Process -Id $PID
             $powerShellExe = $currentProcess.Path
+            $currentProcess.Dispose()
 
             & $powerShellExe -NoLogo -NoExit -Command "& { Import-Module $PSCommandPath -DisableNameChecking -Force -ErrorAction Stop; $expression}"
             return
@@ -9871,30 +9923,7 @@ function Collect-OutlookInfo {
     Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin: $runAsAdmin"
     Write-Log "Target user: $($targetUser.Name) ($($targetUser.Sid))"
     Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
-
-    $myParameters = New-Object System.Text.StringBuilder
-    $myCommand = Get-Command $MyInvocation.MyCommand.Name
-
-    foreach ($param in $PSBoundParameters.GetEnumerator()) {
-        $null = $myParameters.Append(" -$($param.Key)")
-
-        if ($myCommand.Parameters[$param.Key].SwitchParameter) {
-            continue
-        }
-
-        $value = $param.Value
-
-        if ($value -is [string] -and $value.IndexOf(' ') -ge 0) {
-            $value = "'$value'"
-        }
-        elseif ($param.Value -is [System.Collections.ICollection]) {
-            $value = $param.Value -join ', '
-        }
-
-        $null = $myParameters.Append(" $value")
-    }
-
-    Write-Log "Invocation: $($myCommand.Name)$($myParameters.ToString())"
+    Write-Log "Invocation: $(Get-CommandExpression -Invocation $MyInvocation)"
 
     try {
         # Set thread culture to en-US for consitent logging.
@@ -10242,6 +10271,10 @@ function Collect-OutlookInfo {
             Write-Log "Waiting for the user to stop"
             Write-Host 'Hit enter to stop: ' -NoNewline
             $waitResult = Wait-EnterOrControlC
+
+            if ($waitResult.Key -eq 'Ctrl+C') {
+                Write-Warning "Ctrl+C is detected"
+            }
         }
 
         if (-not $waitResult -or $waitResult.Key -eq 'Enter') {
