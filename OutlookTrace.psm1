@@ -2974,7 +2974,8 @@ function Save-OSConfiguration {
         [Parameter(Mandatory = $true)]
         $Path,
         [Parameter(Mandatory = $true)]
-        $User
+        $User,
+        [System.Threading.CancellationToken]$CancellationToken
     )
 
     if (-not (Test-Path $Path)) {
@@ -3009,6 +3010,10 @@ function Save-OSConfiguration {
         @{ScriptBlock = { whoami.exe /USER }; FileName = 'whoami.txt' }
     } | & {
         process {
+            if ($CancellationToken.IsCancellationRequested) {
+                return
+            }
+
             Invoke-ScriptBlock @_ -Path $Path
         }
     }
@@ -3054,7 +3059,8 @@ function Save-NetworkInfo {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
-        $Path
+        $Path,
+        [Threading.CancellationToken]$CancellationToken
     )
 
     if (-not (Test-Path $Path)) {
@@ -3099,6 +3105,10 @@ function Save-NetworkInfo {
         @{ScriptBlock = { netsh advfirewall monitor show consec rule name=all } }
     } | & {
         process {
+            if ($CancellationToken.IsCancellationRequested) {
+                return
+            }
+
             Invoke-ScriptBlock @_ -Path $Path
         }
     }
@@ -10005,7 +10015,8 @@ function Collect-OutlookInfo {
             $officeModuleInfoTask = Start-Task { param($Path, $CancellationToken) Save-OfficeModuleInfo @PSBoundParameters } -ArgumentList @{ Path = $OfficeDir; CancellationToken = $officeModuleInfoTaskCts.Token }
 
             Write-Log "Starting networkInfoTask"
-            $networkInfoTask = Start-Task { param($Path) Save-NetworkInfo @PSBoundParameters } -ArgumentList $NetworkDir
+            $networkInfoTaskCts = New-Object System.Threading.CancellationTokenSource
+            $networkInfoTask = Start-Task { param($Path, $CancellationToken) Save-NetworkInfo @PSBoundParameters } -ArgumentList @{ Path = $NetworkDir; CancellationToken = $networkInfoTaskCts.Token }
 
             Write-Progress -PercentComplete 20
 
@@ -10013,7 +10024,13 @@ function Collect-OutlookInfo {
             $officeRegistryTask = Start-Task { param($Path, $User) Save-OfficeRegistry @PSBoundParameters } -ArgumentList @{ Path = $RegistryDir; User = $targetUser }
 
             Write-Log "Starting osConfigurationTask"
-            $osConfigurationTask = Start-Task { param($Path, $User) Save-OSConfiguration @PSBoundParameters } -ArgumentList @{ Path = $OSDir; User = $targetUser }
+            $osConfigurationTaskCts = New-Object System.Threading.CancellationTokenSource
+            $osConfigurationTask = Start-Task { param($Path, $User, $CancellationToken) Save-OSConfiguration @PSBoundParameters } `
+                -ArgumentList @{
+                Path              = $OSDir
+                User              = $targetUser
+                CancellationToken = $osConfigurationTaskCts.Token
+            }
 
             Write-Progress -PercentComplete 40
 
@@ -10439,7 +10456,14 @@ function Collect-OutlookInfo {
 
             if ($osConfigurationTask) {
                 Write-Progress -Status 'Saving OS configuration'
+
+                if (-not $startSuccess) {
+                    Write-Log "Canceling osConfigurationTask because startSuccess is false"
+                    $osConfigurationTaskCts.Cancel()
+                }
+
                 $osConfigurationTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
+                $osConfigurationTaskCts.Dispose()
                 Write-Log "osConfigurationTask is complete."
             }
 
@@ -10451,19 +10475,33 @@ function Collect-OutlookInfo {
 
             if ($networkInfoTask) {
                 Write-Progress -Status 'Saving network info'
+
+                if (-not $startSuccess) {
+                    Write-Log "Canceling networkInfoTask because startSuccess is false"
+                    $networkInfoTaskCts.Cancel()
+                }
+
                 $networkInfoTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
+                $networkInfoTaskCts.Dispose()
                 Write-Log "networkInfoTask is complete."
             }
 
             if ($officeModuleInfoTask) {
                 Write-Progress -Status "Saving Office module info"
-                $timeout = [TimeSpan]::FromSeconds(30)
 
-                if (Wait-Task $officeModuleInfoTask -Timeout $timeout) {
-                    Write-Log "officeModuleInfoTask is complete before timeout."
+                if ($startSuccess) {
+                    $timeout = [TimeSpan]::FromSeconds(30)
+
+                    if (Wait-Task $officeModuleInfoTask -Timeout $timeout) {
+                        Write-Log "officeModuleInfoTask is complete before timeout."
+                    }
+                    else {
+                        Write-Log "officeModuleInfoTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
+                        $officeModuleInfoTaskCts.Cancel()
+                    }
                 }
                 else {
-                    Write-Log "officeModuleInfoTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
+                    Write-Log "Canceling officeModuleInfoTask because startSuccess is false"
                     $officeModuleInfoTaskCts.Cancel()
                 }
 
@@ -10474,13 +10512,20 @@ function Collect-OutlookInfo {
 
             if ($gpresultTask) {
                 Write-Progress -Status 'Saving Group Policy'
-                $timeout = [TimeSpan]::FromSeconds(30)
 
-                if (Wait-Task -Task $gpresultTask -Timeout $timeout) {
-                    Write-Log "gpresultTask is complete before timeout"
+                if ($startSuccess) {
+                    $timeout = [TimeSpan]::FromSeconds(30)
+
+                    if (Wait-Task -Task $gpresultTask -Timeout $timeout) {
+                        Write-Log "gpresultTask is complete before timeout"
+                    }
+                    else {
+                        Write-Log "gpresultTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
+                        $gpresultTaskCts.Cancel()
+                    }
                 }
                 else {
-                    Write-Log "gpresultTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
+                    Write-Log "Canceling gpresultTask because startSuccess is false"
                     $gpresultTaskCts.Cancel()
                 }
 
