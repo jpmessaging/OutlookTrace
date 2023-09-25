@@ -9517,7 +9517,8 @@ function Save-GPResult {
         [string]$FileName = 'GPResult',
         [ValidateSet('TEXT', 'HTML', 'XML')]
         [Parameter(Mandatory)]
-        [string]$Format = 'TEXT'
+        [string]$Format = 'TEXT',
+        [Threading.CancellationToken]$CancellationToken
     )
 
     if (-not (Get-Command 'gpresult.exe' -ErrorAction SilentlyContinue)) {
@@ -9565,7 +9566,7 @@ function Save-GPResult {
     $startProcArgs = @{
         ArgumentList = $argList
         WindowStyle  = 'Hidden'
-        Wait         = $true
+        PassThru     = $true
     }
 
     if ($Format -eq 'TEXT') {
@@ -9574,9 +9575,27 @@ function Save-GPResult {
     }
 
     $start = Get-Timestamp
-    Write-Log "Running gpresult.exe $argList"
+    Write-Log "Invoking 'gpresult.exe $argList'"
 
-    Start-Process 'gpresult.exe' @startProcArgs
+    $process = Start-Process 'gpresult.exe' @startProcArgs
+
+    while ($true) {
+        if ($process.WaitForExit(1000)) {
+            # gpresult has finished
+            break
+        }
+
+        # gpresult is still running. If cancellation is requested, bail.
+        if ($CancellationToken.IsCancellationRequested) {
+            Write-Log "Cancel request acknowledged"
+            $process.Kill()
+            break
+        }
+    }
+
+    if ($process) {
+        $process.Dispose()
+    }
 
     $elapsed = Get-Elapsed $start
     Write-Log "gpresult.exe took $elapsed"
@@ -10008,7 +10027,15 @@ function Collect-OutlookInfo {
             }
 
             Write-Log "Starting gpresultTask"
-            $gpresultTask = Start-Task { param ($Path, $User, $Format) Save-GPResult @PSBoundParameters } -ArgumentList @{ Path = $OSDir; User = $targetUser; Format = 'HTML' }
+            $gpresultTaskCts = New-Object System.Threading.CancellationTokenSource
+            $gpresultTask = Start-Task { param ($Path, $User, $Format, $CancellationToken) Save-GPResult @PSBoundParameters } `
+                -ArgumentList @{
+                Path              = $OSDir
+                User              = $targetUser
+                Format            = 'HTML'
+                CancellationToken = $gpresultTaskCts.Token
+            }
+
             Write-Progress -PercentComplete 60
 
             $PSDefaultParameterValues['Invoke-ScriptBlock:ArgumentList'] = @{ User = $targetUser }
@@ -10377,6 +10404,7 @@ function Collect-OutlookInfo {
         if ($hungDumpStarted) {
             $hungDumpCts.Cancel()
             Receive-Task $hungMonitorTask -AutoRemoveTask 2>&1 | Write-Log -Category Error
+            $hungDumpCts.Dispose()
         }
 
         if ($crashDumpStarted) {
@@ -10391,6 +10419,7 @@ function Collect-OutlookInfo {
             Write-Progress -Status "Stopping PSR"
             $psrCts.Cancel()
             Receive-Task $psrTask -AutoRemoveTask 2>&1 | Write-Log -Category Error -PassThru
+            $psrCts.Dispose()
         }
 
         # Wait for the tasks started earlier and save the event logs
@@ -10399,6 +10428,7 @@ function Collect-OutlookInfo {
                 Write-Progress -Status 'Stopping processCaptureTask'
                 $processCaptureTaskCts.Cancel()
                 $processCaptureTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
+                $processCaptureTaskCts.Dispose()
             }
 
             if ($startSuccess) {
@@ -10427,7 +10457,7 @@ function Collect-OutlookInfo {
 
             if ($officeModuleInfoTask) {
                 Write-Progress -Status "Saving Office module info"
-                [TimeSpan]$timeout = [TimeSpan]::FromSeconds(30)
+                $timeout = [TimeSpan]::FromSeconds(30)
 
                 if (Wait-Task $officeModuleInfoTask -Timeout $timeout) {
                     Write-Log "officeModuleInfoTask is complete before timeout."
@@ -10438,12 +10468,24 @@ function Collect-OutlookInfo {
                 }
 
                 $officeModuleInfoTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
+                $officeModuleInfoTaskCts.Dispose()
                 Write-Log "officeRegistryTask is complete."
             }
 
             if ($gpresultTask) {
-                Write-Progress -Status 'Saving GPResult'
+                Write-Progress -Status 'Saving Group Policy'
+                $timeout = [TimeSpan]::FromSeconds(30)
+
+                if (Wait-Task -Task $gpresultTask -Timeout $timeout) {
+                    Write-Log "gpresultTask is complete before timeout"
+                }
+                else {
+                    Write-Log "gpresultTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
+                    $gpresultTaskCts.Cancel()
+                }
+
                 $gpresultTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
+                $gpresultTaskCts.Dispose()
                 Write-Log "gpresultTask is complete."
             }
         }
