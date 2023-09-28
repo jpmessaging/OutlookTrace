@@ -3915,8 +3915,15 @@ function Get-OutlookProfile {
                 # Apply cache mode policy to MAPI accounts
                 $mailAccounts | Merge-CachedModePolicy -CachedModePolicy $cachedModePolicy
 
-                # Create a flattened object for data files.
-                $dataFiles = $storeProviders | Get-DataFile -MailAccounts $mailAccounts
+                # Create a flattened object for data files (mailAccounts could be null if Account Manager is missing CLSID_OlkMail (ED475418-...))
+                $dataFiles = $null
+
+                if ($mailAccounts) {
+                    $dataFiles = $storeProviders | Get-DataFile -MailAccounts $mailAccounts
+                }
+                else {
+                    Write-Log "Profile $profileName does not have mail accounts" -Category Warning
+                }
 
                 [PSCustomObject]@{
                     User           = $User
@@ -8021,7 +8028,7 @@ function Start-ProcessCapture {
                         $err = $($isElevated = Test-ProcessElevated -ProcessId $win32Process.ProcessId) 2>&1
 
                         if ($err) {
-                            $errMsg = "Test-ProcessElevated failed for $($win32Process.Name) (PID: $($win32Process.ProcessId))"
+                            $errMsg = "Test-ProcessElevated failed for $($win32Process.Name) (PID:$($win32Process.ProcessId))"
 
                             # Maybe the process is gone already. In this case, OpenProcess would fail with ERROR_INVALID_PARAMETER (87).
                             if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
@@ -8045,7 +8052,7 @@ function Start-ProcessCapture {
 
                     # For processes specified in NamePattern parameter, save its User & Environment Variables.
                     if ($win32Process.ProcessName -match $NamePattern) {
-                        Write-Log "Found a new instance of $($win32Process.ProcessName) (PID:$($win32Process.ProcessId), Elevated: $isElevated)"
+                        Write-Log "Found a new instance of $($win32Process.ProcessName) (PID:$($win32Process.ProcessId), Elevated:$isElevated)"
 
                         if ($includeUserNameAvailable) {
                             # When not running as admin, Get-Prcess -IncludeUserName generates a non-terminating error, even with "-ErrorAction SilentlyContinue".
