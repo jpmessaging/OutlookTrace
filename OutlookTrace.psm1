@@ -1129,10 +1129,8 @@ Start-Task { Get-ChildItem C:\ } | Receive-Task -AutoRemoveTask
 Note: Receive-Task waits for the task to complete and returns the result (and errors too).
 #>
 function Start-Task {
-    [CmdletBinding()]
+    [CmdletBinding(PositionalBinding = $false)]
     param (
-        # Optional name of task
-        [string]$Name,
         # Command to execute.
         [Parameter(ParameterSetName = 'Command', Mandatory = $true, Position = 0)]
         [string]$Command,
@@ -1144,7 +1142,9 @@ function Start-Task {
         [ScriptBlock]$ScriptBlock,
         # ArgumentList to ScriptBlock
         [Parameter(ParameterSetName = 'Script')]
-        $ArgumentList
+        $ArgumentList,
+        # Optional name of task
+        [string]$Name
     )
 
     if (-not $Script:runspacePool) {
@@ -2994,15 +2994,16 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-InstalledUpdate } }
         @{ScriptBlock = { Get-JoinInformation } }
         @{ScriptBlock = { Get-DeviceJoinStatus }; FileName = 'DeviceJoinStatus.txt' }
-        @{ScriptBlock = { param($user) Get-WebView2 -User $user }; ArgumentList = $User }
-        @{ScriptBlock = { param($user) Get-WinInetProxy -User $user }; ArgumentList = $User }
-        @{ScriptBlock = { param($user) Get-ProxyAutoConfig -User $user }; ArgumentList = $User }
+        @{ScriptBlock = { param($User) Get-WebView2 @PSBoundParameters }; ArgumentList = $User }
+        @{ScriptBlock = { param($User) Get-WinInetProxy @PSBoundParameters }; ArgumentList = $User }
+        @{ScriptBlock = { param($User) Get-ProxyAutoConfig @PSBoundParameters }; ArgumentList = $User }
         @{ScriptBlock = { Get-ImageFileExecutionOptions } }
         @{ScriptBlock = { Get-SessionManager } }
         @{ScriptBlock = { Get-WinSystemLocale } }
         @{ScriptBlock = { Get-AppxPackage } }
         @{ScriptBlock = { Get-SmbMapping } }
         @{ScriptBlock = { Get-AnsiCodePage } }
+        @{ScriptBlock = { param($User) Get-AppContainerRegistryAcl @PSBoundParameters }; ArgumentList = $User }
         @{ScriptBlock = { cmdkey /list } }
 
         # These are just for troubleshooting.
@@ -3129,11 +3130,17 @@ function Invoke-ScriptBlock {
         # Folder to save to
         $Path,
         # File name used for saving
-        [string]$FileName
+        [string]$FileName,
+        # Optional name of ScriptBlock, used for logging
+        [string]$ScriptBlockName
     )
 
     $result = $null
     $start = Get-Timestamp
+
+    if (-not $ScriptBlockName) {
+        $ScriptBlockName = "{$ScriptBlock}"
+    }
 
     # Suppress progress that may be written by the script block
     $savedProgressPreference = $ProgressPreference
@@ -3141,21 +3148,26 @@ function Invoke-ScriptBlock {
 
     try {
         # To redirect error, call operator (&) is used, instead of $ScriptBlock.InvokeReturnAsIs().
-        $err = $($result = & $ScriptBlock @ArgumentList) 2>&1
+        if ($ArgumentList) {
+            $err = $($result = & $ScriptBlock @ArgumentList) 2>&1
+        }
+        else {
+            $err = $($result = & $ScriptBlock) 2>&1
+        }
 
         foreach ($e in $err) {
-            Write-Log "{$ScriptBlock} had a non-terminating error. $($e.ToString())" -ErrorRecord $e -Category Warning
+            Write-Log "$ScriptBlockName had a non-terminating error. $($e.ToString())" -ErrorRecord $e -Category Warning
         }
     }
     catch {
-        Write-Log "{$ScriptBlock} threw a terminating error. $($_.ToString())" -ErrorRecord $_ -Category Error
+        Write-Log "$ScriptBlockName threw a terminating error. $($_.ToString())" -ErrorRecord $_ -Category Error
     }
     finally {
         $ProgressPreference = $savedProgressPreference
     }
 
     $elapsed = Get-Elapsed $start
-    Write-Log "{$ScriptBlock} took $($elapsed.TotalMilliseconds) ms.$(if ($null -eq $result) {" It returned nothing."})"
+    Write-Log "$ScriptBlockName took $($elapsed.TotalMilliseconds) ms.$(if ($null -eq $result) {" It returned nothing."})"
 
     if ($null -eq $result) {
         return
@@ -3549,10 +3561,10 @@ function Get-ProxyAutoConfig {
                 }
                 else {
                     $ec = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-                    $winhttpEc = $ec -as [Win32.WinHttp+Error]
+                    $winhttpError = $ec -as [Win32.WinHttp+Error]
 
-                    if ($winhttpEc) {
-                        Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $winhttpEc ($($winhttpEc.value__)) for connection $($proxy.Connection)"
+                    if ($winhttpError) {
+                        Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $winhttpError ($($winhttpError.value__)) for connection $($proxy.Connection)"
                     }
                     else {
                         Write-Error "WinHttpDetectAutoProxyConfigUrl failed with $ec for connection $($proxy.Connection)"
@@ -9618,6 +9630,42 @@ function Save-GPResult {
     Write-Log "gpresult.exe took $elapsed"
 }
 
+function Get-AppContainerRegistryAcl {
+    [CmdletBinding()]
+    param(
+        [string]$User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    $appContainerPath = Join-Path $userRegRoot 'Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppContainer'
+
+    if (-not (Test-Path $appContainerPath)) {
+        Write-Error "Cannot find $appContainerPath"
+        return
+    }
+
+    $appContainerAcl = Get-Acl $appContainerPath
+
+    # Includde "Mappings" key's ACL if avaialble.
+    $mappingsPath = Join-Path $appContainerPath 'Mappings'
+
+    if (Test-Path $mappingsPath) {
+        $mappingsAcl = Get-Acl $mappingsPath
+    }
+
+    [PSCustomObject]@{
+        User            = $User
+        Path            = $appContainerPath
+        AppContainerAcl = $appContainerAcl
+        MappingsAcl     = $mappingsAcl
+    }
+}
+
 <#
 .SYNOPSIS
 Check if this sript is too old.
@@ -9720,7 +9768,7 @@ function Get-CommandExpression {
         [Parameter(ParameterSetName = 'Command', Mandatory)]
         $Command,
         [Parameter(ParameterSetName = 'Command', Mandatory)]
-        [hashtable]$Parameters,
+        [HashTable]$Parameters,
         [Parameter(ParameterSetName = 'Invocation', Mandatory)]
         [System.Management.Automation.InvocationInfo]
         $Invocation
@@ -10449,14 +10497,14 @@ function Collect-OutlookInfo {
         # Wait for the tasks started earlier and save the event logs
         if ($Component -contains 'Configuration') {
             if ($processCaptureTask) {
-                Write-Progress -Status 'Stopping processCaptureTask'
+                Write-Progress -Status 'Stopping Process capture task'
                 $processCaptureTaskCts.Cancel()
                 $processCaptureTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 $processCaptureTaskCts.Dispose()
             }
 
             if ($startSuccess) {
-                Write-Progress -Status 'Saving event logs'
+                Write-Progress -Status 'Saving Event logs'
                 Save-EventLog -Path $EventDir 2>&1 | Write-Log -Category Error
                 Invoke-ScriptBlock { param($User, $Path, $All) Save-MSIPC @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = $MSIPCDir; All = $true } 2>&1 | Write-Log -Category Error
             }
@@ -10481,7 +10529,7 @@ function Collect-OutlookInfo {
             }
 
             if ($networkInfoTask) {
-                Write-Progress -Status 'Saving network info'
+                Write-Progress -Status 'Saving Network info'
 
                 if (-not $startSuccess) {
                     Write-Log "Canceling networkInfoTask because startSuccess is false"
@@ -10609,4 +10657,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
