@@ -937,18 +937,23 @@ function Write-Log {
 
         # Delta time is relative to thread.
         # Each thread has it's own copy of lastLogTime now.
-        [TimeSpan]$delta = 0;
+        [TimeSpan]$delta = 0
+
         if ($Script:lastLogTime) {
             $delta = $currentTime.Subtract($Script:lastLogTime)
         }
 
         $caller = Get-PSCallStack | Select-Object -Skip 1 | & {
             process {
-                if (-not $_.Command.StartsWith('<ScriptBlock><Process>')) {
+                if (-not $_.Command.StartsWith('<ScriptBlock>')) {
                     $_.Command
                 }
             }
         } | Select-Object -First 1
+
+        if (-not $caller) {
+            $caller = '<ScriptBlock>'
+        }
 
         # Format as CSV:
         $sb = New-Object System.Text.StringBuilder
@@ -1050,7 +1055,6 @@ function Open-TaskRunspace {
         return
     }
 
-
     Write-Log "Setting up a Runspace Pool with an initialSessionState. MinRunspaces: $MinRunspaces, MaxRunspaces: $MaxRunspaces."
     $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
 
@@ -1134,14 +1138,10 @@ function Start-Task {
         # Command to execute.
         [Parameter(ParameterSetName = 'Command', Mandatory = $true, Position = 0)]
         [string]$Command,
-        # Parameters (name and value) to the command.
-        [Parameter(ParameterSetName = 'Command')]
-        $Parameters,
         # ScriptBlock to execute.
-        [Parameter(ParameterSetName = 'Script', Mandatory = $true, Position = 0)]
+        [Parameter(ParameterSetName = 'ScriptBlock', Mandatory = $true, Position = 0)]
         [ScriptBlock]$ScriptBlock,
-        # ArgumentList to ScriptBlock
-        [Parameter(ParameterSetName = 'Script')]
+        # ArgumentList (HashTable or list of argument values)
         $ArgumentList,
         # Optional name of task
         [string]$Name
@@ -1156,31 +1156,49 @@ function Start-Task {
     [PowerShell]$ps = [PowerShell]::Create()
     $ps.RunspacePool = $Script:runspacePool
 
-    switch -Wildcard ($PSCmdlet.ParameterSetName) {
+    switch ($PSCmdlet.ParameterSetName) {
         'Command' {
             $null = $ps.AddCommand($Command)
-            foreach ($key in $Parameters.Keys) {
-                $null = $ps.AddParameter($key, $Parameters[$key])
-            }
             break
         }
 
-        'Script' {
+        'ScriptBlock' {
             $null = $ps.AddScript($ScriptBlock)
-
-            if ($ArgumentList -is [System.Collections.IList] -or $ArgumentList -is [System.Collections.IDictionary]) {
-                $null = $ps.AddParameters($ArgumentList)
-            }
-            else {
-                $null = $ps.AddArgument($ArgumentList)
-            }
-
             break
+        }
+    }
+
+    if ($ArgumentList -is [System.Collections.IDictionary]) {
+        $null = $ps.AddParameters($ArgumentList)
+    }
+    else {
+        foreach ($arg in $ArgumentList) {
+            $null = $ps.AddArgument($arg)
         }
     }
 
     # Start the command
     $ar = $ps.BeginInvoke()
+
+    # Give a name to this task
+    if (-not $Name) {
+        if ($Command) {
+            $Name = $Command
+        }
+        else {
+            # If ScriptBlock is from a function, its Ast.Name is the function name
+            $Name = $ScriptBlock.Ast.Name
+
+            if (-not $Name) {
+                if ($ScriptBlock.Ast) {
+                    $Name = $ScriptBlock.Ast.ToString()
+                }
+                else {
+                    $Name = "{$ScriptBlock}"
+                }
+            }
+        }
+    }
 
     [PSCustomObject]@{
         AsyncResult  = $ar
@@ -1232,7 +1250,7 @@ function Format-TaskError {
         [switch]$Terminating
     )
 
-    $msg = New-Object System.Text.StringBuilder "Task $(if ($Task.Name) { $Task.Name } else { "{$($Task.ScriptBlock)}" }) had a $(if (-not $Terminating) {'non-'})terminating error "
+    $msg = New-Object System.Text.StringBuilder "Task $($Task.Name) had a $(if (-not $Terminating) {'non-'})terminating error "
     $null = $msg.Append($ErrorRecord.ScriptStackTrace.Split([System.Environment]::NewLine)[0]).Append('; ')
 
     if ($ErrorRecord.ErrorDetails.Message) {
@@ -1356,7 +1374,7 @@ function Test-ProcessElevated {
             $debugPrivilegeEnabled = $true
         }
         catch {
-            Write-Log -Message "EnterDebugMode failed" -ErrorRecord $_ -Category Warning
+            # Write-Log -Message "EnterDebugMode failed" -ErrorRecord $_ -Category Warning
         }
     }
 
@@ -2351,7 +2369,7 @@ function Start-PSR {
     # https://stackoverflow.com/questions/10262231/obtaining-exitcode-using-start-process-and-waitforexit-instead-of-wait/23797762#23797762
     $null = $process.Handle
 
-    Write-Log "PSR (PID: $($process.Id)) started $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
+    Write-Log "PSR (PID:$($process.Id)) started $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
 
     [PSCustomObject]@{
         Process = $process
@@ -2373,7 +2391,7 @@ function Stop-PSR {
             # 1. The actual process has exited already, but System.Diagnostics.Process has not been disposed yet.
             # 2. System.Diagnostics.Process has been disposed (i.e. invalid input). WaitForExit() throws an exception "No process is associated with this object".
             if ($currentInstance.WaitForExit(0)) {
-                Write-Error "psr.exe (PID: $($currentInstance.Id)) has already exited. ExitTime: $($currentInstance.ExitTime), ExitCode: $($currentInstance.ExitCode)"
+                Write-Error "psr.exe (PID:$($currentInstance.Id)) has already exited. ExitTime:$($currentInstance.ExitTime), ExitCode:$($currentInstance.ExitCode)"
                 $currentInstance.Dispose()
                 return
             }
@@ -2396,7 +2414,7 @@ function Stop-PSR {
         }
         elseif ($processes.Count -gt 1) {
             # Unexpected to find multiple psr.exe instances.
-            Write-Log "There are $($processes.Count) instances of psr.exe (PID: $($processes.ID -join ','))"
+            Write-Log "There are $($processes.Count) instances of psr.exe (PID:$($processes.ID -join ','))"
             $processes | ForEach-Object { if ($_.Dispose) { $_.Dispose() } }
             return
         }
@@ -2412,7 +2430,7 @@ function Stop-PSR {
 
     # Do not use Wait-Process here because it can fail with Access denied when running as non-admin
     $currentInstance.WaitForExit()
-    Write-Log "PSR (PID: $($currentInstance.Id)) is stopped. ExitCode: $($currentInstance.ExitCode)"
+    Write-Log "PSR (PID:$($currentInstance.Id)) is stopped. ExitCode:$($currentInstance.ExitCode)"
 
     if ($currentInstance.Dispose) {
         $currentInstance.Dispose()
@@ -3130,16 +3148,21 @@ function Invoke-ScriptBlock {
         # Folder to save to
         $Path,
         # File name used for saving
-        [string]$FileName,
-        # Optional name of ScriptBlock, used for logging
-        [string]$ScriptBlockName
+        [string]$FileName
     )
 
     $result = $null
     $start = Get-Timestamp
 
-    if (-not $ScriptBlockName) {
-        $ScriptBlockName = "{$ScriptBlock}"
+    $scriptBlockName = $ScriptBlock.Ast.Name
+
+    if (-not $scriptBlockName) {
+        if ($ScriptBlock.Ast) {
+            $scriptBlockName = $ScriptBlock.Ast.ToString()
+        }
+        else {
+            $scriptBlockName = "{$ScriptBlock}"
+        }
     }
 
     # Suppress progress that may be written by the script block
@@ -3156,18 +3179,18 @@ function Invoke-ScriptBlock {
         }
 
         foreach ($e in $err) {
-            Write-Log "$ScriptBlockName had a non-terminating error. $($e.ToString())" -ErrorRecord $e -Category Warning
+            Write-Log "$scriptBlockName had a non-terminating error. $($e.ToString())" -ErrorRecord $e -Category Warning
         }
     }
     catch {
-        Write-Log "$ScriptBlockName threw a terminating error. $($_.ToString())" -ErrorRecord $_ -Category Error
+        Write-Log "$scriptBlockName threw a terminating error. $($_.ToString())" -ErrorRecord $_ -Category Error
     }
     finally {
         $ProgressPreference = $savedProgressPreference
     }
 
     $elapsed = Get-Elapsed $start
-    Write-Log "$ScriptBlockName took $($elapsed.TotalMilliseconds) ms.$(if ($null -eq $result) {" It returned nothing."})"
+    Write-Log "$scriptBlockName took $($elapsed.TotalMilliseconds) ms.$(if ($null -eq $result) {" It returned nothing."})"
 
     if ($null -eq $result) {
         return
@@ -6891,7 +6914,7 @@ function Save-HungDump {
     try {
         while ($true) {
             if ($CancellationToken.IsCancellationRequested) {
-                Write-Log "Cancel request acknowledged."
+                Write-Log "Cancel request acknowledged"
                 return
             }
 
@@ -7947,7 +7970,7 @@ function Start-ProcessMonitoring {
         [Parameter(Mandatory = $true)]
         # Name of processes to monitor
         [string[]]$Name,
-        [System.Threading.CancellationToken]$CancelToken,
+        [System.Threading.CancellationToken]$CancellationToken,
         [TimeSpan]$Interval = [TimeSpan]::FromSeconds(3)
     )
 
@@ -7979,8 +8002,8 @@ function Start-ProcessMonitoring {
             Save-Process -Path $Path -Name $Name
         }
 
-        if ($CancelToken.IsCancellationRequested) {
-            Write-Log "Cancel request acknowledged."
+        if ($CancellationToken.IsCancellationRequested) {
+            Write-Log "Cancel request acknowledged"
             return
         }
 
@@ -8004,7 +8027,7 @@ function Start-ProcessCapture {
         [Parameter(Mandatory = $true)]
         # Regex Pattern of process names to fetch details
         [string]$NamePattern,
-        [System.Threading.CancellationToken]$CancelToken,
+        [System.Threading.CancellationToken]$CancellationToken,
         [TimeSpan]$Interval = [TimeSpan]::FromSeconds(1),
         # This is just for testing
         [Switch]$EnablePerfCheck
@@ -8014,8 +8037,8 @@ function Start-ProcessCapture {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
-    # PowerShell 4's Get-Process has -IncludeUserName parameter. Use it if available; otherwise fall back to WMI.
-    $includeUserNameAvailable = $null -ne (Get-Command -Name 'Get-Process' -ParameterName 'IncludeUserName' -ErrorAction SilentlyContinue)
+    # PowerShell 4's Get-Process has -IncludeUserName parameter. Use it if available (must be Elevated); otherwise fall back to WMI.
+    $includeUserNameAvailable = ($null -ne (Get-Command -Name 'Get-Process' -ParameterName 'IncludeUserName' -ErrorAction SilentlyContinue)) -and (Test-RunAsAdministrator)
 
     # Using a Hash table is much faster than Where-Object.
     $hashSet = @{}
@@ -8110,8 +8133,8 @@ function Start-ProcessCapture {
             Write-Log "Processing Win32_Process took $($elapsed.TotalMilliseconds) ms"
         }
 
-        if ($CancelToken.IsCancellationRequested) {
-            Write-Log "Cancel request acknowledged."
+        if ($CancellationToken.IsCancellationRequested) {
+            Write-Log "Cancel request acknowledged"
             break
         }
 
@@ -8130,7 +8153,7 @@ function Start-PsrMonitor {
     [CmdletBinding()]
     param(
         [string]$Path,
-        [System.Threading.CancellationToken]$CancelToken,
+        [System.Threading.CancellationToken]$CancellationToken,
         [TimeSpan]$WaitInterval,
         [System.Threading.EventWaitHandle]$IsStartedEvent,
         [bool]$Circular
@@ -8139,7 +8162,7 @@ function Start-PsrMonitor {
     while ($true) {
         $startResult = Start-PSR -Path $Path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')"
         $null = $IsStartedEvent.Set()
-        $canceled = $cancelToken.WaitHandle.WaitOne($WaitInterval)
+        $canceled = $CancellationToken.WaitHandle.WaitOne($WaitInterval)
         Stop-PSR -StartResult $startResult
 
         if ($canceled) {
@@ -8178,12 +8201,14 @@ function Start-HungMonitor {
         $Path,
         [TimeSpan]$Timeout,
         [int]$DumpCount,
-        $CancelToken,
+        $CancellationToken,
         $Name,
         [System.Threading.EventWaitHandle]$IsStartedEvent
     )
 
-    $null = $IsStartedEvent.Set()
+    if ($IsStartedEvent) {
+        $null = $IsStartedEvent.Set()
+    }
 
     # Key: Process Hash, Value: true/false for "need to log".
     $procCache = @{}
@@ -8192,7 +8217,7 @@ function Start-HungMonitor {
     while ($true) {
         # Wait for the target process ($Name) to come live.
         while ($true) {
-            if ($CancelToken.IsCancellationRequested) {
+            if ($CancellationToken.IsCancellationRequested) {
                 return
             }
 
@@ -8228,8 +8253,8 @@ function Start-HungMonitor {
             Start-Sleep -Seconds 2
         }
 
-        Write-Log "hungMonitorTask has found $Name (PID $targetPid). Starting hung window monitoring."
-        Save-HungDump -Path $Path -ProcessId $targetPid -DumpCount $DumpCount -TimeoutSecond $Timeout.TotalSeconds -CancellationToken $CancelToken 2>&1 | Write-Log -Category Error -PassThru
+        Write-Log "hungMonitorTask has found $Name (PID:$targetPid). Starting hung window monitoring."
+        Save-HungDump -Path $Path -ProcessId $targetPid -DumpCount $DumpCount -TimeoutSecond $Timeout.TotalSeconds -CancellationToken $CancellationToken 2>&1 | Write-Log -Category Error -PassThru
     }
 }
 
@@ -9717,7 +9742,7 @@ function Wait-EnterOrControlC {
                     $detectedKey = 'Enter'
                 }
                 elseif (($keyInfo.Modifiers -band [ConsoleModifiers]'Control') -and ($keyInfo.Key -eq [ConsoleKey]::C)) {
-                    Write-Log "Ctrl+C is detected"
+                    Write-Log "Ctrl+C is detected" -Category Error
                     $detectedKey = 'Ctrl+C'
                 }
 
@@ -10065,22 +10090,35 @@ function Collect-OutlookInfo {
             Write-Progress -PercentComplete 0
 
             # First start tasks that might take a while.
-            Write-Log "Starting officeModuleInfoTask"
+            # Note: I could use ${Function:***}, but wrapping in a script block allows Write-Log to find the actual function name.
+            Write-Log "Starting OfficeModuleInfoTask"
             $officeModuleInfoTaskCts = New-Object System.Threading.CancellationTokenSource
-            $officeModuleInfoTask = Start-Task { param($Path, $CancellationToken) Save-OfficeModuleInfo @PSBoundParameters } -ArgumentList @{ Path = $OfficeDir; CancellationToken = $officeModuleInfoTaskCts.Token }
+            $officeModuleInfoTask = Start-Task -Name 'OfficeModuleInfoTask' -ScriptBlock { param($Path, $CancellationToken) Save-OfficeModuleInfo @PSBoundParameters } `
+                -ArgumentList @{
+                Path              = $OfficeDir
+                CancellationToken = $officeModuleInfoTaskCts.Token
+            }
 
-            Write-Log "Starting networkInfoTask"
+            Write-Log "Starting NetworkInfoTask"
             $networkInfoTaskCts = New-Object System.Threading.CancellationTokenSource
-            $networkInfoTask = Start-Task { param($Path, $CancellationToken) Save-NetworkInfo @PSBoundParameters } -ArgumentList @{ Path = $NetworkDir; CancellationToken = $networkInfoTaskCts.Token }
+            $networkInfoTask = Start-Task -Name 'NetworkInfoTask' -ScriptBlock { param($Path, $CancellationToken) Save-NetworkInfo @PSBoundParameters } `
+                -ArgumentList @{
+                Path              = $NetworkDir
+                CancellationToken = $networkInfoTaskCts.Token
+            }
 
             Write-Progress -PercentComplete 20
 
-            Write-Log "Starting officeRegistryTask"
-            $officeRegistryTask = Start-Task { param($Path, $User) Save-OfficeRegistry @PSBoundParameters } -ArgumentList @{ Path = $RegistryDir; User = $targetUser }
+            Write-Log "Starting OfficeRegistryTask"
+            $officeRegistryTask = Start-Task -Name 'OfficeRegistryTask' -ScriptBlock { param($Path, $User) Save-OfficeRegistry @PSBoundParameters } `
+                -ArgumentList @{
+                Path = $RegistryDir
+                User = $targetUser
+            }
 
-            Write-Log "Starting osConfigurationTask"
+            Write-Log "Starting OSConfigurationTask"
             $osConfigurationTaskCts = New-Object System.Threading.CancellationTokenSource
-            $osConfigurationTask = Start-Task { param($Path, $User, $CancellationToken) Save-OSConfiguration @PSBoundParameters } `
+            $osConfigurationTask = Start-Task -Name 'OSConfigurationTask' -ScriptBlock { param($Path, $User, $CancellationToken) Save-OSConfiguration @PSBoundParameters } `
                 -ArgumentList @{
                 Path              = $OSDir
                 User              = $targetUser
@@ -10089,18 +10127,18 @@ function Collect-OutlookInfo {
 
             Write-Progress -PercentComplete 40
 
-            Write-Log "Starting processCaptureTask"
+            Write-Log "Starting ProcessCaptureTask"
             $processCaptureTaskCts = New-Object System.Threading.CancellationTokenSource
-            $processCaptureTask = Start-Task { param ($Path, $NamePattern, $CancelToken) Start-ProcessCapture @PSBoundParameters } `
+            $processCaptureTask = Start-Task -Name 'ProcessCaptureTask' -ScriptBlock { param($Path, $NamePattern, $CancellationToken) Start-ProcessCapture @PSBoundParameters } `
                 -ArgumentList @{
-                Path        = $OSDir
-                NamePattern = 'outlook|fiddler|explorer|backgroundTaskHost'
-                CancelToken = $processCaptureTaskCts.Token
+                Path              = $OSDir
+                NamePattern       = 'outlook|fiddler|explorer|backgroundTaskHost'
+                CancellationToken = $processCaptureTaskCts.Token
             }
 
-            Write-Log "Starting gpresultTask"
+            Write-Log "Starting GPResultTask"
             $gpresultTaskCts = New-Object System.Threading.CancellationTokenSource
-            $gpresultTask = Start-Task { param ($Path, $User, $Format, $CancellationToken) Save-GPResult @PSBoundParameters } `
+            $gpresultTask = Start-Task -Name 'GPResultTask' -ScriptBlock { param($Path, $User, $Format, $CancellationToken) Save-GPResult @PSBoundParameters } `
                 -ArgumentList @{
                 Path              = $OSDir
                 User              = $targetUser
@@ -10201,23 +10239,21 @@ function Collect-OutlookInfo {
             $psrProcesses = @(Get-Process psr -ErrorAction SilentlyContinue)
 
             if ($psrProcesses.Count -gt 0) {
-                Write-Error "PSR is already running (PID: $($psrProcesses.ID -join ',')).`nPlease stop PSR first and run again."
+                Write-Error "PSR is already running (PID:$($psrProcesses.ID -join ',')).`nPlease stop PSR first and run again."
                 return
             }
 
             $psrCts = New-Object System.Threading.CancellationTokenSource
             $psrStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
-            Write-Log "Starting a PSR task. PsrRecycleInterval: $PsrRecycleInterval"
+            Write-Log "Starting PSRTask. PsrRecycleInterval:$PsrRecycleInterval"
 
-            # Could use ${Function:Start-PsrMonitor} directly for a scriptblock, but for a better logging, invoke via a forwarding scriptblock.
-            $psrTask = Start-Task -Name 'PsrTask' `
-                -ScriptBlock { param($Path, $CancelToken, $WaitInterval, $IsStartedEvent, $Circular) Start-PsrMonitor @PSBoundParameters } `
+            $psrTask = Start-Task -Name 'PSRTask' -ScriptBlock { param($Path, $CancellationToken, $WaitInterval, $IsStartedEvent, $Circular) Start-PsrMonitor @PSBoundParameters } `
                 -ArgumentList @{
-                Path           = Join-Path $tempPath 'PSR'
-                CancelToken    = $psrCts.Token
-                WaitInterval   = $PsrRecycleInterval
-                IsStartedEvent = $psrStartedEvent
-                Circular       = $LogFileMode -eq 'Circular'
+                Path              = Join-Path $tempPath 'PSR'
+                CancellationToken = $psrCts.Token
+                WaitInterval      = $PsrRecycleInterval
+                IsStartedEvent    = $psrStartedEvent
+                Circular          = $LogFileMode -eq 'Circular'
             }
 
             $null = $psrStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan)
@@ -10304,20 +10340,19 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'HungDump') {
-            Write-Progress -Status 'Starting HungDump monitoring'
+            Write-Progress -Status 'Starting HungMonitorTask'
             $hungDumpCts = New-Object System.Threading.CancellationTokenSource
             $monitorStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
-            Write-Log "Starting HungMonitorTask. HungMonitorTarget: $HungMonitorTarget, HungTimeout: $HungTimeout"
+            Write-Log "Starting HungMonitorTask. HungMonitorTarget:$HungMonitorTarget, HungTimeout:$HungTimeout"
 
-            $hungMonitorTask = Start-Task -Name 'HungMonitorTask' `
-                -ScriptBlock { param($Path, $Timeout, $DumpCount, $CancelToken, $Name, $IsStartedEvent) Start-HungMonitor @PSBoundParameters } `
+            $hungMonitorTask = Start-Task -Name 'HungMonitorTask' -ScriptBlock { param($Path, $Timeout, $DumpCount, $CancellationToken, $Name, $IsStartedEvent) Start-HungMonitor @PSBoundParameters } `
                 -ArgumentList @{
-                Path           = Join-Path $tempPath 'HungDump'
-                Timeout        = $HungTimeout
-                DumpCount      = $MaxHungDumpCount
-                CancelToken    = $hungDumpCts.Token
-                Name           = $HungMonitorTarget
-                IsStartedEvent = $monitorStartedEvent
+                Path              = Join-Path $tempPath 'HungDump'
+                Timeout           = $HungTimeout
+                DumpCount         = $MaxHungDumpCount
+                CancellationToken = $hungDumpCts.Token
+                Name              = $HungMonitorTarget
+                IsStartedEvent    = $monitorStartedEvent
             }
 
             $null = $monitorStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan)
@@ -10501,6 +10536,7 @@ function Collect-OutlookInfo {
                 $processCaptureTaskCts.Cancel()
                 $processCaptureTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 $processCaptureTaskCts.Dispose()
+                Write-Log "$($processCaptureTask.Name) is complete"
             }
 
             if ($startSuccess) {
@@ -10519,13 +10555,13 @@ function Collect-OutlookInfo {
 
                 $osConfigurationTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 $osConfigurationTaskCts.Dispose()
-                Write-Log "osConfigurationTask is complete."
+                Write-Log "$($osConfigurationTask.Name) is complete"
             }
 
             if ($officeRegistryTask) {
                 Write-Progress -Status 'Saving Office Registry'
                 $officeRegistryTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
-                Write-Log "officeRegistryTask is complete."
+                Write-Log "$($officeRegistryTask.Name) is complete"
             }
 
             if ($networkInfoTask) {
@@ -10538,7 +10574,7 @@ function Collect-OutlookInfo {
 
                 $networkInfoTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 $networkInfoTaskCts.Dispose()
-                Write-Log "networkInfoTask is complete."
+                Write-Log "$($networkInfoTask.Name) is complete"
             }
 
             if ($officeModuleInfoTask) {
@@ -10548,21 +10584,21 @@ function Collect-OutlookInfo {
                     $timeout = [TimeSpan]::FromSeconds(30)
 
                     if (Wait-Task $officeModuleInfoTask -Timeout $timeout) {
-                        Write-Log "officeModuleInfoTask is complete before timeout."
+                        Write-Log "$($officeModuleInfoTask.Name) is complete before timeout."
                     }
                     else {
-                        Write-Log "officeModuleInfoTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
+                        Write-Log "$($officeModuleInfoTask.Name) timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
                         $officeModuleInfoTaskCts.Cancel()
                     }
                 }
                 else {
-                    Write-Log "Canceling officeModuleInfoTask because startSuccess is false"
+                    Write-Log "Canceling $($officeModuleInfoTask.Name) because startSuccess is false"
                     $officeModuleInfoTaskCts.Cancel()
                 }
 
                 $officeModuleInfoTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 $officeModuleInfoTaskCts.Dispose()
-                Write-Log "officeRegistryTask is complete."
+                Write-Log "$($officeRegistryTask.Name) is complete"
             }
 
             if ($gpresultTask) {
@@ -10572,21 +10608,21 @@ function Collect-OutlookInfo {
                     $timeout = [TimeSpan]::FromSeconds(30)
 
                     if (Wait-Task -Task $gpresultTask -Timeout $timeout) {
-                        Write-Log "gpresultTask is complete before timeout"
+                        Write-Log "$($gpresultTask.Name) is complete before timeout"
                     }
                     else {
-                        Write-Log "gpresultTask timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
+                        Write-Log "$($gpresultTask.Name) timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
                         $gpresultTaskCts.Cancel()
                     }
                 }
                 else {
-                    Write-Log "Canceling gpresultTask because startSuccess is false"
+                    Write-Log "Canceling $($gpresultTask.Name) because startSuccess is false"
                     $gpresultTaskCts.Cancel()
                 }
 
                 $gpresultTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 $gpresultTaskCts.Dispose()
-                Write-Log "gpresultTask is complete."
+                Write-Log "$($gpresultTask.Name) is complete"
             }
         }
 
