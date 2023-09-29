@@ -8060,7 +8060,12 @@ function Start-ProcessCapture {
                     $isElevated = $null
 
                     if ($win32Process.ProcessId -gt 4) {
-                        $err = $($isElevated = Test-ProcessElevated -ProcessId $win32Process.ProcessId) 2>&1
+                        try {
+                            $err = $($isElevated = Test-ProcessElevated -ProcessId $win32Process.ProcessId) 2>&1
+                        }
+                        catch {
+                            $err = $_
+                        }
 
                         if ($err) {
                             $errMsg = "Test-ProcessElevated failed for $($win32Process.Name) (PID:$($win32Process.ProcessId))"
