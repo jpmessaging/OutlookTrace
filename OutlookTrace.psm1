@@ -943,6 +943,7 @@ function Write-Log {
             $delta = $currentTime.Subtract($Script:lastLogTime)
         }
 
+        $caller = '<ScriptBlock>'
         $caller = Get-PSCallStack | Select-Object -Skip 1 | & {
             process {
                 if (-not $_.Command.StartsWith('<ScriptBlock>')) {
@@ -950,10 +951,6 @@ function Write-Log {
                 }
             }
         } | Select-Object -First 1
-
-        if (-not $caller) {
-            $caller = '<ScriptBlock>'
-        }
 
         # Format as CSV:
         $sb = New-Object System.Text.StringBuilder
@@ -1141,7 +1138,7 @@ function Start-Task {
         # ScriptBlock to execute.
         [Parameter(ParameterSetName = 'ScriptBlock', Mandatory = $true, Position = 0)]
         [ScriptBlock]$ScriptBlock,
-        # ArgumentList (HashTable or list of argument values)
+        # ArgumentList (Hashtable or list of argument values)
         $ArgumentList,
         # Optional name of task
         [string]$Name
@@ -3012,17 +3009,19 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-InstalledUpdate } }
         @{ScriptBlock = { Get-JoinInformation } }
         @{ScriptBlock = { Get-DeviceJoinStatus }; FileName = 'DeviceJoinStatus.txt' }
-        @{ScriptBlock = { param($User) Get-WebView2 @PSBoundParameters }; ArgumentList = $User }
-        @{ScriptBlock = { param($User) Get-WinInetProxy @PSBoundParameters }; ArgumentList = $User }
-        @{ScriptBlock = { param($User) Get-ProxyAutoConfig @PSBoundParameters }; ArgumentList = $User }
         @{ScriptBlock = { Get-ImageFileExecutionOptions } }
         @{ScriptBlock = { Get-SessionManager } }
         @{ScriptBlock = { Get-WinSystemLocale } }
         @{ScriptBlock = { Get-AppxPackage } }
         @{ScriptBlock = { Get-SmbMapping } }
         @{ScriptBlock = { Get-AnsiCodePage } }
-        @{ScriptBlock = { param($User) Get-AppContainerRegistryAcl @PSBoundParameters }; ArgumentList = $User }
-        @{ScriptBlock = { cmdkey /list } }
+        @{ScriptBlock = { cmdkey /list }; FileName = 'cmdkey.txt' }
+
+        $userArg = @{ User = $User }
+        @{ScriptBlock = { param($User) Get-WebView2 @PSBoundParameters }; ArgumentList = $userArg }
+        @{ScriptBlock = { param($User) Get-WinInetProxy @PSBoundParameters }; ArgumentList = $userArg }
+        @{ScriptBlock = { param($User) Get-ProxyAutoConfig @PSBoundParameters }; ArgumentList = $userArg }
+        @{ScriptBlock = { param($User) Get-AppContainerRegistryAcl @PSBoundParameters }; ArgumentList = $userArg }
 
         # These are just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
@@ -3145,7 +3144,7 @@ function Invoke-ScriptBlock {
         [Parameter(Mandatory = $true, Position = 0)]
         [ScriptBlock]$ScriptBlock,
         $ArgumentList,
-        # Folder to save to
+        # Destination folder path
         $Path,
         # File name used for saving
         [string]$FileName
@@ -3165,6 +3164,11 @@ function Invoke-ScriptBlock {
         }
     }
 
+    # Wrap is an array in case a single object is passed as ArgumentList (otherwise, splatting does not work as expected)
+    if ($null -ne $ArgumentList -and $ArgumentList -isnot [System.Collections.ICollection]) {
+        $ArgumentList = @($ArgumentList)
+    }
+
     # Suppress progress that may be written by the script block
     $savedProgressPreference = $ProgressPreference
     $ProgressPreference = "SilentlyContinue";
@@ -3179,11 +3183,11 @@ function Invoke-ScriptBlock {
         }
 
         foreach ($e in $err) {
-            Write-Log "$scriptBlockName had a non-terminating error. $($e.ToString())" -ErrorRecord $e -Category Warning
+            Write-Log "$scriptBlockName $(if ($ArgumentList) { "with $(ConvertFrom-ArgumentList $ArgumentList) " })had a non-terminating error. $e" -ErrorRecord $e -Category Warning
         }
     }
     catch {
-        Write-Log "$scriptBlockName threw a terminating error. $($_.ToString())" -ErrorRecord $_ -Category Error
+        Write-Log "$scriptBlockName $(if ($ArgumentList) { "with $(ConvertFrom-ArgumentList $ArgumentList) " })threw a terminating error. $_" -ErrorRecord $_ -Category Error
     }
     finally {
         $ProgressPreference = $savedProgressPreference
@@ -3202,40 +3206,46 @@ function Invoke-ScriptBlock {
     }
 
     # If Path is given, save the result.
-    $exportAsXml = $true
+    if (-not $FileName) {
+        # Decide the file name.
+        # 1. It the ScriptBlock has FunctionDefinitionAst, use its Name (that is, the function name)
+        # 2. Otherwise, search the first statement from ProcessBlock -> EndBlock -> BeginBlock
+        # Note that a simple script block such as '{ Get-Foo }' has only EndBlock.
+        # When the command type is Application (e.g, netsh), use the entire statement as the file name (so that command with different args are saved as indivisual files)
+        # This is not perfect but if the scriptblock is more complicated, caller should supply FileName parameter.
+        $commandName = $ScriptBlock.Ast.Name
 
-    if ($FileName) {
-        if ([IO.Path]::GetExtension($FileName) -ne '.xml') {
-            $exportAsXml = $false
+        if (-not $commandName) {
+            # Get the first statement
+            $statement = & {
+                $ScriptBlock.Ast.ProcessBlock
+                $ScriptBlock.Ast.EndBlock
+                $ScriptBlock.Ast.BeginBlock
+            } | & {
+                process {
+                    if ($_) {
+                        $_.Statements[0].Extent.Text
+                    }
+                }
+            } | Select-Object -First 1
         }
-    }
-    else {
-        # Decide the filename & export method based on the command type
-        $sb = $ScriptBlock.ToString()
-        $Command = ([RegEx]::Match($sb, '\w+-\w+')).Value
 
-        if (-not $Command) {
-            $Command = $sb
+        $commandName = ([RegEx]::Match($statement, '[\w-\.]+')).Value.Trim()
+
+        if ($commandName) {
+            if ($command = Get-Command $commandName -ErrorAction SilentlyContinue) {
+                if ($command.CommandType -eq 'Application') {
+                    $FileName = $statement.Replace('/', '-') + ".txt"
+                }
+                else {
+                    $FileName = $command.Noun + '.xml'
+                }
+            }
         }
 
-        $Command = $Command.Trim()
-
-        if ($Command.IndexOf(' ') -ge 0) {
-            $commandName = $Command.SubString(0, $Command.IndexOf(' '))
-        }
-        else {
-            $commandName = $Command
-        }
-
-        $cmd = Get-Command $commandName -ErrorAction SilentlyContinue
-
-        if ($cmd.CommandType -eq 'Application') {
-            # To be more strict, I could use [System.IO.Path]::GetInvalidFileNameChars(). But it's ok for now.
-            $FileName = $Command.Replace('/', '-') + ".txt"
-            $exportAsXml = $false
-        }
-        else {
-            $FileName = $commandName.SubString($commandName.IndexOf('-') + 1) + ".xml"
+        if (-not $FileName) {
+            $FileName = [Guid]::NewGuid().ToString() + ".xml"
+            Write-Log "Cannot determine command name from $scriptBlockName. Saving with a random name $FileName" -Category Error
         }
     }
 
@@ -3243,7 +3253,7 @@ function Invoke-ScriptBlock {
         $null = New-Item $Path -ItemType Directory -ErrorAction SilentlyContinue
     }
 
-    if ($exportAsXml) {
+    if ([IO.Path]::GetExtension($FileName) -eq '.xml') {
         $result | Export-Clixml -LiteralPath (Join-Path $Path $FileName)
     }
     else {
@@ -7746,6 +7756,7 @@ function Get-ClickToRunConfiguration {
 function Get-WebView2 {
     [CmdletBinding(PositionalBinding = $false)]
     param (
+        [Parameter(Position = 0)]
         $User
     )
 
@@ -9661,8 +9672,9 @@ function Save-GPResult {
 }
 
 function Get-AppContainerRegistryAcl {
-    [CmdletBinding()]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
+        [Parameter(Position = 0)]
         [string]$User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     )
 
@@ -9798,7 +9810,7 @@ function Get-CommandExpression {
         [Parameter(ParameterSetName = 'Command', Mandatory)]
         $Command,
         [Parameter(ParameterSetName = 'Command', Mandatory)]
-        [HashTable]$Parameters,
+        [Hashtable]$Parameters,
         [Parameter(ParameterSetName = 'Invocation', Mandatory)]
         [System.Management.Automation.InvocationInfo]
         $Invocation
@@ -9853,6 +9865,63 @@ function Get-CommandExpression {
         }
 
         $null = $sb.Append(" $value")
+    }
+
+    $sb.ToString()
+}
+
+<#
+.SYNOPSIS
+    Helper function to convert an argument Hashtable or Array to a string representation
+#>
+function ConvertFrom-ArgumentList {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        $ArgumentList
+    )
+
+    if ($ArgumentList -is [Hashtable]) {
+        if ($ArgumentList.Count -eq 0) {
+            '@{}'
+            return
+        }
+
+        $sb = New-Object System.Text.StringBuilder '@{'
+
+        foreach ($entry in $ArgumentList.GetEnumerator()) {
+            $null = $sb.Append(' ').Append($entry.Key).Append(' = ')
+
+            if ($entry.Value -is [string] -and $entry.Value.IndexOf(' ') -ge 0) {
+                $null = $sb.Append("'$($entry.Value)'")
+            }
+            else {
+                $null = $sb.Append($entry.Value)
+            }
+
+            $null = $sb.Append(';')
+        }
+
+        # Remove the last ';' & close with '}'
+        $null = $sb.Remove($sb.Length - 1, 1).Append(' }')
+    }
+    else {
+        if ($null -ne $ArgumentList -and $ArgumentList -isnot [Array]) {
+            $ArgumentList = @($ArgumentList)
+        }
+
+        if ($ArgumentList.Count -eq 0) {
+            '@()'
+            return
+        }
+
+        $sb = New-Object System.Text.StringBuilder '@('
+
+        foreach ($entry in $ArgumentList) {
+            $null = $sb.Append(' ').Append($entry).Append(',')
+        }
+
+        $null = $sb.Remove($sb.Length - 1, 1).Append(' )')
     }
 
     $sb.ToString()
@@ -9948,17 +10017,11 @@ function Collect-OutlookInfo {
     # This is just a fail fast. Start-OutlookTrace/TCOTrace fail anyway.
     if ($Component -contains 'Outlook' -or $Component -contains 'TCO' -or $Component -contains 'TTD') {
         $err = $($null = Get-OfficeInfo -ErrorAction Continue) 2>&1
+
         if ($err) {
             Write-Error "Component `"Outlook`" and/or `"TCO`" is specified, but installation of Microsoft Office is not found. $err"
             return
         }
-    }
-
-    if ($Component -contains 'TTD' -and -not (Get-Command 'tttracer.exe' -ErrorAction SilentlyContinue)) {
-        $win32OS = Get-CimInstance -Class 'Win32_OperatingSystem'
-        Write-Error "tttracer is not available on this machine. $($win32OS.Caption) ($($win32OS.Version))."
-        $win32OS.Dispose()
-        return
     }
 
     $currentUser = Resolve-User ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
@@ -10031,13 +10094,13 @@ function Collect-OutlookInfo {
 
     # Start logging.
     Open-Log -Path (Join-Path $tempPath 'Log.txt') -AutoFlush:$AutoFlush -ErrorAction Stop
-    Write-Log "Script Version: $Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString())); PID: $pid"
-    Write-Log "PSVersion: $($PSVersionTable.PSVersion); CLRVersion: $($PSVersionTable.CLRVersion)"
-    Write-Log "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
-    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin: $runAsAdmin"
-    Write-Log "Target user: $($targetUser.Name) ($($targetUser.Sid))"
-    Write-Log "AutoUpdate: $(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
-    Write-Log "Invocation: $(Get-CommandExpression -Invocation $MyInvocation)"
+    Write-Log "Script Version:$Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString())); PID:$pid"
+    Write-Log "PSVersion:$($PSVersionTable.PSVersion); CLRVersion:$($PSVersionTable.CLRVersion)"
+    Write-Log "PROCESSOR_ARCHITECTURE:$env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432:$env:PROCESSOR_ARCHITEW6432"
+    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin:$runAsAdmin"
+    Write-Log "Target user:$($targetUser.Name) ($($targetUser.Sid))"
+    Write-Log "AutoUpdate:$(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
+    Write-Log "Invocation:$(Get-CommandExpression -Invocation $MyInvocation)"
 
     try {
         # Set thread culture to en-US for consitent logging.
@@ -10090,12 +10153,13 @@ function Collect-OutlookInfo {
             $null = New-Item -Path $OSDir -ItemType Directory -ErrorAction Stop
             $targetUser | Export-Clixml -Path (Join-Path $OSDir 'User.xml')
 
-            $PSDefaultParameterValues['Write-Progress:Activity'] = 'Saving configuration'
+            $PSDefaultParameterValues['Write-Progress:Activity'] = 'Saving Configuration'
             $PSDefaultParameterValues['Write-Progress:Status'] = 'Please wait'
             Write-Progress -PercentComplete 0
 
             # First start tasks that might take a while.
             # Note: I could use ${Function:***}, but wrapping in a script block allows Write-Log to find the actual function name.
+            # Also use $PSBoundParameters instead of $Args to forward arguments because $Args does not work for switch parameters.
             Write-Log "Starting OfficeModuleInfoTask"
             $officeModuleInfoTaskCts = New-Object System.Threading.CancellationTokenSource
             $officeModuleInfoTask = Start-Task -Name 'OfficeModuleInfoTask' -ScriptBlock { param($Path, $CancellationToken) Save-OfficeModuleInfo @PSBoundParameters } `
@@ -10153,11 +10217,11 @@ function Collect-OutlookInfo {
 
             Write-Progress -PercentComplete 60
 
-            $PSDefaultParameterValues['Invoke-ScriptBlock:ArgumentList'] = @{ User = $targetUser }
             $PSDefaultParameterValues['Invoke-ScriptBlock:Path'] = $OfficeDir
             Invoke-ScriptBlock { Get-OfficeInfo }
             Invoke-ScriptBlock { Get-ClickToRunConfiguration }
             Invoke-ScriptBlock { Get-PresentationMode }
+            $PSDefaultParameterValues['Invoke-ScriptBlock:ArgumentList'] = @{ User = $targetUser }
             Invoke-ScriptBlock { param($User) Get-OutlookProfile @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-OutlookAddin @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-OutlookOption @PSBoundParameters }
@@ -10547,6 +10611,8 @@ function Collect-OutlookInfo {
             if ($startSuccess) {
                 Write-Progress -Status 'Saving Event logs'
                 Save-EventLog -Path $EventDir 2>&1 | Write-Log -Category Error
+
+                Write-Progress -Status 'Saving MSIPC logs'
                 Invoke-ScriptBlock { param($User, $Path, $All) Save-MSIPC @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = $MSIPCDir; All = $true } 2>&1 | Write-Log -Category Error
             }
 
