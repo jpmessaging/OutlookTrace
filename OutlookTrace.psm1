@@ -912,7 +912,7 @@ function Write-Log {
                 $errorDetails = $ErrorRecord.ErrorDetails.Message
             }
 
-            $Message = "$Message; [ErrorRecord] $(if ($errorDetails) { "ErrorDetails: $errorDetails, " })ExceptionType: $($ErrorRecord.Exception.GetType().Name), Exception.Message: $($ErrorRecord.Exception.Message), InvocationInfo.Line: '$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace: $($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
+            $Message = "$Message; [ErrorRecord] $(if ($errorDetails) { "ErrorDetails:$errorDetails, " })ExceptionType:$($ErrorRecord.Exception.GetType().Name), Exception.Message:$($ErrorRecord.Exception.Message), InvocationInfo.Line:'$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace:$($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
         }
 
         # Ignore null or an empty string.
@@ -1052,7 +1052,7 @@ function Open-TaskRunspace {
         return
     }
 
-    Write-Log "Setting up a Runspace Pool with an initialSessionState. MinRunspaces: $MinRunspaces, MaxRunspaces: $MaxRunspaces."
+    Write-Log "Setting up a Runspace Pool with an initialSessionState. MinRunspaces:$MinRunspaces, MaxRunspaces:$MaxRunspaces."
     $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
 
     # Add functions from this script module. This will find all the functions including non-exported ones.
@@ -1670,7 +1670,7 @@ function Compress-Folder {
 
             # If there are no files after filters are applied, bail.
             if ($files.Count -eq 0) {
-                Write-Error "There are no files after filters are applied. Server: $env:COMPUTERNAME, Path: $Path, Filter: $Filter, FromDateTime: $FromDateTime, ToDateTime: $ToDateTime"
+                Write-Error "There are no files after filters are applied. Server:$env:COMPUTERNAME, Path:$Path, Filter:$Filter, FromDateTime:$FromDateTime, ToDateTime:$ToDateTime"
                 return
             }
 
@@ -1700,7 +1700,7 @@ function Compress-Folder {
             $targetPath = $tempPath
         }
 
-        Write-Verbose "targetPath: $targetPath"
+        Write-Verbose "targetPath:$targetPath"
 
         # Form the zip file name
         $archiveName = Split-Path $Path -Leaf
@@ -1816,7 +1816,7 @@ function Compress-Folder {
         $files = @($files | Group-Object -Property 'FullName' | ForEach-Object { $_.Group | Select-Object -First 1 })
 
         if ($files.Count -eq 0) {
-            Write-Error "There are no files after filters are applied. Server: $env:COMPUTERNAME, Path: $Path, Filter: $Filter, FromDateTime: $FromDateTime, ToDateTime: $ToDateTime"
+            Write-Error "There are no files after filters are applied. Server:$env:COMPUTERNAME, Path:$Path, Filter:$Filter, FromDateTime:$FromDateTime, ToDateTime:$ToDateTime"
             return
         }
 
@@ -1883,7 +1883,7 @@ function Compress-Folder {
         Write-Progress -Activity "Creating a cab file" -Status "Done" -Completed
 
         if ($LASTEXITCODE -ne 0) {
-            Write-Error "MakeCab.exe failed; exitCode: $LASTEXITCODE; stdout:`"$stdout`"; Error: $err"
+            Write-Error "MakeCab.exe failed; exitCode:$LASTEXITCODE; stdout:`"$stdout`"; Error:$err"
             return
         }
 
@@ -2095,7 +2095,7 @@ function Start-OutlookTrace {
     $traceFile = Join-Path $Path -ChildPath $FileName
 
     if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, $logmanCommand)) {
-        Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`", traceFile:`"$traceFile`", logFileMode:`"$mode`", maxFileSize: `"$MaxFileSizeMB`""
+        Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`", traceFile:`"$traceFile`", logFileMode:`"$mode`", maxFileSize:`"$MaxFileSizeMB`""
 
         $err = $($stdout = Invoke-Command {
                 $ErrorActionPreference = 'Continue'
@@ -2169,7 +2169,7 @@ function Start-NetshTrace {
         }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
-        Write-Error "netsh failed.`nexit code: $LASTEXITCODE; stdout: $stdout; error: $err"
+        Write-Error "netsh failed.`nexit code:$LASTEXITCODE; stdout:$stdout; error:$err"
         return
     }
 
@@ -2260,7 +2260,7 @@ function Stop-NetshTrace {
         }) 2>&1
 
     if ($err -or $LASTEXITCODE -ne 0) {
-        Write-Log "Failed to stop netsh trace ($SessionName). exit code: $LASTEXITCODE; stdout: $stdout; error: $err" -Category Warning
+        Write-Log "Failed to stop netsh trace ($SessionName). exit code:$LASTEXITCODE; stdout:$stdout; error:$err" -Category Warning
         Write-Log "Stopping with Stop-EtwSession"
         $null = Stop-EtwSession -SessionName $SessionName
     }
@@ -2366,7 +2366,7 @@ function Start-PSR {
     # https://stackoverflow.com/questions/10262231/obtaining-exitcode-using-start-process-and-waitforexit-instead-of-wait/23797762#23797762
     $null = $process.Handle
 
-    Write-Log "PSR (PID:$($process.Id)) started $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount: $maxScreenshotCount"
+    Write-Log "PSR (PID:$($process.Id)) started $(if ($ShowGUI) {'with UI'} else {'without UI'}). maxScreenshotCount:$maxScreenshotCount"
 
     [PSCustomObject]@{
         Process = $process
@@ -2713,7 +2713,7 @@ function Resolve-User {
         return
     }
 
-    # Note: WMI Win32_UserAccount can be very slow. I'm avoiding here.
+    # Note:WMI Win32_UserAccount can be very slow. I'm avoiding here.
     # Get-WmiObject -Class Win32_UserAccount -Filter "Name = '$userName'"
 
     $sid = $account = $null
@@ -3735,10 +3735,10 @@ function Get-NLMConnectivity {
 
     $isConnectedToInternet = $nlm.IsConnectedToInternet
     [Win32.Netlistmgr+NLM_CONNECTIVITY]$connectivity = $nlm.GetConnectivity()
-    Write-Log ("INetworkListManager::GetConnectivity: $connectivity (0x$("{0:x8}" -f $connectivity.value__))")
+    Write-Log ("INetworkListManager::GetConnectivity:$connectivity (0x$("{0:x8}" -f $connectivity.value__))")
 
     $refCount = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($nlm)
-    Write-Log "NetworkListManager COM object's remaining ref count: $refCount"
+    Write-Log "NetworkListManager COM object's remaining ref count:$refCount"
     $nlm = $null
 
     [PSCustomObject]@{
@@ -5149,7 +5149,7 @@ function Start-SavingOfficeModuleInfo_PSJob {
         Event = $namedEvent # To be closed by Stop-SavingOfficeModuleInfo_PSJob
     }
 
-    Write-Log "Job (ID: $($job.Id)) has started. A Named Event (Handle: $($namedEvent.Handle), Name: '$eventName') is created"
+    Write-Log "Job (ID:$($job.Id)) has started. A Named Event (Handle:$($namedEvent.Handle), Name:'$eventName') is created"
 }
 
 <#
@@ -5173,7 +5173,7 @@ function Stop-SavingOfficeModuleInfo_PSJob {
         $namedEvent = $JobDescriptor.Event
 
         # Wait for the job up to timeout
-        Write-Log "Waiting for the job (ID: $($job.Id)) up to $TimeoutSecond seconds."
+        Write-Log "Waiting for the job (ID:$($job.Id)) up to $TimeoutSecond seconds."
         if (Wait-Job -Job $job -Timeout $TimeoutSecond) {
             # https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/wait-job
             # > This cmdlet returns job objects that represent the completed jobs. If the wait ends because the value of the Timeout parameter is exceeded, Wait-Job does not return any objects.
@@ -5187,7 +5187,7 @@ function Stop-SavingOfficeModuleInfo_PSJob {
         try {
             $null = $namedEvent.Set()
             $namedEvent.Close()
-            Write-Log "Event (Handle: $($namedEvent.Handle)) was closed."
+            Write-Log "Event (Handle:$($namedEvent.Handle)) was closed."
         }
         catch {
             Write-Error -ErrorRecord $_
@@ -5198,7 +5198,7 @@ function Stop-SavingOfficeModuleInfo_PSJob {
         Stop-Job -Job $job
         # Receive-Job -Job $job
         Remove-Job -Job $job
-        Write-Log "Job (ID: $($job.Id)) was removed."
+        Write-Log "Job (ID:$($job.Id)) was removed."
     }
 }
 
@@ -5247,11 +5247,11 @@ function Start-CapiTrace {
     $logmanResult = & logman.exe create trace $SessionName -ow -o $traceFile -p "Security: SChannel" 0xffffffffffffffff 0xff -bs 1024 -mode $mode -max $MaxFileSizeMB -ets
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "logman failed. exit code: $LASTEXITCODE; stdout: $logmanResult"
+        Write-Error "logman failed. exit code:$LASTEXITCODE; stdout:$logmanResult"
         return
     }
 
-    # Note: Depending on the OS version, not all providers are available.
+    # Note:Depending on the OS version, not all providers are available.
     $logmanResult = & logman.exe update trace $SessionName -p "Schannel" 0xffffffffffffffff 0xff -ets
     $logmanResult = & logman.exe update trace $SessionName -p "{44492B72-A8E2-4F20-B0AE-F1D437657C92}" 0xffffffffffffffff 0xff -ets
     $logmanResult = & logman.exe update trace $SessionName -p "Microsoft-Windows-Schannel-Events" 0xffffffffffffffff 0xff -ets
@@ -5714,7 +5714,7 @@ function Start-TTTracer {
     }
 
     if (-not $process -or $process.HasExited) {
-        Write-Error "tttracer.exe failed to start. ExitCode: $($process.ExitCode). $(Get-Content $stderr)"
+        Write-Error "tttracer.exe failed to start. ExitCode:$($process.ExitCode). $(Get-Content $stderr)"
         $process.Dispose()
         return
     }
@@ -5741,7 +5741,7 @@ function Start-TTTracer {
             return
         }
 
-        Write-Log "Target process $($targetProcess.Name) (PID: $($targetProcess.Id)) has started."
+        Write-Log "Target process $($targetProcess.Name) (PID:$($targetProcess.Id)) has started."
 
         # To get ExitTime etc.
         $targetProcess.EnableRaisingEvents = $true
@@ -5778,7 +5778,7 @@ function Stop-TTTracer {
     }
 
     if (-not ($tttracerProcess.ID)) {
-        Write-Error "Invalid input. tttracer PID: $($tttracerProcess.ID), target process PID: $($targetProcess.ID)"
+        Write-Error "Invalid input. tttracer PID:$($tttracerProcess.ID), target process PID:$($targetProcess.ID)"
         return
     }
 
@@ -5787,7 +5787,7 @@ function Stop-TTTracer {
         $stopTarget = $targetProcess.ID
     }
     else {
-        Write-Log "Target process $($targetProcess.Name) (PID: $($targetProcess.Id)) does not exist; ExitCode: $($targetProcess.ExitCode), ExitTime: $(if ($targetProcess.ExitTime) {$targetProcess.ExitTime.ToString('o')}), ElapsedTime: $($targetProcess.ExitTime - $targetProcess.StartTime)"
+        Write-Log "Target process $($targetProcess.Name) (PID:$($targetProcess.Id)) does not exist; ExitCode:$($targetProcess.ExitCode), ExitTime:$(if ($targetProcess.ExitTime) {$targetProcess.ExitTime.ToString('o')}), ElapsedTime:$($targetProcess.ExitTime - $targetProcess.StartTime)"
     }
 
     $exitCode = 0
@@ -5806,11 +5806,11 @@ function Stop-TTTracer {
 
     #  Non zero exitcode indicates an error.
     if ($exitCode -ne 0) {
-        Write-Error $("'tttracer -stop' failed. ExitCode: 0x{0:x}" -f $exitCode)
+        Write-Error $("'tttracer -stop' failed. ExitCode:0x{0:x}" -f $exitCode)
     }
 
     if ($onLaunch) {
-        Write-Log "Killing tttracer (PID: $($tttracerProcess.Id)) running in OnLaunch mode."
+        Write-Log "Killing tttracer (PID:$($tttracerProcess.Id)) running in OnLaunch mode."
         $tttracerProcess.Kill()
         $message += ";" + (& $tttracer -cleanup)
     }
@@ -5901,7 +5901,7 @@ function Attach-TTTracer {
 
         $stderrContent = Get-Content $stderr
         $exitCodeHex = "0x{0:x}" -f $process.ExitCode
-        Write-Error "tttracer.exe failed to attach. ExitCode: $exitCodeHex; Error: $err.`n$stderrContent"
+        Write-Error "tttracer.exe failed to attach. ExitCode:$exitCodeHex; Error:$err.`n$stderrContent"
     }
 }
 
@@ -6102,7 +6102,7 @@ function Start-TTDMonitor {
         return
     }
 
-    Write-Log "ttd.exe (PID: $($process.Id)) has successfully started"
+    Write-Log "ttd.exe (PID:$($process.Id)) has successfully started"
 
     [PSCustomObject]@{
         Process       = $process
@@ -6131,7 +6131,7 @@ function Stop-TTDMonitor {
         return
     }
 
-    Write-Log "Stopping ttd.exe (PID: $($Process.Id))"
+    Write-Log "Stopping ttd.exe (PID:$($Process.Id))"
     Stop-Process -InputObject $Process
     $Process.WaitForExit()
     $Process.Dispose()
@@ -6173,7 +6173,7 @@ function Attach-TTD {
 
     # Validate input args
     if (0 -ne ($ProcessId % 4)) {
-        Write-Error "Invalid Process ID: $ProcessId"
+        Write-Error "Invalid Process ID:$ProcessId"
         return
     }
 
@@ -6968,7 +6968,7 @@ function Save-HungDump {
                     Write-Log "Hung window detected with $name (PID $ProcessId, hWnd $hWnd). $($savedDumpCount+1)/$DumpCount"
                     $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId
                     $savedDumpCount++
-                    Write-Log "Saved dump file: $($dumpResult.DumpFile)"
+                    Write-Log "Saved dump file:$($dumpResult.DumpFile)"
 
                     if ($savedDumpCount -ge $DumpCount) {
                         Write-Log "Dump count reached $DumpCount. Exiting."
@@ -7311,7 +7311,7 @@ function Get-Token {
     if ($EnableLogging) {
         $logFile = Join-Path (Split-Path $PSCommandPath) 'msal.log'
         [IO.StreamWriter]$writer = [IO.File]::AppendText($logFile)
-        Write-Verbose "MSAL Loggin is enabled. Log file: $logFile"
+        Write-Verbose "MSAL Loggin is enabled. Log file:$logFile"
 
         # Add a CSV header line
         $writer.WriteLine("datetime,level,containsPii,message");
@@ -7346,7 +7346,7 @@ function Get-Token {
     # Get an account
     $firstAccount = $publicClient.GetAccountsAsync().GetAwaiter().GetResult() | Select-Object -First 1
 
-    # By default, MSAL asks for scopes: openid, profile, and offline_access.
+    # By default, MSAL asks for scopes:openid, profile, and offline_access.
     try {
         $publicClient.AcquireTokenSilent($Scopes, $firstAccount).ExecuteAsync().GetAwaiter().GetResult()
     }
@@ -7533,7 +7533,7 @@ function Test-Autodiscover {
                 }
 
                 # Try the given redirect uri next
-                Write-Log "Received a redirect URL: $redirectUrl"
+                Write-Log "Received a redirect URL:$redirectUrl"
                 $urls.Push($redirectUrl)
             }
             else {
@@ -7743,7 +7743,7 @@ function Get-OutlookAddin {
                     return
                 }
 
-                # ToDo: text might get garbled in DBCS environment.
+                # ToDo:text might get garbled in DBCS environment.
                 $props['Description'] = $addin.GetValue('Description')
                 $props['FriendlyName'] = $addin.GetValue('FriendlyName')
 
@@ -7875,11 +7875,11 @@ function Start-PerfTrace {
     )
 
     $configFile = Join-Path $Path "perf.config"
-    # Note: Encoding must be Ascii here ('utf8' will write as UTF-8 with BOM, which does not work for logman)
+    # Note:Encoding must be Ascii here ('utf8' will write as UTF-8 with BOM, which does not work for logman)
     Set-Content -LiteralPath $configFile -Value $counters -Encoding Ascii
 
     $filePath = Join-Path $Path $FileName
-    Write-Log "Staring PerfCounter. Mode: $LogFileMode, IntervalSecond: $IntervalSecond, MaxFileSizeMB: $MaxFileSizeMB, FilePath: $filePath"
+    Write-Log "Staring PerfCounter. Mode:$LogFileMode, IntervalSecond:$IntervalSecond, MaxFileSizeMB:$MaxFileSizeMB, FilePath:$filePath"
 
     switch ($LogFileMode) {
         'NewFile' {
@@ -8236,7 +8236,7 @@ function Start-HungMonitor {
         $null = $IsStartedEvent.Set()
     }
 
-    # Key: Process Hash, Value: true/false for "need to log".
+    # Key:Process Hash, Value:true/false for "need to log".
     $procCache = @{}
 
     # The target process may restart while being monitored. Keep monitoring until canceled (via hungDumpCts).
@@ -8260,7 +8260,7 @@ function Start-HungMonitor {
 
                     if ($procCache.ContainsKey($hash)) {
                         if ($procCache[$hash]) {
-                            Write-Log "This instance of $Name (PID: $id, StartTime:$startTime) has been seen already. This instance will be not be monitored"
+                            Write-Log "This instance of $Name (PID:$id, StartTime:$startTime) has been seen already. This instance will be not be monitored"
                             $procCache[$hash] = $false
                         }
                     }
@@ -8371,7 +8371,7 @@ function Start-Wpr {
     Write-Log "Starting WPR trace"
 
     if ($Path) {
-        # For some reason, if the path contains a space & is double-quoted & ends with a backslash, wpr fails with "Invalid temporary trace directory. Error code: 0xc5586004"
+        # For some reason, if the path contains a space & is double-quoted & ends with a backslash, wpr fails with "Invalid temporary trace directory. Error code:0xc5586004"
         # Make sure to remove the last backslash.
         if ($Path.EndsWith('\')) {
             $Path = $Path.Remove($Path.Length - 1)
@@ -8386,7 +8386,7 @@ function Start-Wpr {
     $errorMsg = $errs | ForEach-Object { $msg = $_.Exception.Message.Trim(); if ($msg) { $msg } }
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "wpr failed to start. LASTEXITCODE: 0x$('{0:x}' -f $LASTEXITCODE).`n$errorMsg"
+        Write-Error "wpr failed to start. LASTEXITCODE:0x$('{0:x}' -f $LASTEXITCODE).`n$errorMsg"
     }
 }
 
@@ -8426,7 +8426,7 @@ function Stop-Wpr {
     }
 
     if ($exitCode -ne 0) {
-        Write-Error "wpr failed to stop. ExitCode: 0x$('{0:x}' -f $exitCode)."
+        Write-Error "wpr failed to stop. ExitCode:0x$('{0:x}' -f $exitCode)."
     }
 }
 
@@ -8505,7 +8505,7 @@ function Get-IMProvider {
     }
     catch {
         if (-not $imProvider) {
-            Write-Error -Message "Failed to create an instance of $defaultIMApp (CLSID: {$clsid})" -Exception $_.Exception
+            Write-Error -Message "Failed to create an instance of $defaultIMApp (CLSID:{$clsid})" -Exception $_.Exception
         }
         elseif ($pIUCOfficeIntegration -eq [IntPtr]::Zero) {
             Write-Error -Message "Failed to obtain IUCOfficeIntegration interface" -Exception $_.Exception
@@ -8613,7 +8613,7 @@ function Invoke-WamSignOut {
     Write-Log "$count account$(if ($count -gt 1) {'s'}) found."
 
     foreach ($account in $accounts.Accounts) {
-        $accountId = "UserName: $($account.UserName), Id: $($account.Id)"
+        $accountId = "UserName:$($account.UserName), Id:$($account.Id)"
         $signOutMsg = "Signing out an account; $accountId"
 
         # If Force is not specified, ask the user
@@ -8641,7 +8641,7 @@ Helper command to recursively get registry key and its values.
 Output object has the following properties:
 
 - "KeyName"
-- "Properties": PSCustomObject that contains key's properties (i.e. key values)
+- "Properties":PSCustomObject that contains key's properties (i.e. key values)
 - Sub keys
 
 Each subkey becomes a property.
@@ -9545,7 +9545,7 @@ function Add-LoopbackExempt {
         return
     }
 
-    # Add it (Note: package name MUST be double-quoted)
+    # Add it (Note:package name MUST be double-quoted)
     $null = CheckNetIsolation.exe LoopbackExempt -a -n="$PackageFamiliyName"
 
     if ($LASTEXITCODE -eq 0) {
@@ -9650,7 +9650,7 @@ function Save-GPResult {
     }
 
     if ($Format -eq 'TEXT') {
-        # TODO: Using -RedirectStandardOutput is very slow. Refactor later by configuring System.Diagnostics.Process with StartInfo
+        # TODO:Using -RedirectStandardOutput is very slow. Refactor later by configuring System.Diagnostics.Process with StartInfo
         $startProcArgs['RedirectStandardOutput'] = $filePath
     }
 
@@ -9981,7 +9981,7 @@ function Collect-OutlookInfo {
         # PSR recycle interval.
         [ValidateRange('00:01:00', '01:00:00')]
         [TimeSpan]$PsrRecycleInterval = [Timespan]::FromMinutes(10),
-        # Target user whose configuration is collected. By default, it's the logon user (Note: Not necessarily the current user running the script).
+        # Target user whose configuration is collected. By default, it's the logon user (Note:Not necessarily the current user running the script).
         [string]$User,
         # Timespan used to detect a hung window when "HungDump" is requested in Component.
         [ValidateRange('00:00:01', '00:01:00')]
@@ -10086,7 +10086,7 @@ function Collect-OutlookInfo {
             $expression = Get-CommandExpression -Command $MyInvocation.MyCommand -Parameters $PSBoundParameters
 
             Write-Warning "OutlookTrace.psm1 was auto updated. Continuing with a new PowerShell instance"
-            Write-Verbose "New PowerShell instance is going to execute: '$expression'"
+            Write-Verbose "New PowerShell instance is going to execute:'$expression'"
 
             $currentProcess = Get-Process -Id $PID
             $powerShellExe = $currentProcess.Path
@@ -10168,7 +10168,7 @@ function Collect-OutlookInfo {
             Write-Progress -PercentComplete 0
 
             # First start tasks that might take a while.
-            # Note: I could use ${Function:***}, but wrapping in a script block allows Write-Log to find the actual function name.
+            # Note:I could use ${Function:***}, but wrapping in a script block allows Write-Log to find the actual function name.
             # Also use $PSBoundParameters instead of $Args to forward arguments because $Args does not work for switch parameters.
             Write-Log "Starting OfficeModuleInfoTask"
             $officeModuleInfoTaskCts = New-Object System.Threading.CancellationTokenSource
@@ -10413,7 +10413,7 @@ function Collect-OutlookInfo {
                 Write-Progress -Activity "Saving a process dump of Outlook." -Status "Please wait." -PercentComplete -1
                 $dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $process.Id
                 Write-Progress -Activity "Saving a process dump of Outlook." -Status "Done" -Completed
-                Write-Log "Saved a dump file: $($dumpResult.DumpFile)"
+                Write-Log "Saved a dump file:$($dumpResult.DumpFile)"
                 $process.Dispose()
             }
         }
@@ -10502,7 +10502,7 @@ function Collect-OutlookInfo {
         throw
     }
     finally {
-        Write-Log "Stopping traces. $(if ($waitStart) { "Wait duration: $(Get-Elapsed $waitStart)" })"
+        Write-Log "Stopping traces. $(if ($waitStart) { "Wait duration:$(Get-Elapsed $waitStart)" })"
 
         $PSDefaultParameterValues['Write-Progress:Activity'] = 'Stopping traces'
 
