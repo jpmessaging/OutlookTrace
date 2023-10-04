@@ -6168,8 +6168,7 @@ function Attach-TTD {
         [Parameter(Mandatory)]
         # Target Process ID
         [ValidateRange(4, [int]::MaxValue)]
-        [int]$ProcessId,
-        [switch]$NoUI
+        [int]$ProcessId
     )
 
     # Validate input args
@@ -6213,10 +6212,6 @@ function Attach-TTD {
         '-timestampFileName'
         '-out', $outPath
         '-attach', $ProcessId
-
-        if ($NoUI) {
-            '-noUI'
-        }
     )
 
     $stderr = Join-Path $Path 'stderr.txt'
@@ -6224,16 +6219,31 @@ function Attach-TTD {
 
     $process = Start-Process 'ttd.exe' -ArgumentList $ttdArgs -WindowStyle Hidden -RedirectStandardError $stderr -PassThru
 
-    Start-Sleep -Seconds 1
+    # Wait until a trace window becomes available
+    $attachStart = Get-Timestamp
 
-    if (-not $process -or $process.HasExited) {
-        if (Test-Path $stderr) {
-            $errText = [IO.File]::ReadAllText($stderr)
+    while (-not $process.MainWindowTitle) {
+        if (-not $process -or $process.HasExited) {
+            if (Test-Path $stderr) {
+                $errText = [IO.File]::ReadAllText($stderr)
+            }
+
+            if ($process) {
+                $process.Dispose()
+            }
+
+            Write-Error "ttd.exe failed to attach to the target (PID:$ProcessId). $errText"
+            return
         }
 
-        Write-Error "ttd.exe failed to attach to the target (PID: $ProcessId). $errText"
-        return
+        $ttdPid = $process.Id
+        $process.Dispose()
+        Start-Sleep -Seconds 1
+        $process = Get-Process -Id $ttdPid -ErrorAction SilentlyContinue
     }
+
+    $attachElapsed = Get-Elapsed $attachStart
+    Write-Log "TTD (PID:$($process.Id)) successfully attached the target (PID:$ProcessId). MainWindowTitle:$($process.MainWindowTitle); Attach Wait:$attachElapsed"
 
     [PSCustomObject]@{
         Process       = $process # ttd.exe process
@@ -10446,7 +10456,8 @@ function Collect-OutlookInfo {
 
             # If Outlook is already running, attach to it. Otherwise, start monitoring for outlook.exe.
             if ($outlookProcess = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue) {
-                Write-Log "Attaching TTD to Outlook (PID $($outlookProcess.Id))."
+                Write-Log "Attaching TTD to Outlook (PID:$($outlookProcess.Id))."
+                Write-Progress -Status "Attaching TTD to Outlook (PID:$($outlookProcess.Id)). This might take a while. Please wait"
                 $ttdProcess = Attach-TTD -Path $ttdRunPath -ProcessID $outlookProcess.Id -ErrorAction Stop
             }
             else {
