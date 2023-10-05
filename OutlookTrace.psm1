@@ -1387,12 +1387,14 @@ function Test-ProcessElevated {
             $hProcess = [Win32.Kernel32]::OpenProcess([Win32.Kernel32]::PROCESS_QUERY_LIMITED_INFORMATION, $false, $ProcessId)
 
             if (-not $hProcess -or $hProcess.IsInvalid) {
-                Write-Error "OpenProcess failed for PID $ProcessId with error code $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+                Write-Error -Message "OpenProcess failed for PID $ProcessId. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
                 return
             }
 
             if (-not [Win32.Advapi32]::OpenProcessToken($hProcess, [System.Security.Principal.TokenAccessLevels]::Query, [ref]$hToken)) {
-                Write-Error "OpenProcessToken failed for PID $ProcessId with error code $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+                Write-Error -Message "OpenProcessToken failed for PID $ProcessId. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
                 return
             }
 
@@ -1408,7 +1410,8 @@ function Test-ProcessElevated {
                     [ref]$elevation,
                     [System.Runtime.InteropServices.Marshal]::SizeOf([type]'Win32.Advapi32+TOKEN_ELEVATION'),
                     [ref]$length)) {
-                Write-Error "GetTokenInformation failed with error code $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+                Write-Error -Message "GetTokenInformation failed for PID $ProcessId. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
                 return
             }
 
@@ -8058,8 +8061,14 @@ function Start-ProcessCapture {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
+    $runAsAdmin = Test-RunAsAdministrator
+
+    if (-not $runAsAdmin) {
+        Write-Log "Not running as admin. IncludeUserName won't be used." -Category Warning
+    }
+
     # PowerShell 4's Get-Process has -IncludeUserName parameter. Use it if available (must be Elevated); otherwise fall back to WMI.
-    $includeUserNameAvailable = ($null -ne (Get-Command -Name 'Get-Process' -ParameterName 'IncludeUserName' -ErrorAction SilentlyContinue)) -and (Test-RunAsAdministrator)
+    $includeUserNameAvailable = $runAsAdmin -and ((Get-Command -Name 'Get-Process').Parameters.ContainsKey('IncludeUserName'))
 
     # Using a Hash table is much faster than Where-Object.
     $hashSet = @{}
@@ -8089,15 +8098,21 @@ function Start-ProcessCapture {
                         }
 
                         if ($err) {
-                            $errMsg = "Test-ProcessElevated failed for $($win32Process.Name) (PID:$($win32Process.ProcessId))"
-
-                            # Maybe the process is gone already. In this case, OpenProcess would fail with ERROR_INVALID_PARAMETER (87).
-                            if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
-                                Write-Log $errMsg -ErrorRecord $err -Category Error
-                                $proc.Dispose()
+                            if (-not $runAsAdmin -and $err.Exception.NativeErrorCode -eq 5) {
+                                # If not running as admin, Test-ProcessElevated is expected to fail with Access Denied (5) for some processes.
+                                # No need to log this error.
                             }
                             else {
-                                Write-Log "$errMsg because the process has already exited" -ErrorRecord $err -Category Warning
+                                $errMsg = "Test-ProcessElevated failed for $($win32Process.Name) (PID:$($win32Process.ProcessId))"
+
+                                # Maybe the process is gone already. In this case, OpenProcess would fail with ERROR_INVALID_PARAMETER (87).
+                                if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
+                                    Write-Log $errMsg -ErrorRecord $err -Category Error
+                                    $proc.Dispose()
+                                }
+                                else {
+                                    Write-Log "$errMsg because the process has already exited" -ErrorRecord $err -Category Warning
+                                }
                             }
                         }
                     }
@@ -8116,14 +8131,7 @@ function Start-ProcessCapture {
                         Write-Log "Found a new instance of $($win32Process.ProcessName) (PID:$($win32Process.ProcessId), Elevated:$isElevated)"
 
                         if ($includeUserNameAvailable) {
-                            # When not running as admin, Get-Prcess -IncludeUserName generates a non-terminating error, even with "-ErrorAction SilentlyContinue".
-                            # To suppress the error, wrap it with Invoke-Command where $ErrorActionPreference is set to 'SilentlyContinue'.
-                            $proc = Invoke-Command -ScriptBlock {
-                                $ErrorActionPreference = [System.Management.Automation.ActionPreference]::SilentlyContinue
-                                Get-Process -Id $win32Process.ProcessId -IncludeUserName
-                            }
-
-                            if ($proc) {
+                            if ($proc = Get-Process -Id $win32Process.ProcessId -IncludeUserName -ErrorAction SilentlyContinue) {
                                 $obj.Add('User', $proc.UserName)
                                 $obj.Add('EnvironmentVariables', $proc.StartInfo.EnvironmentVariables)
                                 $proc.Dispose()
