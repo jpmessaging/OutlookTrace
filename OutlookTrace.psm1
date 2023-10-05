@@ -871,19 +871,19 @@ function Open-Log {
         [switch]$AutoFlush
     )
 
-    if ($Script:logWriter) {
+    if ($Script:LogWriter) {
         Close-Log
     }
 
     # Open a file & add header
     try {
-        [IO.StreamWriter]$Script:logWriter = [IO.File]::AppendText($Path)
+        [IO.StreamWriter]$Script:LogWriter = [IO.File]::AppendText($Path)
 
         if ($AutoFlush) {
-            $Script:logWriter.AutoFlush = $true
+            $Script:LogWriter.AutoFlush = $true
         }
 
-        $Script:logWriter.WriteLine("datetime,thread_relative_delta,thread,function,category,message")
+        $Script:LogWriter.WriteLine("datetime,thread_relative_delta,thread,function,category,message")
     }
     catch {
         Write-Error -ErrorRecord $_
@@ -921,14 +921,14 @@ function Write-Log {
         }
 
         # If Open-Log is not called beforehand, just output to verbose.
-        if (-not $Script:logWriter) {
+        if (-not $Script:LogWriter) {
             Write-Verbose $Message
             return
         }
 
-        # If logWriter exists but disposed already, something went wrong.
-        if (-not $Script:logWriter.BaseStream.CanWrite) {
-            Write-Warning "logWriter has been disposed already"
+        # If LogWriter exists but disposed already, something went wrong.
+        if (-not $Script:LogWriter.BaseStream.CanWrite) {
+            Write-Warning "LogWriter has been disposed already"
             return
         }
 
@@ -936,11 +936,11 @@ function Write-Log {
         $currentTimeFormatted = $currentTime.ToString('o')
 
         # Delta time is relative to thread.
-        # Each thread has it's own copy of lastLogTime now.
+        # Each thread has it's own copy of LastLogTime now.
         [TimeSpan]$delta = 0
 
-        if ($Script:lastLogTime) {
-            $delta = $currentTime.Subtract($Script:lastLogTime)
+        if ($Script:LastLogTime) {
+            $delta = $currentTime.Subtract($Script:LastLogTime)
         }
 
         $caller = '<ScriptBlock>'
@@ -970,17 +970,17 @@ function Write-Log {
         $null = $sb.Append('"').Append($Message.Replace('"', "'")).Append('"')
 
         # Protect from concurrent write
-        [System.Threading.Monitor]::Enter($Script:logWriter)
+        [System.Threading.Monitor]::Enter($Script:LogWriter)
 
         try {
-            $Script:logWriter.WriteLine($sb.ToString())
+            $Script:LogWriter.WriteLine($sb.ToString())
         }
         finally {
-            [System.Threading.Monitor]::Exit($Script:logWriter)
+            [System.Threading.Monitor]::Exit($Script:LogWriter)
         }
 
         $sb = $null
-        $Script:lastLogTime = $currentTime
+        $Script:LastLogTime = $currentTime
 
         if ($PassThru) {
             $ErrorRecord
@@ -989,14 +989,14 @@ function Write-Log {
 }
 
 function Close-Log {
-    if ($Script:logWriter) {
-        if ($Script:logWriter.BaseStream.CanWrite) {
-            Write-Log "Closing logWriter."
-            $Script:logWriter.Close()
+    if ($Script:LogWriter) {
+        if ($Script:LogWriter.BaseStream.CanWrite) {
+            Write-Log "Closing LogWriter."
+            $Script:LogWriter.Close()
         }
 
-        $Script:logWriter = $null
-        $Script:lastLogTime = $null
+        $Script:LogWriter = $null
+        $Script:LastLogTime = $null
     }
 }
 
@@ -1048,7 +1048,7 @@ function Open-TaskRunspace {
         [switch]$IncludeScriptVariables
     )
 
-    if ($Script:runspacePool) {
+    if ($Script:RunspacePool) {
         return
     }
 
@@ -1088,23 +1088,23 @@ function Open-TaskRunspace {
         $initialSessionState.Variables.Add((New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #> $null))
     }
 
-    $Script:runspacePool = [runspacefactory]::CreateRunspacePool($MinRunspaces, $MaxRunspaces, $initialSessionState, $Host)
-    $Script:runspacePool.Open()
+    $Script:RunspacePool = [runspacefactory]::CreateRunspacePool($MinRunspaces, $MaxRunspaces, $initialSessionState, $Host)
+    $Script:RunspacePool.Open()
 
-    Write-Log "RunspacePool ($($Script:runspacePool.InstanceId.ToString())) is opened."
+    Write-Log "RunspacePool ($($Script:RunspacePool.InstanceId.ToString())) is opened."
 }
 
 function Close-TaskRunspace {
     [CmdletBinding()]
     param()
 
-    if (-not $Script:runspacePool) {
+    if (-not $Script:RunspacePool) {
         return
     }
 
-    $id = $Script:runspacePool.InstanceId.ToString()
-    $Script:runspacePool.Close()
-    $Script:runspacePool = $null
+    $id = $Script:RunspacePool.InstanceId.ToString()
+    $Script:RunspacePool.Close()
+    $Script:RunspacePool = $null
     Write-Log "RunspacePool ($id) is closed."
 }
 
@@ -1144,14 +1144,14 @@ function Start-Task {
         [string]$Name
     )
 
-    if (-not $Script:runspacePool) {
+    if (-not $Script:RunspacePool) {
         Write-Error -Message "Open-TaskRunspace must be called in advance."
         return
     }
 
     # Create a PowerShell instance and set paramters if any.
     [PowerShell]$ps = [PowerShell]::Create()
-    $ps.RunspacePool = $Script:runspacePool
+    $ps.RunspacePool = $Script:RunspacePool
 
     switch ($PSCmdlet.ParameterSetName) {
         'Command' {
@@ -2476,7 +2476,7 @@ function Save-EventLog {
     }
 
     # If this command is run by itself (not from Collect-OutlookInfo), need to create a runspace pool.
-    if (-not $Script:runspacePool) {
+    if (-not $Script:RunspacePool) {
         Open-TaskRunspace
         $runspaceOpened = $true
     }
@@ -3048,7 +3048,7 @@ function Save-OSConfigurationMT {
     )
 
     # If this command is run by itself (not from Collect-OutlookInfo), need to create a runspace pool.
-    if (-not $Script:runspacePool) {
+    if (-not $Script:RunspacePool) {
         Open-TaskRunspace
         $runspaceOpened = $true
     }
@@ -10127,7 +10127,7 @@ function Collect-OutlookInfo {
         # To use Start-Task, make sure to open runspaces first and close it when finished.
         # Currently MaxRunspaces is 8 or more because there are 8 tasks at most. 3 of them, processCaptureTask, psrTask, and hungMonitorTask are long running.
         $minimumMaxRunspacesCount = 8
-        $vars = 'logWriter', 'PSDefaultParameterValues', 'MyModulePath', 'Emoji' | Get-Variable
+        $vars = 'LogWriter', 'PSDefaultParameterValues', 'MyModulePath', 'Emoji' | Get-Variable
         Open-TaskRunspace -Variables $vars -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max($minimumMaxRunspacesCount, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
 
         # Configure log file mode and max file size for ETW traces (OutlookTrace, WAM, LDAP, and CAPI)
