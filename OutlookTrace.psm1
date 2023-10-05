@@ -2928,6 +2928,7 @@ function Save-OfficeRegistry {
         'HKCU\Software\Wow6432Node\Policies'
         'HKLM\SOFTWARE\Policies'
         'HKLM\SOFTWARE\WOW6432Node\Policies'
+        'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies'
     )
 
     $userRegRoot = Get-UserRegistryRoot $User -SkipRegistryPrefix
