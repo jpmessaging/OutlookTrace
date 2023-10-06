@@ -10017,7 +10017,7 @@ function Collect-OutlookInfo {
     $runAsAdmin = Test-RunAsAdministrator
 
     # Explicitly check admin rights depending on the request.
-    if (-not $runAsAdmin -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump' -or $EnablePageHeap -or $EnableLoopbackExempt)) {
+    if (-not $runAsAdmin -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump|TTD' -or $EnablePageHeap -or $EnableLoopbackExempt)) {
         Write-Warning "Please run as administrator."
         return
     }
