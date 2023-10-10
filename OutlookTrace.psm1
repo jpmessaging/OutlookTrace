@@ -2921,6 +2921,7 @@ function Save-OfficeRegistry {
         'HKLM\SOFTWARE\WOW6432Node\Microsoft\MSIPC'
         'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp'
         'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp'
+        'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies'
         'HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols'
 
         # Policies
@@ -2928,7 +2929,6 @@ function Save-OfficeRegistry {
         'HKCU\Software\Wow6432Node\Policies'
         'HKLM\SOFTWARE\Policies'
         'HKLM\SOFTWARE\WOW6432Node\Policies'
-        'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies'
     )
 
     $userRegRoot = Get-UserRegistryRoot $User -SkipRegistryPrefix
@@ -3026,6 +3026,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { param($User) Get-WinInetProxy @PSBoundParameters }; ArgumentList = $userArg }
         @{ScriptBlock = { param($User) Get-ProxyAutoConfig @PSBoundParameters }; ArgumentList = $userArg }
         @{ScriptBlock = { param($User) Get-AppContainerRegistryAcl @PSBoundParameters }; ArgumentList = $userArg }
+        @{ScriptBlock = { param($User) Get-StructuredQuerySchema @PSBoundParameters }; ArgumentList = $userArg }
 
         # These are just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
@@ -9724,6 +9725,54 @@ function Get-AppContainerRegistryAcl {
         Path            = $appContainerPath
         AppContainerAcl = $appContainerAcl
         MappingsAcl     = $mappingsAcl
+    }
+}
+
+<#
+.SYNOPSIS
+    Look for StructuredQuerySchema.bin under %LOCALAPPDATA%\Microsoft\Windows.
+    e.g. "C:\Users\admin\AppData\Local\Microsoft\Windows\1041\StructuredQuerySchema.bin"
+#>
+function Get-StructuredQuerySchema {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        $User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    )
+
+    # Look for StructuredQuerySchema.bin under %LOCALAPPDATA%
+    # e.g. "C:\Users\admin\AppData\Local\Microsoft\Windows\1041\StructuredQuerySchema.bin"
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+
+    if (-not $localAppdata) {
+        return
+    }
+
+    Join-Path $localAppdata 'Microsoft\Windows' `
+    | Get-ChildItem -Filter 'StructuredQuerySchema.bin' -Recurse `
+    | & {
+        param(
+            [Parameter(ValueFromPipeline)]
+            [System.IO.FileInfo]$fileInfo
+        )
+
+        process {
+            $lcid = $null
+
+            if ($fileInfo.FullName -match 'Windows\\(?<LCID>\d{4,5})') {
+                $lcid = [int]::Parse($Matches['LCID'])
+                $culture = New-Object System.Globalization.CultureInfo -ArgumentList $lcid
+
+                [PSCustomObject]@{
+                    User       = $User
+                    LocaleName = $culture.Name
+                    LocaleId   = $lcid
+                    Path       = $fileInfo.FullName
+                }
+            }
+            else {
+                Write-Error "Failed to extract LCID from '$($fileInfo.FullName)'"
+            }
+        }
     }
 }
 
