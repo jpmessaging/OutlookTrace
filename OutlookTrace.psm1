@@ -2497,19 +2497,18 @@ function Save-EventLog {
             $fileName = $log.Replace('/', '_') + '.evtx'
             $filePath = Join-Path $Path -ChildPath $fileName
             Write-Log "Saving $log to $filePath"
+
             Start-Task -Name 'EventLogExportTask' -ScriptBlock {
-                param ($log, $filePath)
-                wevtutil export-log $log $filePath /ow
-                wevtutil archive-log $filePath
-                # wevtutil archive-log $filePath /locale:en-US
-                # wevtutil archive-log $filePath /locale:ja-JP
-            } -ArgumentList $log, $filePath
+                param ($Log, $FilePath)
+                wevtutil export-log $Log $FilePath /ow
+                wevtutil archive-log $FilePath
+            } -ArgumentList @{Log = $log; FilePath = $filePath }
         }
     )
 
     $tasks | Receive-Task -AutoRemoveTask
 
-    if ($local:runspaceOpened) {
+    if ($Local:runspaceOpened) {
         Close-TaskRunspace
     }
 }
@@ -4279,10 +4278,10 @@ function Get-StoreProvider {
 
     if ($Profile -is [string]) {
         if (-not $Profile.StartsWith('Registry::')) {
-            $local:Profile = 'Registry::' + $Profile
+            $Local:Profile = 'Registry::' + $Profile
         }
 
-        $local:Profile = Get-Item $Profile
+        $Local:Profile = Get-Item $Profile
     }
 
     $accountManager = Join-Path $Profile.PSPath $KnownSections.AccountManager | Get-ItemProperty -Name $AccountManagerCLSIDs.CLSID_OlkStore -ErrorAction SilentlyContinue
@@ -4542,6 +4541,7 @@ function Get-OutlookOption {
         New-Option -Name 'NewMailDesktopAlerts' -DisplayName 'Display a Desktop Alert' -Category Mail -Value $true
         New-Option -Name 'NewMailDesktopAlertsDRMPreview' -DisplayName 'Enable preview for Rights Protected messages' -Category Mail -Value $false
         New-Option -Name 'SaveSent' -DisplayName 'Save copies of messages in the Sent Items folder' -Category Mail -Value $true
+        New-Option -Name 'DelegateSentItemsStyle' -DisplayName "When set to 1, items sent on behalf of a manager will now go to the manager's sent items box" -Category Mail -Value $false
         New-Option -Name 'ShowLegacySharingUX' -DisplayName 'Turn off Calendar Sharing REST API and use Legacy UI' -Category Calendar -Value $false
         New-Option -Name 'OpenTasksWithToDoApp' -DisplayName 'When opening from a reminder, open tasks with ToDo App' -Category Tasks -Value $false
         New-Option -Name 'Autodetect_CodePageOut' -DisplayName 'Automatically select encoding for outgoing messages' -Category Advanced -Value $true
@@ -4571,6 +4571,7 @@ function Get-OutlookOption {
         Set-Option -Name 'NewmailDesktopAlertsDRMPreview'
         Set-Option -Name 'OpenTasksWithToDoApp'
         Set-Option -Name 'SaveSent'
+        Set-Option -Name 'DelegateSentItemsStyle'
     }
 
     if ($prop = Join-Path $optionsPath 'MSHTML\International\' | Get-ItemProperty -ErrorAction SilentlyContinue) {
@@ -6823,9 +6824,9 @@ function Save-Dump {
         Write-Error "Cannot find a process with PID $ProcessId."
         return
     }
-    elseif (-not $process.Handle) {
+    elseif (-not $process.SafeHandle) {
         # This scenario is possible for a system process.
-        Write-Error "Cannot obtain the process handle of $($process.Name)."
+        Write-Error "Cannot obtain the process SafeHandle of $($process.Name)."
         return
     }
 
@@ -6918,7 +6919,7 @@ function Save-HungDump {
         [Parameter(Mandatory = $true, Position = 1)]
         [ValidateRange(1, [int]::MaxValue)]
         [int]$ProcessId,
-        [int]$TimeoutSecond = 5,
+        [TimeSpan]$Timeout = [TimeSpan]::FromSeconds(5),
         [int]$DumpCount = 1,
         [Threading.CancellationToken]$CancellationToken
     )
@@ -6944,7 +6945,7 @@ function Save-HungDump {
             }
 
             if ($process.HasExited) {
-                Write-Log "$($process.Name) (PID $ProcessId) has exited."
+                Write-Log "$($process.Name) (PID:$ProcessId) has exited"
                 return
             }
 
@@ -6960,23 +6961,26 @@ function Save-HungDump {
                 }
             }
             else {
-                Write-Error "Cannnot find a process with PID $ProcessId."
+                Write-Error "Cannnot find a process with PID $ProcessId"
                 return
             }
 
             $result = [IntPtr]::Zero
-            if (-not ([Win32.User32]::SendMessageTimeoutW($hWnd, 0, [IntPtr]::Zero, [IntPtr]::Zero, 0, $TimeoutSecond * 1000, [ref]$result))) {
+            if (-not ([Win32.User32]::SendMessageTimeoutW($hWnd, 0, [IntPtr]::Zero, [IntPtr]::Zero, 0, $Timeout.TotalMilliseconds, [ref]$result))) {
                 $ec = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
 
                 # if error code is 0 or ERROR_TIMEOUT, timeout occurred.
                 if ($ec -eq 0 -or $ec -eq $ERROR_TIMEOUT) {
-                    Write-Log "Hung window detected with $name (PID $ProcessId, hWnd $hWnd). $($savedDumpCount+1)/$DumpCount"
+                    Write-Log "Hung window detected with $name (PID:$ProcessId, hWnd:$hWnd). $($savedDumpCount+1)/$DumpCount" -Category Warning
                     $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId
-                    $savedDumpCount++
-                    Write-Log "Saved dump file:$($dumpResult.DumpFile)"
+
+                    if ($dumpResult) {
+                        $savedDumpCount++
+                        Write-Log "Dump file is saved as '$($dumpResult.DumpFile)'"
+                    }
 
                     if ($savedDumpCount -ge $DumpCount) {
-                        Write-Log "Dump count reached $DumpCount. Exiting."
+                        Write-Log "Dump count reached $DumpCount. Exiting"
                         return
                     }
                 }
@@ -8234,11 +8238,13 @@ function Start-PsrMonitor {
 function Start-HungMonitor {
     [CmdletBinding()]
     param(
+        [Parameter(Mandatory)]
         $Path,
+        [Parameter(Mandatory)]
+        $Name,
         [TimeSpan]$Timeout,
         [int]$DumpCount,
         $CancellationToken,
-        $Name,
         [System.Threading.EventWaitHandle]$IsStartedEvent
     )
 
@@ -8259,28 +8265,55 @@ function Start-HungMonitor {
 
             # There could be multiple process instances.
             # Not really expected for Outlook, but monitor the one that started first, while skipping the ones that have been monitored already.
-            $targetPid = Get-Process -Name $Name -ErrorAction SilentlyContinue | Sort-Object StartTime | & {
-                process {
-                    $id = $_.Id
-                    $startTime = $_.StartTime
-                    $_.Dispose()
-                    # Do not use GetHashCode() for the Process itself because it returns a new value every time.
-                    # $hash = (17 * 23 + $id.GetHashCode()) * 23 + $startTime.GetHashCode()
-                    $hash = $id.GetHashCode() -bxor $startTime.GetHashCode()
+            $targetList = @(
+                Get-Process -Name $Name -ErrorAction SilentlyContinue | & {
+                    param(
+                        [Parameter(ValueFromPipeline)]
+                        [System.Diagnostics.Process]$process)
+                    process {
+                        if (-not $process.SafeHandle) {
+                            Write-Log "Cannot obtain SafeHandle of $($process.Name) (PID:$($process.Id)). Skipping this instance"
+                            return
+                        }
 
-                    if ($procCache.ContainsKey($hash)) {
-                        if ($procCache[$hash]) {
-                            Write-Log "This instance of $Name (PID:$id, StartTime:$startTime) has been seen already. This instance will be not be monitored"
-                            $procCache[$hash] = $false
+                        $target = [PSCustomObject]@{
+                            Id        = $process.Id
+                            StartTime = [DateTime]::MinValue
+                        }
+
+                        # It's possible to get Access Denied on StartTime (If SafeHandle is available, StartTime should also be available, but be defensive just in case)
+                        try {
+                            $target.StartTime = $process.StartTime
+                        }
+                        catch {
+                            Write-Error -Message "Failed to get StartTime of $($process.Name) (PID:$($process.Id))" -Exception $_.Exception
+                        }
+
+                        $process.Dispose()
+
+                        # Do not use GetHashCode() for the Process itself because it returns a new value every time.
+                        $hash = $target.Id.GetHashCode() -bxor $target.StartTime.GetHashCode()
+
+                        if ($procCache.ContainsKey($hash)) {
+                            if ($procCache[$hash]) {
+                                Write-Log "This instance of $Name (PID:$($target.Id), StartTime:$($target.StartTime)) has been seen already. This instance will be not be monitored"
+                                $procCache[$hash] = $false
+                            }
+                        }
+                        else {
+                            $procCache.Add($hash, $true)
+                            $target
                         }
                     }
-                    else {
-                        $procCache.Add($hash, $true)
-                        $id
-                    }
-
                 }
-            } | Select-Object -First 1
+            )
+
+            # If there are multiple processes available, pick the one that started earliest.
+            $targetPid = $targetList | Sort-Object StartTime | Select-Object -First 1 -ExpandProperty Id
+
+            if ($targetList.Count -gt 1) {
+                Write-Log "There are $($targetList.Count) instances of $Name found"
+            }
 
             if ($targetPid) {
                 break
@@ -8289,8 +8322,26 @@ function Start-HungMonitor {
             Start-Sleep -Seconds 2
         }
 
-        Write-Log "hungMonitorTask has found $Name (PID:$targetPid). Starting hung window monitoring."
-        Save-HungDump -Path $Path -ProcessId $targetPid -DumpCount $DumpCount -TimeoutSecond $Timeout.TotalSeconds -CancellationToken $CancellationToken 2>&1 | Write-Log -Category Error -PassThru
+        Write-Log "Found $Name (PID:$targetPid). Starting hung window monitoring."
+
+        $argsTable = @{
+            Path      = $Path
+            ProcessId = $targetPid
+        }
+
+        if ($DumpCount) {
+            $argsTable.DumpCount = $DumpCount
+        }
+
+        if ($Timeout) {
+            $argsTable.Timeout = $Timeout
+        }
+
+        if ($CancellationToken) {
+            $argsTable.CancellationToken = $CancellationToken
+        }
+
+        Save-HungDump @argsTable 2>&1 | Write-Log -Category Error -PassThru
     }
 }
 
