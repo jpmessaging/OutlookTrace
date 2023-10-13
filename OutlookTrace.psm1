@@ -4046,17 +4046,8 @@ function Get-CachedModePolicy {
         $OfficeVersionKey # e.g, HKCU\Software\Microsoft\Office\16.0
     )
 
-    if ($OfficeVersionKey -is [string]) {
-        if (-not $OfficeVersionKey.StartsWith("Registry::")) {
-            $OfficeVersionKey = 'Registry::' + $OfficeVersionKey
-        }
-
-        $OfficeVersionKey = Get-Item $OfficeVersionKey
-    }
-
     # Insert 'Policies' in the path and read registry values.
-    $cachedModePolicy = Join-Path $OfficeVersionKey.PSPath.SubString(0, $OfficeVersionKey.PSPath.IndexOf('Microsoft\Office')) 'Policies' `
-    | Join-Path -ChildPath $OfficeVersionKey.PSPath.SubString($OfficeVersionKey.PSPath.IndexOf('Microsoft\Office')) `
+    $cachedModePolicy = $OfficeVersionKey | ConvertTo-PolicyPath `
     | Join-Path -ChildPath 'outlook\cached mode' `
     | Get-ItemProperty -ErrorAction SilentlyContinue
 
@@ -4472,6 +4463,37 @@ function Format-ByteSize {
 
     "{0:N2} {1}" -f $Size, $suffix[$index]
 }
+<#
+.SYNOPSIS
+    Insert "Policies" between "Software" and "Microsoft" in the given path.
+    e.g., 'HKCU:\Software\Microsoft\Office\' --> 'HKCU:\Software\Policies\Microsoft\Office\'
+
+    If the given path is already a policy path, then it is returned as is.
+    In both cases, the returned string will be prefixed with 'Registry::'
+#>
+function ConvertTo-PolicyPath {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param (
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [string]$Path
+    )
+
+    process {
+        $policyPath = $Path
+
+        if ($Path -match '(?<Head>^.*\\Software)\\(?<Tail>Microsoft\\.*)') {
+            $policyPath = Join-Path $Matches['Head'] 'Policies' `
+            | Join-Path -ChildPath $Matches['Tail']
+        }
+
+        if (-not $policyPath.StartsWith('Registry::')) {
+            $policyPath = "Registry::$policyPath"
+        }
+
+        $policyPath
+    }
+}
 
 function Get-OutlookOption {
     [CmdletBinding()]
@@ -4484,16 +4506,16 @@ function Get-OutlookOption {
             [Parameter(Mandatory)]
             $Name,
             [Parameter(Mandatory)]
-            $DisplayName,
+            $Description,
             [Parameter(Mandatory)]
-            [ValidateSet('Mail', 'Calendar', 'Tasks', 'Advanced', 'Power', 'Security', 'Setup')]
+            [ValidateSet('Mail', 'Calendar', 'Tasks', 'Advanced', 'Power', 'Security', 'Setup', 'Search')]
             $Category,
             $Value
         )
 
         [PSCustomObject]@{
             Name        = $Name
-            DisplayName = $DisplayName
+            Description = $Description
             Category    = $Category
             Value       = $Value
         }
@@ -4534,96 +4556,145 @@ function Get-OutlookOption {
     $powerPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Power"
     $securityPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Security"
     $setupPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Setup"
+    $searchPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Search"
 
-    # Options I'm interested
+    # Set default values for options I'm interested in.
     $options = @(
-        New-Option -Name 'Send Mail Immediately' -DisplayName 'Send Mail Immediately' -Category Mail -Value $true
-        New-Option -Name 'NewMailDesktopAlerts' -DisplayName 'Display a Desktop Alert' -Category Mail -Value $true
-        New-Option -Name 'NewMailDesktopAlertsDRMPreview' -DisplayName 'Enable preview for Rights Protected messages' -Category Mail -Value $false
-        New-Option -Name 'SaveSent' -DisplayName 'Save copies of messages in the Sent Items folder' -Category Mail -Value $true
-        New-Option -Name 'DelegateSentItemsStyle' -DisplayName "When set to 1, items sent on behalf of a manager will now go to the manager's sent items box" -Category Mail -Value $false
-        New-Option -Name 'ShowLegacySharingUX' -DisplayName 'Turn off Calendar Sharing REST API and use Legacy UI' -Category Calendar -Value $false
-        New-Option -Name 'OpenTasksWithToDoApp' -DisplayName 'When opening from a reminder, open tasks with ToDo App' -Category Tasks -Value $false
-        New-Option -Name 'Autodetect_CodePageOut' -DisplayName 'Automatically select encoding for outgoing messages' -Category Advanced -Value $true
-        New-Option -Name 'Default_CodePageOut' -DisplayName 'Preferred encoding for outgoing messages' -Category Advanced -Value $null
-        New-Option -Name 'HighCostMeteredNetworkBehavior' -DisplayName 'Behavior on a high cost metered network' -Category Power -Value 'Default'
-        New-Option -Name 'ConservativeMeteredNetworkBehavior' -DisplayName 'Behavior on a conservative metered network' -Category Power -Value 'Default'
-        New-Option -Name 'BatteryMode' -DisplayName 'Battery mode' -Category Power -Value 'Default'
-        New-Option -Name 'MarkInternalAsUnsafe' -DisplayName 'Use Protected View for attachments received from internal senders' -Category Security -Value $false
-        New-Option -Name 'DisableOffice365SimplifiedAccountCreation' -DisplayName 'Using simplified account creation to add an account to Outlook' -Category Setup -Value $false
+        New-Option -Name 'Send Mail Immediately' -Description 'Send Mail Immediately' -Category Mail -Value $true
+        New-Option -Name 'NewMailDesktopAlerts' -Description 'Display a Desktop Alert' -Category Mail -Value $true
+        New-Option -Name 'NewMailDesktopAlertsDRMPreview' -Description 'Enable preview for Rights Protected messages' -Category Mail -Value $false
+        New-Option -Name 'SaveSent' -Description 'Save copies of messages in the Sent Items folder' -Category Mail -Value $true
+        New-Option -Name 'DelegateSentItemsStyle' -Description "When set to 1, items sent on behalf of a manager will now go to the manager's sent items box" -Category Mail -Value $false
+        New-Option -Name 'ShowLegacySharingUX' -Description 'Turn off Calendar Sharing REST API and use Legacy UI' -Category Calendar -Value $false
+        New-Option -Name 'OpenTasksWithToDoApp' -Description 'When opening from a reminder, open tasks with ToDo App' -Category Tasks -Value $false
+        New-Option -Name 'Autodetect_CodePageOut' -Description 'Automatically select encoding for outgoing messages' -Category Advanced -Value $true
+        New-Option -Name 'Default_CodePageOut' -Description 'Preferred encoding for outgoing messages' -Category Advanced -Value $null
+        New-Option -Name 'HighCostMeteredNetworkBehavior' -Description 'Behavior on a high cost metered network' -Category Power -Value 'Default'
+        New-Option -Name 'ConservativeMeteredNetworkBehavior' -Description 'Behavior on a conservative metered network' -Category Power -Value 'Default'
+        New-Option -Name 'BatteryMode' -Description 'Battery mode' -Category Power -Value 'Default'
+        New-Option -Name 'MarkInternalAsUnsafe' -Description 'Use Protected View for attachments received from internal senders' -Category Security -Value $false
+        New-Option -Name 'DisableOffice365SimplifiedAccountCreation' -Description 'Using simplified account creation to add an account to Outlook' -Category Setup -Value $false
+        New-Option -Name 'DisableServerAssistedSearch' -Description 'Disables Outlook from requesting and using Search results from Exchange for cached and non-cached mailbox items. Instead it will use search results from windows search service' -Category Search -Value $false
+        New-Option -Name 'DisableServerAssistedSuggestions' -Description 'Disables Outlook from requesting search suggestions from Exchange' -Category Search -Value $false
     )
 
     $PSDefaultParameterValues['Set-Option:Options'] = $options
 
-    if ($prop = Join-Path $optionsPath 'Mail' | Get-ItemProperty -ErrorAction SilentlyContinue) {
-        $PSDefaultParameterValues['Set-Option:Property'] = $prop
-        Set-Option -Name 'Send Mail Immediately'
-    }
-
-    if ($prop = Join-Path $optionsPath 'Calendar' | Get-ItemProperty -ErrorAction SilentlyContinue) {
-        $PSDefaultParameterValues['Set-Option:Property'] = $prop
-        Set-Option -Name 'ShowLegacySharingUX'
-    }
-
-    if ($prop = Get-ItemProperty $prefPath -ErrorAction SilentlyContinue) {
-        $PSDefaultParameterValues['Set-Option:Property'] = $prop
-        Set-Option -Name 'NewMailDesktopAlerts'
-        Set-Option -Name 'NewmailDesktopAlertsDRMPreview'
-        Set-Option -Name 'OpenTasksWithToDoApp'
-        Set-Option -Name 'SaveSent'
-        Set-Option -Name 'DelegateSentItemsStyle'
-    }
-
-    if ($prop = Join-Path $optionsPath 'MSHTML\International\' | Get-ItemProperty -ErrorAction SilentlyContinue) {
-        $PSDefaultParameterValues['Set-Option:Property'] = $prop
-        Set-Option -Name 'Autodetect_CodePageOut'
-        Set-Option -Name 'Default_CodePageOut' -Converter { param ($regValue) [System.Text.Encoding]::GetEncoding($prop.Default_CodePageOut).WebName }
-    }
-
-    if ($prop = Get-ItemProperty $powerPath -ErrorAction SilentlyContinue) {
-        $PSDefaultParameterValues['Set-Option:Property'] = $prop
-
-        $meteredNetworkBehaviorConverter = {
-            param (
-                $regValue,
-                $regName
-            )
-
-            switch ($regValue) {
-                0 { 'Default'; break }
-                1 { 'Ignore'; break }
-                2 { if ($regName -eq 'ConservativeMeteredNetworkBehavior') { 'TreatAsHighCost' } else { 'Invalid' }; break }
-                default { 'Invalid'; break }
-            }
+    & {
+        Join-Path $optionsPath 'Mail'
+        Join-Path $optionsPath 'Mail' | ConvertTo-PolicyPath
+    } | Get-ItemProperty -ErrorAction SilentlyContinue | & {
+        process {
+            $PSDefaultParameterValues['Set-Option:Property'] = $_
+            Set-Option -Name 'Send Mail Immediately'
         }
+    }
 
-        Set-Option -Name 'HighCostMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter
-        Set-Option -Name 'ConservativeMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter
-
-        $batteryModeConverter = {
-            param (
-                $regValue
-            )
-
-            switch ($regValue) {
-                0 { 'Default'; break }
-                1 { 'Always'; break }
-                2 { 'Never'; break }
-                default { 'Invalid'; break }
-            }
+    & {
+        Join-Path $optionsPath 'Calendar'
+        Join-Path $optionsPath 'Calendar' | ConvertTo-PolicyPath
+    } | Get-ItemProperty -ErrorAction SilentlyContinue | & {
+        process {
+            $PSDefaultParameterValues['Set-Option:Property'] = $_
+            Set-Option -Name 'ShowLegacySharingUX'
         }
-
-        Set-Option -Name 'BatteryMode' -Converter $batteryModeConverter
     }
 
-    if ($prop = Get-ItemProperty $securityPath -ErrorAction SilentlyContinue) {
-        $PSDefaultParameterValues['Set-Option:Property'] = $prop
-        Set-Option -Name 'MarkInternalAsUnsafe'
+    & {
+        $prefPath
+        $prefPath | ConvertTo-PolicyPath
+    } | Get-ItemProperty -ErrorAction SilentlyContinue | & {
+        process {
+            $PSDefaultParameterValues['Set-Option:Property'] = $_
+            Set-Option -Name 'NewMailDesktopAlerts'
+            Set-Option -Name 'NewmailDesktopAlertsDRMPreview'
+            Set-Option -Name 'OpenTasksWithToDoApp'
+            Set-Option -Name 'SaveSent'
+            Set-Option -Name 'DelegateSentItemsStyle'
+        }
     }
 
-    if ($prop = Get-ItemProperty $setupPath -ErrorAction SilentlyContinue) {
-        $PSDefaultParameterValues['Set-Option:Property'] = $prop
-        Set-Option -Name 'DisableOffice365SimplifiedAccountCreation' #-Converter { param ($val) $val -eq 1 }
+    & {
+        Join-Path $optionsPath 'MSHTML\International\'
+        Join-Path $optionsPath 'MSHTML\International\' | ConvertTo-PolicyPath
+    } | Get-ItemProperty -ErrorAction SilentlyContinue | & {
+        process {
+            $PSDefaultParameterValues['Set-Option:Property'] = $_
+            Set-Option -Name 'Autodetect_CodePageOut'
+            Set-Option -Name 'Default_CodePageOut' -Converter { param ($regValue) [System.Text.Encoding]::GetEncoding($regValue).WebName }
+        }
+    }
+
+    & {
+        $powerPath
+        $powerPath | ConvertTo-PolicyPath
+    } | Get-ItemProperty -ErrorAction SilentlyContinue | & {
+        process {
+            $PSDefaultParameterValues['Set-Option:Property'] = $_
+
+            $meteredNetworkBehaviorConverter = {
+                param (
+                    $regValue,
+                    $regName
+                )
+
+                switch ($regValue) {
+                    0 { 'Default'; break }
+                    1 { 'Ignore'; break }
+                    2 { if ($regName -eq 'ConservativeMeteredNetworkBehavior') { 'TreatAsHighCost' } else { 'Invalid' }; break }
+                    default { 'Invalid'; break }
+                }
+            }
+
+            Set-Option -Name 'HighCostMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter
+            Set-Option -Name 'ConservativeMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter
+
+            $batteryModeConverter = {
+                param (
+                    $regValue
+                )
+
+                switch ($regValue) {
+                    0 { 'Default'; break }
+                    1 { 'Always'; break }
+                    2 { 'Never'; break }
+                    default { 'Invalid'; break }
+                }
+            }
+
+            Set-Option -Name 'BatteryMode' -Converter $batteryModeConverter
+        }
+    }
+
+    & {
+        $securityPath
+        $securityPath | ConvertTo-PolicyPath
+    } | Get-ItemProperty -ErrorAction SilentlyContinue | & {
+        process {
+            $PSDefaultParameterValues['Set-Option:Property'] = $_
+            Set-Option -Name 'MarkInternalAsUnsafe'
+        }
+    }
+
+    & {
+        $setupPath
+        $setupPath | ConvertTo-PolicyPath
+    } | Get-ItemProperty -ErrorAction SilentlyContinue | & {
+        process {
+            $PSDefaultParameterValues['Set-Option:Property'] = $_
+            Set-Option -Name 'DisableOffice365SimplifiedAccountCreation'
+        }
+    }
+
+    & {
+        $searchPath
+        $searchPath | ConvertTo-PolicyPath
+    } | Get-ItemProperty -ErrorAction SilentlyContinue | & {
+        process {
+            $PSDefaultParameterValues['Set-Option:Property'] = $_
+            Set-Option -Name 'DisableServerAssistedSearch'
+            Set-Option -Name 'DisableServerAssistedSuggestions'
+        }
     }
 
     $options
