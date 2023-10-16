@@ -3363,7 +3363,8 @@ function Get-WinInetProxy {
     }
 
     # If ProxySettingsPerUser is 0, then check HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections, instead of the user's registry.
-    $proxySettingsPerUser = Get-ItemProperty 'Registry::HKLM\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings' -Name 'ProxySettingsPerUser' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'ProxySettingsPerUser'
+    $proxySettingsPerUser = Get-ItemProperty 'Registry::HKLM\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings' -Name 'ProxySettingsPerUser' -ErrorAction SilentlyContinue `
+    | Select-Object -ExpandProperty 'ProxySettingsPerUser'
 
     if ($proxySettingsPerUser -eq 0) {
         $regRoot = 'Registry::HKLM'
@@ -3384,16 +3385,18 @@ function Get-WinInetProxy {
     # In this case, return the default configuration (This is what WinHttpGetIEProxyConfigForCurrentUser does anyway).
     if ($connections.Count -eq 0) {
         Write-Log "No connections are found under $connectionsKey. Returning a default setting."
-        $props = [ordered]@{}
-        $props['ProxySettingsPerUser'] = $proxySettingsPerUser
-        $props['User'] = $User
-        $props['Connection'] = 'DefaultConnectionSettings'
-        $props['AutoDetect'] = $true
-        $props['AutoConfigUrl'] = $null
-        $props['Proxy'] = $null
-        $props['ProxyBypass'] = $null
-        $props['ActiveConnectionProxy'] = $currentUserActiveConnProxy
-        [PSCustomObject]$props
+
+        [PSCustomObject]@{
+            ProxySettingsPerUser  = $proxySettingsPerUser
+            User                  = $User
+            Connection            = 'DefaultConnectionSettings'
+            AutoDetect            = $true
+            AutoConfigUrl         = $null
+            Proxy                 = $null
+            ProxyBypass           = $null
+            ActiveConnectionProxy = $currentUserActiveConnProxy
+        }
+
         return
     }
 
@@ -3451,7 +3454,7 @@ function Get-WinInetProxy {
         $props['Proxy'] = if ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_PROXY -and $winInetProxy.Proxy) { $winInetProxy.Proxy }
         $props['ProxyBypass'] = if ($winInetProxy.Flags -band [Win32.WinInet+PER_CONN_FLAGS]::PROXY_TYPE_PROXY -and $winInetProxy.ProxyBypass) { $winInetProxy.ProxyBypass }
 
-        # This data is temporarily.
+        # This data is temporary.
         if (-not $activeConnAdded -and $currentUserActiveConnProxy) {
             $props['ActiveConnectionProxy'] = $currentUserActiveConnProxy
             $activeConnAdded = $true
@@ -4465,11 +4468,13 @@ function Format-ByteSize {
 }
 <#
 .SYNOPSIS
-    Insert "Policies" between "Software" and "Microsoft" in the given path.
+    Insert "Policies" after "Software" in the given registry path.
     e.g., 'HKCU:\Software\Microsoft\Office\' --> 'HKCU:\Software\Policies\Microsoft\Office\'
 
     If the given path is already a policy path, then it is returned as is.
     In both cases, the returned string will be prefixed with 'Registry::'
+
+    * If the path is already prefixed with "Registry::" or "Microsoft.PowerShell.Core\Registry::", no prefix will be added.
 #>
 function ConvertTo-PolicyPath {
     [CmdletBinding()]
@@ -4482,16 +4487,67 @@ function ConvertTo-PolicyPath {
     process {
         $policyPath = $Path
 
-        if ($Path -match '(?<Head>^.*\\Software)\\(?<Tail>Microsoft\\.*)') {
-            $policyPath = Join-Path $Matches['Head'] 'Policies' `
-            | Join-Path -ChildPath $Matches['Tail']
+        if ($Path -match '(?<Head>^.*\\Software)\\(?<Tail>.*)') {
+            # If it looks like "...\Software\Policies\...", then do nothing.
+            if (-not $Matches['Tail'].StartsWith('Policies\')) {
+                $policyPath = Join-Path $Matches['Head'] 'Policies' `
+                | Join-Path -ChildPath $Matches['Tail']
+            }
         }
 
-        if (-not $policyPath.StartsWith('Registry::')) {
+        # Add prefix if necessary.
+        # Note that no need to add prefix if it looks like "Microsoft.PowerShell.Core\Registry::"
+        if (-not ($policyPath -match 'Registry::')) {
             $policyPath = "Registry::$policyPath"
         }
 
         $policyPath
+    }
+}
+
+<#
+.SYNOPSIS
+    Test if a given registry path is a policy path ("...\Software\Policies\...")
+#>
+function Test-PolicyPath {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [string]$Path
+    )
+
+    process {
+        $Path -match '\\Software\\Policies\\'
+    }
+}
+
+<#
+.SYNOPSIS
+    Convert a PSPath to a path without prefix (sucn as "Microsoft.PowerShell.Core\FileSystem::", Microsoft.PowerShell.Core\Registry::)
+#>
+function ConvertFrom-PSPath {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [string]$Path,
+        # Keep provider name such as "FileSystem::" or "Registry::"
+        [switch]$KeepProvider
+    )
+
+    process {
+        if ($Path -match '(?<Prefix>^.*::)(?<Rest>.*)') {
+            if ($KeepProvider) {
+                $pathWithoutPrefix = $Matches['Rest']
+                if ($Matches['Prefix'] -match '(?<Provider>\w+::)') {
+                    "$($Matches['Provider'])$pathWithoutPrefix"
+                }
+            }
+            else {
+                $Matches['Rest']
+            }
+        }
     }
 }
 
@@ -4518,6 +4574,8 @@ function Get-OutlookOption {
             Description = $Description
             Category    = $Category
             Value       = $Value
+            Path        = $null
+            IsPolicy    = $false
         }
     }
 
@@ -4539,6 +4597,11 @@ function Get-OutlookOption {
         if ($null -ne $regValue) {
             $option = $Options | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
             $option.Value = & $Converter $regValue $Name
+            $option.Path = $Property.PSPath | ConvertFrom-PSPath
+
+            if (Test-PolicyPath $option.Path) {
+                $option.IsPolicy = $true
+            }
         }
     }
 
@@ -9188,7 +9251,7 @@ function Split-ItemProperty {
                 [PSCustomObject]@{
                     Name  = $memberDefinition.Name
                     Value = $Property."$($memberDefinition.Name)"
-                    Path  = $Property.PSPath.SubString($Property.PSPath.IndexOf('::') + 2) # e.g. "Microsoft.PowerShell.Core\Registry::", "Microsoft.PowerShell.Core\FileSystem::"
+                    Path  = $Property.PSPath | ConvertFrom-PSPath
                 }
             }
         }
