@@ -1359,19 +1359,22 @@ function Test-ProcessElevated {
         [Parameter(Mandatory, ValueFromPipeline, Position = 0, ParameterSetName = 'ProcessId')]
         [int]$ProcessId,
         [Parameter(Mandatory, ValueFromPipeline, Position = 0, ParameterSetName = 'Process')]
-        [System.Diagnostics.Process]$Process
+        [System.Diagnostics.Process]$Process,
+        [switch]$EnableDebugPrivilege
     )
 
     begin {
         # Enable Debug privilege if possible
         $debugPrivilegeEnabled = $false
 
-        try {
-            [System.Diagnostics.Process]::EnterDebugMode()
-            $debugPrivilegeEnabled = $true
-        }
-        catch {
-            # Write-Log -Message "EnterDebugMode failed" -ErrorRecord $_ -Category Warning
+        if ($EnableDebugPrivilege) {
+            try {
+                [System.Diagnostics.Process]::EnterDebugMode()
+                $debugPrivilegeEnabled = $true
+            }
+            catch {
+                Write-Log -Message "EnterDebugMode failed" -ErrorRecord $_ -Category Warning
+            }
         }
     }
 
@@ -9070,7 +9073,7 @@ function Get-OneAuthAccount {
     if (-not $localAppdata) {
         return
     }
-    
+
     Join-Path $localAppdata 'Microsoft\OneAuth\accounts' | Get-ChildItem | & {
         process {
             Get-Content $_.FullName | ConvertFrom-Json
@@ -9089,7 +9092,7 @@ function Remove-OneAuthAccount {
     if (-not $localAppdata) {
         return
     }
-    
+
     Join-Path $localAppdata 'Microsoft\OneAuth\accounts\*' | Remove-Item
 }
 
@@ -10289,6 +10292,20 @@ function Collect-OutlookInfo {
         return
     }
 
+    # Enable Debug Privilege if running as admin
+    $debugPrivilegeEnabled = $false
+
+    if ($runAsAdmin) {
+        try {
+            [System.Diagnostics.Process]::EnterDebugMode()
+            $debugPrivilegeEnabled = $true
+        }
+        catch {
+            Write-Error -Message "Cannot enable Debug Privilege. $_" -Exception $_.Exception
+            return
+        }
+    }
+
     if ($env:PROCESSOR_ARCHITEW6432) {
         Write-Error "32-bit PowerShell is running on 64-bit OS. Please use 64-bit PowerShell from C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
         return
@@ -11008,6 +11025,15 @@ function Collect-OutlookInfo {
 
         if ($loopbackExemptAdded) {
             Remove-LoopbackExempt $brokerPlugin.PackageFamilyName 2>&1 | Write-Log -Category Error -PassThru
+        }
+
+        if ($debugPrivilegeEnabled) {
+            try {
+                [System.Diagnostics.Process]::LeaveDebugMode()
+            }
+            catch {
+                Write-Log -Message "System.Diagnostics.Process.LeaveDebugMode failed" -ErrorRecord $_
+            }
         }
 
         Write-Progress -Completed
