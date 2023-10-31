@@ -9059,6 +9059,39 @@ function Get-ConnectedExperience {
     }
 }
 
+function Get-OneAuthAccount {
+    [CmdletBinding()]
+    param(
+        [string]$User
+    )
+
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+
+    if (-not $localAppdata) {
+        return
+    }
+    
+    Join-Path $localAppdata 'Microsoft\OneAuth\accounts' | Get-ChildItem | & {
+        process {
+            Get-Content $_.FullName | ConvertFrom-Json
+        }
+    }
+}
+
+function Remove-OneAuthAccount {
+    [CmdletBinding()]
+    param(
+        [string]$User
+    )
+
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+
+    if (-not $localAppdata) {
+        return
+    }
+    
+    Join-Path $localAppdata 'Microsoft\OneAuth\accounts\*' | Remove-Item
+}
 
 <#
 Use policy settings to manage privacy controls for Microsoft 365 Apps for enterprise
@@ -10353,7 +10386,20 @@ function Collect-OutlookInfo {
     Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin:$runAsAdmin"
     Write-Log "Target user:$($targetUser.Name) ($($targetUser.Sid))"
     Write-Log "AutoUpdate:$(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
-    Write-Log "Invocation:$(Get-CommandExpression -Invocation $MyInvocation)"
+
+    $invocation = Get-CommandExpression -Invocation $MyInvocation
+    Write-Log "Invocation:$invocation"
+
+    $ScriptInfo = [PSCustomObject]@{
+        Version    = $Script:Version
+        Invocation = $invocation
+        RunAsUser  = "$($currentUser.Name) ($($currentUser.Sid))"
+        TargetUser = "$($targetUser.Name) ($($targetUser.Sid))"
+        Start      = Get-Date
+        WaitStart  = $null
+        WaitStop   = $null
+        End        = $null
+    }
 
     try {
         # Set thread culture to en-US for consitent logging.
@@ -10726,6 +10772,8 @@ function Collect-OutlookInfo {
 
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted) {
             Write-Log "Waiting for the user to stop"
+            $ScriptInfo.WaitStart = Get-Date
+
             Write-Host 'Hit enter to stop: ' -NoNewline
             $waitResult = Wait-EnterOrControlC
 
@@ -10746,6 +10794,7 @@ function Collect-OutlookInfo {
     }
     finally {
         Write-Log "Stopping traces. $(if ($waitStart) { "Wait duration:$(Get-Elapsed $waitStart)" })"
+        $ScriptInfo.WaitStop = Get-Date
 
         $PSDefaultParameterValues['Write-Progress:Activity'] = 'Stopping traces'
 
@@ -10867,7 +10916,9 @@ function Collect-OutlookInfo {
                 Save-EventLog -Path $EventDir 2>&1 | Write-Log -Category Error
 
                 Write-Progress -Status 'Saving MSIPC logs'
-                Invoke-ScriptBlock { param($User, $Path, $All) Save-MSIPC @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = $MSIPCDir; All = $true } 2>&1 | Write-Log -Category Error
+                Invoke-ScriptBlock { param($User, $Path, $All) Save-MSIPC @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = $MSIPCDir; All = $true }
+
+                Invoke-ScriptBlock { param($User) Get-OneAuthAccount @PSBoundParameters } -ArgumentList @{ User = $targetUser } -Path $OfficeDir
             }
 
             if ($osConfigurationTask) {
@@ -10963,6 +11014,9 @@ function Collect-OutlookInfo {
         Reset-ThreadCulture 2>&1 | Write-Log -Category Error
         Close-TaskRunspace 2>&1 | Write-Log -Category Error
         Close-Log
+
+        $ScriptInfo.End = Get-Date
+        $ScriptInfo | Export-CliXml (Join-Path $tempPath 'ScriptInfo.xml')
     }
 
     # Bail if something failed or user interruped with Ctrl+C.
@@ -11018,4 +11072,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
