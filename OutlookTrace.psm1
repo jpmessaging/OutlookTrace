@@ -6242,6 +6242,10 @@ function Start-TTDMonitor {
     Start-Sleep -Seconds 1
 
     if (-not $process -or $process.HasExited) {
+        if ($process) {
+            $process.Dispose()
+        }
+
         if (Test-Path $stderr) {
             $errText = [IO.File]::ReadAllText($stderr)
         }
@@ -6387,12 +6391,14 @@ function Attach-TTD {
     # Check if ttd.exe successfully attached. And if so, wait until ttd.exe signals initCompleteEvent
     while ($true) {
         if (-not $process -or $process.HasExited) {
-            if (Test-Path $stderr) {
-                $errText = [IO.File]::ReadAllText($stderr)
-            }
+            $initCompleteEvent.Dispose()
 
             if ($process) {
                 $process.Dispose()
+            }
+
+            if (Test-Path $stderr) {
+                $errText = [IO.File]::ReadAllText($stderr)
             }
 
             Write-Error "ttd.exe failed to attach to the target (PID:$ProcessId). $errText"
@@ -6401,6 +6407,7 @@ function Attach-TTD {
 
         if ($initCompleteEvent.WaitOne($checkInterval)) {
             # initCompleteEvent is signaled.
+            $initCompleteEvent.Dispose()
             break
         }
 
@@ -10666,6 +10673,7 @@ function Collect-OutlookInfo {
             }
 
             $null = $psrStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan)
+            $psrStartedEvent.Dispose()
             $psrStarted = $true
         }
 
@@ -10765,6 +10773,7 @@ function Collect-OutlookInfo {
             }
 
             $null = $monitorStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan)
+            $monitorStartedEvent.Dispose()
             $hungDumpStarted = $true
         }
 
