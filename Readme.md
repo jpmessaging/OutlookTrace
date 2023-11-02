@@ -154,7 +154,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 ### Optional parameters
 
 | Name                 | Description                                                                                                                                    |
-| -------------------  | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | NetshReportMode      | Netsh trace's report mode. Valid values: `None`, `Mini`, `Full` (Default: `None`)                                                              |
 | LogFileMode          | ETW trace's mode. Valid values: `NewFile`, `Circular` (Default: `NewFile`)                                                                     |
 | MaxFileSizeMB        | Max file size for ETW trace files. By default, 256 MB when `NewFile` and 2048 MB when `Circular`                                               |
@@ -172,6 +172,8 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | EnablePageHeap       | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                           |
 | EnableLoopbackExempt | Switch to add Microsoft.AAD.BrokerPlugin to Loopback Exempt                                                                                    |
 | SkipVersionCheck     | Switch to skip script version check                                                                                                            |
+| TTDCommandlineFilter | Command line filter for TTD monitor                                                                                                            |
+| TTDShowUI            | Switch to show TTD UI                                                                                                                          |
 
 ## License
 

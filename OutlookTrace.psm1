@@ -6191,7 +6191,8 @@ function Start-TTDMonitor {
         [Parameter(Mandatory)]
         $ExecutableName,
         [Alias('CmdLineFilter')]
-        [string]$CommandlineFilter
+        [string]$CommandlineFilter,
+        [switch]$ShowUI
     )
 
     if (-not (Test-Path $Path)) {
@@ -6225,6 +6226,10 @@ function Start-TTDMonitor {
             }
 
             '-cmdLineFilter', $CommandlineFilter
+        }
+
+        if (-not $ShowUI) {
+            '-noUI'
         }
     )
 
@@ -6274,6 +6279,11 @@ function Stop-TTDMonitor {
         return
     }
 
+    # Stop current tracing, if any
+    Write-Log "Invoking 'ttd.exe -stop all'"
+    $null = & ttd.exe -stop all
+
+    # Stop monitoring
     Write-Log "Stopping ttd.exe (PID:$($Process.Id))"
     Stop-Process -InputObject $Process
     $Process.WaitForExit()
@@ -6311,7 +6321,8 @@ function Attach-TTD {
         [Parameter(Mandatory)]
         # Target Process ID
         [ValidateRange(4, [int]::MaxValue)]
-        [int]$ProcessId
+        [int]$ProcessId,
+        [Switch]$ShowUI
     )
 
     # Validate input args
@@ -6349,12 +6360,20 @@ function Attach-TTD {
         $outPath = "`"$outPath`""
     }
 
-    # Attach
+    # Create a named event for onInitCompleteEvent parameter of ttd.exe
+    $initCompleteEventName = [Guid]::NewGuid().ToString()
+    $initCompleteEvent = New-Object System.Threading.EventWaitHandle -ArgumentList $false, ([System.Threading.EventResetMode]::ManualReset), $initCompleteEventName
+
     $ttdArgs = @(
         '-acceptEula'
         '-timestampFileName'
         '-out', $outPath
-        '-attach', $ProcessId
+        '-attach', $ProcessId,
+        '-onInitCompleteEvent', $initCompleteEventName
+
+        if (-not $ShowUI) {
+            '-noUI'
+        }
     )
 
     $stderr = Join-Path $Path 'stderr.txt'
@@ -6362,10 +6381,11 @@ function Attach-TTD {
 
     $process = Start-Process 'ttd.exe' -ArgumentList $ttdArgs -WindowStyle Hidden -RedirectStandardError $stderr -PassThru
 
-    # Wait until a trace window becomes available
     $attachStart = Get-Timestamp
+    $checkInterval = [TimeSpan]::FromSeconds(1)
 
-    while (-not $process.MainWindowTitle) {
+    # Check if ttd.exe successfully attached. And if so, wait until ttd.exe signals initCompleteEvent
+    while ($true) {
         if (-not $process -or $process.HasExited) {
             if (Test-Path $stderr) {
                 $errText = [IO.File]::ReadAllText($stderr)
@@ -6379,10 +6399,12 @@ function Attach-TTD {
             return
         }
 
-        $ttdPid = $process.Id
-        $process.Dispose()
+        if ($initCompleteEvent.WaitOne($checkInterval)) {
+            # initCompleteEvent is signaled.
+            break
+        }
+
         Start-Sleep -Seconds 1
-        $process = Get-Process -Id $ttdPid -ErrorAction SilentlyContinue
     }
 
     $attachElapsed = Get-Elapsed $attachStart
@@ -10281,7 +10303,9 @@ function Collect-OutlookInfo {
         # Skip script version check.
         [switch]$SkipVersionCheck,
         # Command line filter for TTD monitor
-        [string]$TTDCommandlineFilter
+        [string]$TTDCommandlineFilter,
+        # Switch to show TTD UI
+        [switch]$TTDShowUI
     )
 
     $runAsAdmin = Test-RunAsAdministrator
@@ -10753,27 +10777,29 @@ function Collect-OutlookInfo {
                 Download-TTD -Path $ttdDownloadPath -ErrorAction Stop | Install-TTD
             }
 
-            # Log version
+            # Log TTD version
             if ($TTDPackage = Get-AppxPackage -Name 'Microsoft.TimeTravelDebugging') {
                 Write-Log "Using Microsoft.TimeTravelDebugging version $($TTDPackage.Version)"
             }
 
-            $ttdRunPath = (Join-Path $tempPath 'TTD')
+            $ttdArgs = @{
+                Path   = Join-Path $tempPath 'TTD'
+                ShowUI = $TTDShowUI
+            }
 
             # If Outlook is already running, attach to it. Otherwise, start monitoring for outlook.exe.
             if ($outlookProcess = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue) {
                 Write-Log "Attaching TTD to Outlook (PID:$($outlookProcess.Id))."
                 Write-Progress -Status "Attaching TTD to Outlook (PID:$($outlookProcess.Id)). This might take a while. Please wait"
-                $ttdProcess = Attach-TTD -Path $ttdRunPath -ProcessID $outlookProcess.Id -ErrorAction Stop
+
+                $ttdArgs.ProcessId = $outlookProcess.Id
+                $ttdProcess = Attach-TTD @ttdArgs -ErrorAction Stop
             }
             else {
-                $ttdMonitorArgs = $null
+                $ttdArgs.ExecutableName = 'outlook.exe'
+                $ttdArgs.CommandlineFilter = $TTDCommandlineFilter
 
-                if ($TTDCommandlineFilter) {
-                    $ttdMonitorArgs = @{ CommandlineFilter = $TTDCommandlineFilter }
-                }
-
-                $ttdProcess = Start-TTDMonitor -Path $ttdRunPath -ExecutableName 'outlook.exe' @ttdMonitorArgs -ErrorAction Stop
+                $ttdProcess = Start-TTDMonitor @ttdArgs -ErrorAction Stop
             }
 
             $ttdStarted = $true
