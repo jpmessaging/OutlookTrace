@@ -9105,7 +9105,12 @@ function Get-OneAuthAccount {
 
     Join-Path $localAppdata 'Microsoft\OneAuth\accounts' | Get-ChildItem | & {
         process {
-            Get-Content $_.FullName | ConvertFrom-Json
+            try {
+                Get-Content $_.FullName -Encoding UTF8 | ConvertFrom-Json
+            }
+            catch {
+                Write-Error -Message "Failed to parse $($_.FullName)" -Exception $_.Exception
+            }
         }
     }
 }
