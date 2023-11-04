@@ -2474,7 +2474,7 @@ function Save-EventLog {
 
     # Need admin rights to archive event logs.
     if (-not (Test-RunAsAdministrator)) {
-        Write-Error "Please run as administrator."
+        Write-Error "Please run as administrator"
         return
     }
 
@@ -2871,10 +2871,12 @@ function Get-UserShellFolder {
         [string]$User,
         [parameter(Mandatory = $true)]
         # Shell folder name (e.g. "AppData", "Desktop", "Local AppData" etc.)
+        [ValidateSet('AppData', 'Desktop', 'Local AppData', 'Programs', 'Personal', 'Startup')]
         [string]$ShellFolderName
     )
 
     $userRegRoot = Get-UserRegistryRoot -User $User
+
     if (-not $userRegRoot) {
         return
     }
@@ -2883,6 +2885,7 @@ function Get-UserShellFolder {
     $shellFolders = Get-Item $(Join-Path $userRegRoot "SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
     $folderPath = $shellFolders.GetValue($ShellFolderName, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
     $shellFolders.Dispose()
+
     if (-not $folderPath) {
         return
     }
@@ -4988,6 +4991,59 @@ function Remove-CachedOutlookConfig {
     Get-ChildItem -LiteralPath $sourcePath -Filter '*Config*.json' -Force -Recurse | Remove-Item -Force
 }
 
+<#
+.SYNOPSIS
+Remove cached Identities & Tokens
+#>
+function Remove-IdentityCache {
+    [CmdletBinding()]
+    param(
+        [string]$User
+    )
+
+    # You need to be elevated to restart TokenBroker service
+    if (-not (Test-RunAsAdministrator)) {
+        Write-Error "Please run as administrator"
+        return
+    }
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    # Remove Office Identity registry
+    Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity' | Where-Object { Test-Path $_ } | Remove-Item -Recurse -Force
+
+    $localAppData = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+
+    if (-not $localAppData) {
+        return
+    }
+
+    Stop-Service 'TokenBroker'
+
+    # Remove identity and token cache
+    & {
+        'Microsoft\OneAuth\accounts'
+
+        # IdentityCache
+        'Microsoft\IdentityCache'
+
+        # Accounts
+        'Packages\Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy\ac\TokenBroker\Accounts'
+        'Packages\Microsoft.Windows.CloudExperienceHost_cw5n1h2txyewy\AC\TokenBroker\Accounts'
+    } `
+    | Join-Path $localAppData -ChildPath { $_ } `
+    | Where-Object { Test-Path $_ } `
+    | Remove-Item -Recurse -Force
+
+    # Restart TokenBroker service
+    Write-Verbose "Restarting TokenBroker service"
+    Start-Service 'TokenBroker'
+}
+
 function Start-LdapTrace {
     [CmdletBinding(PositionalBinding = $false)]
     param(
@@ -5537,7 +5593,7 @@ function Start-Procmon {
 
     # Explicitly check admin rights
     if (-not (Test-RunAsAdministrator)) {
-        Write-Warning "Please run as administrator."
+        Write-Warning "Please run as administrator"
         return
     }
 
@@ -8841,6 +8897,13 @@ function Invoke-WamSignOut {
 
     foreach ($account in $accounts.Accounts) {
         $accountId = "UserName:$($account.UserName), Id:$($account.Id)"
+        $state = $account.State
+
+        if ($state -ne [Windows.Security.Credentials.WebAccountState]::Connected) {
+            Write-Log "Skipping $accountId because its State is $state"
+            continue
+        }
+
         $signOutMsg = "Signing out an account; $accountId"
 
         # If Force is not specified, ask the user
@@ -9103,7 +9166,8 @@ function Get-OneAuthAccount {
         return
     }
 
-    Join-Path $localAppdata 'Microsoft\OneAuth\accounts' | Get-ChildItem | & {
+    Join-Path $localAppdata 'Microsoft\OneAuth\accounts' `
+    | Get-ChildItem -ErrorAction SilentlyContinue | & {
         process {
             try {
                 Get-Content $_.FullName -Encoding UTF8 | ConvertFrom-Json
@@ -10324,7 +10388,7 @@ function Collect-OutlookInfo {
 
     # Explicitly check admin rights depending on the request.
     if (-not $runAsAdmin -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump|TTD' -or $EnablePageHeap -or $EnableLoopbackExempt)) {
-        Write-Warning "Please run as administrator."
+        Write-Warning "Please run as administrator"
         return
     }
 
@@ -10398,7 +10462,7 @@ function Collect-OutlookInfo {
 
     # Current user must be the target user for Invoke-WamSignOut to work propertly. Invoke-WamSignOut will be called later.
     if ($WamSignOut -and $targetUser.Sid -ne $currentUser.Sid) {
-        Write-Error "To use `"-WamSignOut`" parameter, the target user ($($targetUser.Name)) must run the script. Currently $($currentUser.Name) is running the script.`nThe target user can also use Invoke-WamSingout manually without admin privilege."
+        Write-Error "To use `"-WamSignOut`" parameter, the target user ($($targetUser.Name)) must run the script. Currently $($currentUser.Name) is running the script.`nThe target user can also use Invoke-WamSignout manually without admin privilege."
         return
     }
 
@@ -11138,4 +11202,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, <# Remove-IdentityCache,#> Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
