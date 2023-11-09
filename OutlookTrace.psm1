@@ -1349,17 +1349,21 @@ function Test-RunAsAdministrator {
     [OutputType([bool])]
     param()
 
-    Test-ProcessElevated -ProcessId $PID
+    Test-ProcessElevated $PID
 }
 
 function Test-ProcessElevated {
     [CmdletBinding()]
     [OutputType([bool])]
     param(
-        [Parameter(Mandatory, ValueFromPipeline, Position = 0, ParameterSetName = 'ProcessId')]
-        [int]$ProcessId,
-        [Parameter(Mandatory, ValueFromPipeline, Position = 0, ParameterSetName = 'Process')]
-        [System.Diagnostics.Process]$Process,
+        # Process ID. Support pipeline from both Get-Process & WMI Win32_Process
+        [Parameter(Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName, Position = 0)]
+        [Alias('ProcessId')]
+        # Note: CompletionResult is not used here, because CompletionResult does not work well for PowerShell (not ISE), when there are lot of items and it shows "Display all ... possiblities?" (it shows the list, but it ends the command input)
+        [ArgumentCompleter({
+                Get-Process | Sort-Object Id | Select-Object -ExpandProperty Id
+            })]
+        [int]$Id,
         [switch]$EnableDebugPrivilege
     )
 
@@ -1379,25 +1383,21 @@ function Test-ProcessElevated {
     }
 
     process {
-        if ($Process) {
-            $ProcessId = $Process.Id
-        }
-
         $hProcess = $null
         $hToken = [IntPtr]::Zero
 
         try {
-            $hProcess = [Win32.Kernel32]::OpenProcess([Win32.Kernel32]::PROCESS_QUERY_LIMITED_INFORMATION, $false, $ProcessId)
+            $hProcess = [Win32.Kernel32]::OpenProcess([Win32.Kernel32]::PROCESS_QUERY_LIMITED_INFORMATION, $false, $Id)
 
             if (-not $hProcess -or $hProcess.IsInvalid) {
                 $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
-                Write-Error -Message "OpenProcess failed for PID $ProcessId. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
+                Write-Error -Message "OpenProcess failed for PID $Id. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
                 return
             }
 
             if (-not [Win32.Advapi32]::OpenProcessToken($hProcess, [System.Security.Principal.TokenAccessLevels]::Query, [ref]$hToken)) {
                 $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
-                Write-Error -Message "OpenProcessToken failed for PID $ProcessId. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
+                Write-Error -Message "OpenProcessToken failed for PID $Id. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
                 return
             }
 
@@ -1414,7 +1414,7 @@ function Test-ProcessElevated {
                     [System.Runtime.InteropServices.Marshal]::SizeOf([type]'Win32.Advapi32+TOKEN_ELEVATION'),
                     [ref]$length)) {
                 $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
-                Write-Error -Message "GetTokenInformation failed for PID $ProcessId. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
+                Write-Error -Message "GetTokenInformation failed for PID $Id. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
                 return
             }
 
@@ -8320,7 +8320,7 @@ function Start-ProcessCapture {
 
                     if ($win32Process.ProcessId -gt 4) {
                         try {
-                            $err = $($isElevated = Test-ProcessElevated -ProcessId $win32Process.ProcessId) 2>&1
+                            $err = $($isElevated = Test-ProcessElevated $win32Process.ProcessId) 2>&1
                         }
                         catch {
                             $err = $_
@@ -8726,9 +8726,10 @@ function Get-IMProvider {
         return
     }
 
-    $defaultIMApp = Get-ItemProperty (Join-Path $root 'SOFTWARE\IM Providers') -Name 'DefaultIMApp' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultIMApp'
+    $defaultIMApp = Join-Path $root 'SOFTWARE\IM Providers' | Get-ItemProperty -Name 'DefaultIMApp' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultIMApp'
+
     if (-not $defaultIMApp) {
-        Write-Error "Failed to get DefaultIMApp."
+        Write-Error "There is no DefaultIMApp in $defaultIMApp"
         return
     }
 
@@ -10360,6 +10361,7 @@ function Collect-OutlookInfo {
         [ValidateRange('00:01:00', '01:00:00')]
         [TimeSpan]$PsrRecycleInterval = [Timespan]::FromMinutes(10),
         # Target user whose configuration is collected. By default, it's the logon user (Note:Not necessarily the current user running the script).
+        [ArgumentCompleter({ Get-LogonUser })]
         [string]$User,
         # Timespan used to detect a hung window when "HungDump" is requested in Component.
         [ValidateRange('00:00:01', '00:01:00')]
@@ -11151,7 +11153,8 @@ function Collect-OutlookInfo {
     $archiveName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
 
     if ($SkipArchive) {
-        $null = Start-Job { param($tempPath, $archiveName) Rename-Item -LiteralPath $tempPath -NewName $archiveName } -ArgumentList $tempPath, $archiveName
+        # Rename with a job because it might take a while if Windows Search's SearchProtocolHost.exe opens the folder.
+        $null = Start-Job { param($LiteralPath, $NewName) Rename-Item @PSBoundParameters } -ArgumentList $tempPath, $archiveName
         return
     }
 
@@ -11159,7 +11162,7 @@ function Collect-OutlookInfo {
     Rename-Item $archive.ArchivePath -NewName "$archiveName$([IO.Path]::GetExtension($archive.ArchivePath))"
 
     if (Test-Path $tempPath) {
-        $null = Start-Job { param($path) Remove-Item $path -Recurse -Force } -ArgumentList $tempPath
+        $null = Start-Job { param($LiteralPath) Remove-Item @PSBoundParameters -Recurse -Force } -ArgumentList $tempPath
     }
 
     Write-Host "The collected data is `"$(Join-Path $Path "$archiveName$([IO.Path]::GetExtension($archive.ArchivePath))")`"" -ForegroundColor Green
@@ -11196,4 +11199,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
