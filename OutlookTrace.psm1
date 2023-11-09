@@ -3022,6 +3022,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-SessionManager } }
         @{ScriptBlock = { Get-WinSystemLocale } }
         @{ScriptBlock = { Get-AppxPackage } }
+        @{ScriptBlock = { Get-Service } }
         @{ScriptBlock = { Get-SmbMapping } }
         @{ScriptBlock = { Get-AnsiCodePage } }
         @{ScriptBlock = { cmdkey /list }; FileName = 'cmdkey.txt' }
@@ -10370,8 +10371,6 @@ function Collect-OutlookInfo {
         [string]$HungMonitorTarget = 'Outlook',
         # Names of the target processes for crash dumps. When not specified, all processes will be the targets.
         [string[]]$CrashDumpTargets,
-        # Switch to sign out all WAM (Web Account Manager) accounts
-        [switch]$WamSignOut,
         # Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)
         [switch]$EnablePageHeap,
         # Switch to add Microsoft.AAD.BrokerPlugin to Loopback Exempt
@@ -10381,13 +10380,15 @@ function Collect-OutlookInfo {
         # Command line filter for TTD monitor
         [string]$TTDCommandlineFilter,
         # Switch to show TTD UI
-        [switch]$TTDShowUI
+        [switch]$TTDShowUI,
+        # Switch to remove cached identites & authentication tokens
+        [switch]$RemoveIdentityCache
     )
 
     $runAsAdmin = Test-RunAsAdministrator
 
     # Explicitly check admin rights depending on the request.
-    if (-not $runAsAdmin -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump|TTD' -or $EnablePageHeap -or $EnableLoopbackExempt)) {
+    if (-not $runAsAdmin -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump|TTD' -or $EnablePageHeap -or $EnableLoopbackExempt -or $RemoveIdentityCache)) {
         Write-Warning "Please run as administrator"
         return
     }
@@ -10458,12 +10459,6 @@ function Collect-OutlookInfo {
             Write-Error "Found multiple logon users ($($logonUsers.Count) users$(if ($logonUsers.Count -le 3) { "; $($logonUsers.Name -join ',')" })). Please specify the target user by `"-User`" parameter."
             return
         }
-    }
-
-    # Current user must be the target user for Invoke-WamSignOut to work propertly. Invoke-WamSignOut will be called later.
-    if ($WamSignOut -and $targetUser.Sid -ne $currentUser.Sid) {
-        Write-Error "To use `"-WamSignOut`" parameter, the target user ($($targetUser.Name)) must run the script. Currently $($currentUser.Name) is running the script.`nThe target user can also use Invoke-WamSignout manually without admin privilege."
-        return
     }
 
     if (-not (Test-Path $Path -ErrorAction Stop)) {
@@ -10544,9 +10539,8 @@ function Collect-OutlookInfo {
             }
         }
 
-        # Sign out of all WAM accounts.
-        if ($WamSignOut) {
-            Invoke-WamSignOut -Force -ErrorAction Stop
+        if ($RemoveIdentityCache) {
+            Invoke-ScriptBlock { param($User) Remove-IdentityCache @PSBoundParameters } -ArgumentList @{ User = $targetUser }
         }
 
         # Enable PageHeap for outlook.exe
@@ -11202,4 +11196,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, <# Remove-IdentityCache,#> Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
+Export-ModuleMember -Function Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
