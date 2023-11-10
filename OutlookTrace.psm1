@@ -9181,6 +9181,37 @@ function Get-OneAuthAccount {
     }
 }
 
+function Save-OneAuthAccount {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+        [string]$User
+    )
+
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+
+    if (-not $localAppdata) {
+        return
+    }
+
+    if (-not (Test-Path $Path)) {
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
+    }
+
+    Join-Path $localAppdata 'Microsoft\OneAuth\accounts' `
+    | Get-ChildItem -ErrorAction SilentlyContinue | & {
+        process {
+            try {
+                Copy-Item -LiteralPath $_.FullName -Destination $Path
+            }
+            catch {
+                Write-Error -Message "Failed to copy $($_.FullName)" -Exception $_.Exception
+            }
+        }
+    }
+}
+
 function Remove-OneAuthAccount {
     [CmdletBinding()]
     param(
@@ -11036,6 +11067,7 @@ function Collect-OutlookInfo {
                 Invoke-ScriptBlock { param($User, $Path, $All) Save-MSIPC @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = $MSIPCDir; All = $true }
 
                 Invoke-ScriptBlock { param($User) Get-OneAuthAccount @PSBoundParameters } -ArgumentList @{ User = $targetUser } -Path $OfficeDir
+                Invoke-ScriptBlock { param($Path, $User) Save-OneAuthAccount @PSBoundParameters } -ArgumentList @{ Path = Join-Path $OfficeDir 'OneAuthAccount'; User = $targetUser }
             }
 
             if ($osConfigurationTask) {
