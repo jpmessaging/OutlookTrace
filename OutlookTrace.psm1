@@ -1360,9 +1360,7 @@ function Test-ProcessElevated {
         [Parameter(Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName, Position = 0)]
         [Alias('ProcessId')]
         # Note: CompletionResult is not used here, because CompletionResult does not work well for PowerShell (not ISE), when there are lot of items and it shows "Display all ... possiblities?" (it shows the list, but it ends the command input)
-        [ArgumentCompleter({
-                Get-Process | Sort-Object Id | Select-Object -ExpandProperty Id
-            })]
+        [ArgumentCompleter({ Get-Process | Sort-Object Id | Select-Object -ExpandProperty Id })]
         [int]$Id,
         [switch]$EnableDebugPrivilege
     )
@@ -5008,14 +5006,19 @@ function Remove-IdentityCache {
         return
     }
 
+    # Remove Office Identity registry sub keys
     $userRegRoot = Get-UserRegistryRoot -User $User
 
     if (-not $userRegRoot) {
         return
     }
 
-    # Remove Office Identity registry
-    Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity' | Where-Object { Test-Path $_ } | Remove-Item -Recurse -Force
+    # Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity' | Where-Object { Test-Path $_ } | Remove-Item -Recurse -Force
+
+    Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity' `
+    | Get-ChildItem `
+    | Remove-Item -Recurse -Force 
+
 
     $localAppData = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
 
