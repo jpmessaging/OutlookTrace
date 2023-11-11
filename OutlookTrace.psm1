@@ -5013,12 +5013,9 @@ function Remove-IdentityCache {
         return
     }
 
-    # Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity' | Where-Object { Test-Path $_ } | Remove-Item -Recurse -Force
-
     Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity' `
     | Get-ChildItem `
     | Remove-Item -Recurse -Force
-
 
     $localAppData = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
 
