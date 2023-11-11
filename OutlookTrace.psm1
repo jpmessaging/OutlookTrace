@@ -5017,7 +5017,7 @@ function Remove-IdentityCache {
 
     Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity' `
     | Get-ChildItem `
-    | Remove-Item -Recurse -Force 
+    | Remove-Item -Recurse -Force
 
 
     $localAppData = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
@@ -7938,7 +7938,7 @@ function Get-OutlookAddin {
                             & {
                                 # Depending on the arch type of Outlook/MAPI, change search path. If it is x86, search Wow6432 first.
                                 # The order of keys matters here for performance.
-                                # Checking sub key of HKEY_CLASSES_ROOT\CLSID\ & HKEY_CLASSES_ROOT\WOW6432Node\CLSID\ are quite slow when the path does not exist (> 100 ms). Thus they are checked later.
+                                # Checking sub key of HKEY_CLASSES_ROOT\CLSID\ & HKEY_CLASSES_ROOT\WOW6432Node\CLSID\ is quite slow when the path does not exist (> 100 ms). Thus they are checked later.
                                 if ($arch -eq 'x86') {
                                     'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID'
                                     'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\'
@@ -8599,7 +8599,8 @@ function Invoke-AutoUpdate {
                 $message = "Skipped because the current script ($Version) is newer than or equal to GitHub's latest release ($($release.name))."
             }
             else {
-                Write-Verbose "Downloading the latest script."
+                Write-Verbose "Downloading the latest script"
+
                 $response = Invoke-Command {
                     # Suppress progress on Invoke-WebRequest.
                     $ProgressPreference = "SilentlyContinue"
@@ -8607,9 +8608,10 @@ function Invoke-AutoUpdate {
                 }
 
                 # Rename the current script and replace with the latest one.
-                $newName = [IO.Path]::GetFileNameWithoutExtension($PSCommandPath) + "_" + $Version + [IO.Path]::GetExtension($PSCommandPath)
+                $newName = [IO.Path]::GetFileNameWithoutExtension($PSCommandPath) + '_' + $Version + [IO.Path]::GetExtension($PSCommandPath)
+
                 if (Test-Path (Join-Path ([IO.Path]::GetDirectoryName($PSCommandPath)) $newName)) {
-                    $newName = [IO.Path]::GetFileNameWithoutExtension($PSCommandPath) + "_" + $Version + [IO.Path]::GetRandomFileName() + [IO.Path]::GetExtension($PSCommandPath)
+                    $newName = [IO.Path]::GetFileNameWithoutExtension($PSCommandPath) + '_' + $Version + '_' + [IO.Path]::GetRandomFileName() + [IO.Path]::GetExtension($PSCommandPath)
                 }
 
                 Rename-Item -LiteralPath $PSCommandPath -NewName $newName -ErrorAction Stop
@@ -8629,8 +8631,9 @@ function Invoke-AutoUpdate {
     }
 
     [PSCustomObject]@{
-        Success = $autoUpdateSuccess
-        Message = $message
+        Success    = $autoUpdateSuccess
+        Message    = $message
+        NewVersion = $release.name
     }
 }
 
@@ -10219,7 +10222,7 @@ function Wait-EnterOrControlC {
     Get-CommandExpression -Invocation $MyInvocation
 
 .NOTES
-    This function does not check if the given parameters belong to the same ParameterSets.
+    This function does not check if the given parameters belong to the same ParameterSet.
     So, there is no guarantee that the output expression runs successfully.
 
     For example, the following returns "Get-Process -Name Outlook -Id 123", but "Name" & "Id" parameters cannot be used simultaneously.
@@ -10266,7 +10269,7 @@ function Get-CommandExpression {
     $sb = New-Object System.Text.StringBuilder -ArgumentList $Command.Name
 
     foreach ($param in $Parameters.GetEnumerator()) {
-        # Skip if the given paramter name is not available
+        # Skip if the given parameter name is not available
         if (-not $Command.Parameters.ContainsKey($param.Key)) {
             continue
         }
@@ -10497,28 +10500,37 @@ function Collect-OutlookInfo {
         }
     }
 
-    if (-not (Test-Path $Path -ErrorAction Stop)) {
-        $null = New-Item -ItemType Directory $Path -ErrorAction Stop
-    }
-
     if (-not $SkipAutoUpdate) {
+        # Save a copy of Get-CommandExpression because it is not exported and it becomes unavailable after reloading the module.
+        ${Get-CommandExpression} = (Get-Command Get-CommandExpression).ScriptBlock
+
         $autoUpdate = Invoke-AutoUpdate
 
         if ($autoUpdate.Success) {
-            # Get the list of current parameters that are also available in the updated cmdlet (+ SkipAutoUpdate)
-            $PSBoundParameters.Add('SkipAutoUpdate', $true)
-            $expression = Get-CommandExpression -Command $MyInvocation.MyCommand -Parameters $PSBoundParameters
+            Write-Warning "$([IO.Path]::GetFileName($PSCommandPath)) was auto updated from $Version to $($autoUpdate.NewVersion)"
 
-            Write-Warning "OutlookTrace.psm1 was auto updated. Continuing with a new PowerShell instance"
-            Write-Verbose "New PowerShell instance is going to execute:'$expression'"
+            # Run with a new powershell.exe or pwsh.exe instance instead of invoking again, because native interop might be updated in the new version.
+            $PSBoundParameters.Add('SkipAutoUpdate', $true)
+            $expression = & ${Get-CommandExpression} -Command $MyInvocation.MyCommand -Parameters $PSBoundParameters
 
             $currentProcess = Get-Process -Id $PID
             $powerShellExe = $currentProcess.Path
             $currentProcess.Dispose()
+            $fileName = [IO.Path]::GetFileName($powerShellExe)
 
-            & $powerShellExe -NoLogo -NoExit -Command "& { Import-Module $PSCommandPath -DisableNameChecking -Force -ErrorAction Stop; $expression}"
+            # If running with other than powershell.exe or pwsh.exe (such as powershell_ise.exe), then warn the user to start over.
+            if ($fileName -notmatch '(powershell|pwsh)\.exe') {
+                Write-Warning "Please close $fileName and import the module again"
+                return
+            }
+
+            & $powerShellExe -NoLogo -NoExit -NoProfile -NonInteractive -Command "& { Import-Module $PSCommandPath -DisableNameChecking -Force -ErrorAction Stop; $expression}"
             return
         }
+    }
+
+    if (-not (Test-Path $Path -ErrorAction Stop)) {
+        $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
 
     # Create a temporary folder to store data.
