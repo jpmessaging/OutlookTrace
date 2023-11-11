@@ -168,7 +168,7 @@ If you captured a Fiddler trace, send the password used in step 8 too.
 | HungMonitorTarget    | Name of the target process to monitor a hung window (Default: `Outlook`)                                                                       |
 | MaxHungDumpCount     | Max number of hung dump files to be saved per process instance (Default: `3`, Min: `1`, Max: `10`)                                             |
 | CrashDumpTargets     | Names of the target processes for crash dumps. When not specified, all processes are the targets                                               |
-| WamSignOut           | Switch to sign out all WAM (Web Account Manager) accounts                                                                                      |
+| RemoveIdentityCache  | Switch to remove identity cache                                                                                                                |
 | EnablePageHeap       | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                           |
 | EnableLoopbackExempt | Switch to add Microsoft.AAD.BrokerPlugin to Loopback Exempt                                                                                    |
 | SkipVersionCheck     | Switch to skip script version check                                                                                                            |
