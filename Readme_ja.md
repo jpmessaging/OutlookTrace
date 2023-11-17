@@ -38,7 +38,7 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
     Import-Module C:\temp\OutlookTrace.psm1 -DisableNameChecking
     ```
 
-6. Collect-OutlookInfo を実行します
+6. `Collect-OutlookInfo` を実行します
 
     ※ 採取するコンポーネントについてはエンジニアからの案内をご確認ください。
 
@@ -124,8 +124,8 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 
 10. コンソールに Enter キーを入力しトレースを停止します。
 
-手順 6 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。
-Fiddler トレースを採取した場合には、手順 8 で指定したパスワードも併せてお寄せください。
+手順 6 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。  
+Fiddler トレースを採取した場合には、手順 9 で指定したパスワードも併せてお寄せください。
 
 ## ライセンス
 

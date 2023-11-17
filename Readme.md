@@ -27,7 +27,7 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
     Import-Module C:\temp\OutlookTrace.psm1 -DisableNameChecking
     ```
 
-6.  Run Collect-OutlookInfo
+6.  Run `Collect-OutlookInfo`
 
     Note: Follow Microsoft engineer's instruction regarding which components to trace.
 
@@ -114,8 +114,8 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
 10. Hit enter key in the console to stop.
 
-Send the zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 6.
-If you captured a Fiddler trace, send the password used in step 8 too.
+Send the zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 6.  
+If you captured a Fiddler trace, send the password used in step 9 too.
 
 ## Parameters
 

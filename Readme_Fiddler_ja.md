@@ -35,7 +35,7 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
     Import-Module C:\temp\OutlookTrace.psm1 -DisableNameChecking
     ```
 
-9. Collect-OutlookInfo を実行します。
+9. `Collect-OutlookInfo` を実行します。
 
     ※ 採取するコンポーネントについてはエンジニアからの案内をご確認ください。
 
