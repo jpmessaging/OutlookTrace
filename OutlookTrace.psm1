@@ -4499,7 +4499,7 @@ function Convert-MVUnicode {
     $reader = $null
 
     try {
-        $stream = New-Object System.IO.MemoryStream -ArgumentList (,$Bin)
+        $stream = New-Object System.IO.MemoryStream -ArgumentList (, $Bin)
         $reader = New-Object System.IO.BinaryReader $stream
 
         # Number of strings
@@ -7899,7 +7899,7 @@ function ConvertTo-CLSID {
 
             if ($clsidProp) {
                 $CLSID = $clsidProp.'(default)'
-                $path= ConvertFrom-PSPath $clsidProp.PsPath
+                $path = ConvertFrom-PSPath $clsidProp.PsPath
                 break
             }
         }
@@ -8427,12 +8427,13 @@ function Start-ProcessCapture {
                     }
 
                     $obj = @{
-                        Name         = $win32Process.Name
-                        Id           = $win32Process.ProcessId
-                        CreationDate = $win32Process.CreationDate
-                        Path         = $win32Process.Path
-                        Elevated     = $isElevated
-                        CommandLine  = $win32Process.CommandLine
+                        Name            = $win32Process.Name
+                        Id              = $win32Process.ProcessId
+                        CreationDate    = $win32Process.CreationDate
+                        Path            = $win32Process.Path
+                        Elevated        = $isElevated
+                        CommandLine     = $win32Process.CommandLine
+                        ParentProcessId = $win32Process.ParentProcessId
                     }
 
                     # For processes specified in NamePattern parameter, save its User & Environment Variables.
