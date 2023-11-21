@@ -3882,6 +3882,7 @@ $KnownSections = @{
 }
 
 $PropTags = @{
+    PR_ENTRYID                           = '01020fff'
     PR_LAST_OFFLINESTATE_OFFLINE         = '00030398'
     PR_SERVICE_UID                       = '01023d0c'
     PR_STORE_PROVIDERS                   = '01023d00'
@@ -3903,6 +3904,7 @@ $PropTags = @{
     PR_PROFILE_TENANT_ID                 = '001f6663'
     PR_PROFILE_OFFICE365_MAILBOX         = '000b6659'
     PR_PROFILE_EXCHANGE_CONSUMER_ACCOUNT = '000b665e'
+    PR_PROFILE_USER_EMAIL_ADDRESSES      = '101f6637'
 }
 
 function Get-OutlookProfile {
@@ -4288,6 +4290,7 @@ function Get-StoreProvider {
     $accountCount = $storeBin.Count / 4
 
     $storeProviderProps = @(
+        $PropTags.PR_ENTRYID
         $PropTags.PR_DISPLAY_NAME
         $PropTags.PR_RESOURCE_FLAGS
         $PropTags.PR_PROFILE_PST_PATH
@@ -4345,6 +4348,10 @@ function Get-StoreProvider {
                 $props.TenantId = [System.Text.Encoding]::Unicode.GetString($tenantIdBin)
             }
 
+            if ($entryIdBin = $store.$($PropTags.PR_ENTRYID)) {
+                $props.EntryId = [BitConverter]::ToSTring($entryIdBin).Replace('-', [String]::Empty).ToLowerInvariant()
+            }
+
             if ($emsmdbUidBin = $store.$($PropTags.PR_EMSMDB_SECTION_UID)) {
                 $props.EmsmdbUid = [BitConverter]::ToString($emsmdbUidBin).Replace('-', [String]::Empty).ToLowerInvariant()
             }
@@ -4379,6 +4386,7 @@ function Get-MapiAccount {
         $PropTags.PR_PROFILE_SYNC_DAYS
         $PropTags.PR_PROFILE_OFFICE365_MAILBOX
         $PropTags.PR_PROFILE_EXCHANGE_CONSUMER_ACCOUNT
+        $PropTags.PR_PROFILE_USER_EMAIL_ADDRESSES
     )
 
     $emsmdb = Join-Path $profRoot $emsmdbUid | Get-ItemProperty -Name $emsmdbProperties -ErrorAction SilentlyContinue
@@ -4431,6 +4439,10 @@ function Get-MapiAccount {
         $props.IsConsumerAccount = [System.BitConverter]::ToInt16($isConsumerAccountBin, 0) -eq 1
     }
 
+    if ($emailAddressesBin = $emsmdb.$($PropTags.PR_PROFILE_USER_EMAIL_ADDRESSES)) {
+        $props.UserEmailAddresses = Convert-MVUnicode $emailAddressesBin
+    }
+
     # Get Sync Window
     $syncMonths = $null
     $syncDays = $null
@@ -4471,6 +4483,61 @@ function Format-ByteSize {
 
     "{0:N2} {1}" -f $Size, $suffix[$index]
 }
+
+<#
+.SYNOPSIS
+    Parse PT_MV_UNICODE value and return an array of strings
+#>
+function Convert-MVUnicode {
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory)]
+        [byte[]]$Bin
+    )
+
+    $reader = $null
+
+    try {
+        $stream = New-Object System.IO.MemoryStream -ArgumentList (,$Bin)
+        $reader = New-Object System.IO.BinaryReader $stream
+
+        # Number of strings
+        $count = $reader.ReadInt32()
+
+        # Next 8 bytes are offset to the start of each string
+        $offsets = @(
+            for ($i = 0; $i -lt $count; ++$i) {
+                $reader.ReadInt64()
+            }
+        )
+
+        $reader.BaseStream.Position = $offsets[0]
+
+        @(
+            for ($i = 0; $i -lt $count; ++$i) {
+                $currentOffset = $offsets[$i]
+
+                if ($i -lt $count - 1) {
+                    $nextOffset = $offsets[$i + 1]
+                }
+                else {
+                    # For the last string, read to the end
+                    $nextOffset = $reader.BaseStream.Length
+                }
+
+                $bytes = $reader.ReadBytes($nextOffset - $currentOffset)
+                [System.Text.Encoding]::Unicode.GetString($bytes)
+            }
+        )
+    }
+    finally {
+        if ($reader) {
+            $reader.Dispose()
+        }
+    }
+}
+
 <#
 .SYNOPSIS
     Insert "Policies" after "Software" in the given registry path.
@@ -7796,18 +7863,17 @@ function ConvertTo-CLSID {
     [CmdletBinding()]
     param(
         [parameter(Mandatory = $true)]
-        [string]$ProgID,
+        [string]$ProgId,
         [string]$User
     )
 
     [uint32]$S_OK = 0
 
     [Guid]$CLSID = [Guid]::Empty
-    [uint32]$hr = [Win32.Ole32]::CLSIDFromProgID($ProgID, [ref]$CLSID)
+    [uint32]$hr = [Win32.Ole32]::CLSIDFromProgID($ProgId, [ref]$CLSID)
+    $path = $null
 
     if ($hr -ne $S_OK) {
-        Write-Verbose -Message $("CLSIDFromProgID for `"$ProgID`" failed with 0x{0:x}. Trying ClickToRun registry." -f $hr)
-
         $userRegRoot = Get-UserRegistryRoot -User $User
 
         if (-not $userRegRoot) {
@@ -7817,31 +7883,34 @@ function ConvertTo-CLSID {
         $locations = @(
             # ClickToRun Registry & the user's Classes
             "Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\"
-            (Join-Path $userRegRoot "SOFTWARE\Classes\")
+            Join-Path $userRegRoot "SOFTWARE\Classes\"
         )
 
         foreach ($loc in $locations) {
-            $clsidProp = Get-ItemProperty (Join-Path $loc "$ProgID\CLSID") -ErrorAction SilentlyContinue
-            $curVerProp = Get-ItemProperty (Join-Path $loc "$ProgID\CurVer") -ErrorAction SilentlyContinue
+            $clsidProp = Get-ItemProperty (Join-Path $loc "$ProgId\CLSID") -ErrorAction SilentlyContinue
+
+            if (-not $clsidProp) {
+                # See if CurVer key is available
+                if ($curVerProp = Get-ItemProperty (Join-Path $loc "$ProgId\CurVer") -ErrorAction SilentlyContinue) {
+                    $curProgId = $curVerProp.'(default)'
+                    $clsidProp = Get-ItemProperty (Join-Path $loc "$curProgId\CLSID") -ErrorAction SilentlyContinue
+                }
+            }
 
             if ($clsidProp) {
                 $CLSID = $clsidProp.'(default)'
-                break
-            }
-            elseif ($curVerProp) {
-                $curProgID = $curVerProp.'(default)'
-                $clsidProp = Get-ItemProperty (Join-Path $loc "$curProgID\CLSID") -ErrorAction SilentlyContinue
-                $CLSID = $clsidProp.'(default)'
+                $path= ConvertFrom-PSPath $clsidProp.PsPath
                 break
             }
         }
 
         if ($CLSID -eq [Guid]::Empty) {
-            Write-Error -Message $("CLSIDFromProgID for `"$ProgID`" failed with 0x{0:x}. Also, it was not found in the ClickToRun & user registry" -f $hr)
+            Write-Error -Message $("CLSIDFromProgID for `"$ProgId`" failed with 0x{0:x}. Also, it was not found in the ClickToRun & user registry" -f $hr)
             return
         }
     }
 
+    # CLSID found. Get its string representation.
     [IntPtr]$pClsIdString = [IntPtr]::Zero
     $hr = [Win32.Ole32]::StringFromCLSID($CLSID, [ref]$pCLSIDString)
 
@@ -7854,6 +7923,7 @@ function ConvertTo-CLSID {
     [PSCustomObject]@{
         GUID   = $CLSID
         String = $CLSIDString
+        Path   = $path # Where CLSID is found. null indicates it's found by CLSIDFromProgID API
     }
 }
 
@@ -7875,7 +7945,26 @@ function Get-OutlookAddin {
     }
 
     $officeInfo = Get-OfficeInfo
+
+    # Depending on the arch type of Outlook/MAPI, change CLSID search paths order. If it is x86, search Wow6432 first.
+    # The order of keys matters here for performance.
+    # Checking sub key of HKEY_CLASSES_ROOT\CLSID\ & HKEY_CLASSES_ROOT\WOW6432Node\CLSID\ is quite slow when the path does not exist (> 100 ms). Thus they are checked later.
     $arch = Get-ImageInfo -Path $officeInfo.MapiDllFileInfo.ToString() | Select-Object -ExpandProperty Architecture
+
+    $clsIdSearchPaths = @(
+        if ($arch -eq 'x86') {
+            'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID'
+            'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\'
+            'Registry::HKEY_CLASSES_ROOT\WOW6432Node\CLSID\'
+            'Registry::HKEY_CLASSES_ROOT\CLSID\'
+        }
+        else {
+            # Must be x64
+            'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\'
+            'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID'
+            'Registry::HKEY_CLASSES_ROOT\CLSID\'
+            'Registry::HKEY_CLASSES_ROOT\WOW6432Node\CLSID\'
+        })
 
     $LoadBehavior = @{
         0  = 'None'
@@ -7898,86 +7987,77 @@ function Get-OutlookAddin {
         begin { $cache = @{} }
         process {
             try {
-                $props = @{}
-                $props['Path'] = $addin.Name
-                $props['ProgID'] = $addin.PSChildName
+                $props = [ordered]@{
+                    ProgId       = $addin.PSChildName
+                    CLSID        = $null
+                    # ToDo:text might get garbled in DBCS environment.
+                    FriendlyName = $addin.GetValue('FriendlyName')
+                    Description  = $addin.GetValue('Description')
+                    Location     = $null
+                    Path         = $addin.Name
+                }
 
                 # First check LoadBehavior and if it's missing, ignore this entry
                 $loadBehaviorValue = $addin.GetValue('LoadBehavior')
 
                 if ($loadBehaviorValue) {
-                    $props['LoadBehavior'] = $LoadBehavior[$loadBehaviorValue]
+                    $props.LoadBehavior = $LoadBehavior[$loadBehaviorValue]
                 }
                 else {
-                    Write-Log "Skipping $($props['ProgID']) because its LoadBehavior is null."
+                    Write-Log "Skipping $($props.ProgId) because its LoadBehavior is null."
                     return
                 }
 
-                if ($cache.ContainsKey($props['ProgID'])) {
-                    Write-Log "Skipping $($props['ProgID']) because it's already found."
+                if ($cache.ContainsKey($props.ProgId)) {
+                    Write-Log "Skipping $($props.ProgId) because it's already found."
                     return
                 }
                 else {
-                    $cache.Add($props['ProgID'], $null)
+                    $cache.Add($props.ProgId, $null)
                 }
 
                 # Try to get CLSID.
-                $($clsid = ConvertTo-CLSID $props['ProgID'] -User $User -ErrorAction Continue) 2>&1 | Write-Log
+                $clsidErr = $($clsid = ConvertTo-CLSID $props.ProgId -User $User -ErrorAction Continue) 2>&1
 
                 if ($clsid) {
-                    $props['CLSID'] = $clsid.String
+                    $props.CLSID = $clsid.String
 
-                    # Check InprocServer32, LocalServer32, RemoteServer32
+                    if ($clsid.Path) {
+                        Write-Log "CLSID of $($props.ProgId) is found at $($clsid.Path)"
+                    }
+
                     # e.g. "...\CLSID\{C15AC6D0-15EE-49B3-9B2A-948320426B88}\InprocServer32"
-                    $null = & { 'InprocServer32'; 'LocalServer32'; 'RemoteServer32' } | & {
+                    # Check InprocServer32, LocalServer32, RemoteServer32
+                    $null = & { 'InprocServer32'; 'LocalServer32'; 'RemoteServer32' } `
+                    | & {
                         param([Parameter(ValueFromPipeline)]$comServerType)
                         process {
-                            & {
-                                # Depending on the arch type of Outlook/MAPI, change search path. If it is x86, search Wow6432 first.
-                                # The order of keys matters here for performance.
-                                # Checking sub key of HKEY_CLASSES_ROOT\CLSID\ & HKEY_CLASSES_ROOT\WOW6432Node\CLSID\ is quite slow when the path does not exist (> 100 ms). Thus they are checked later.
-                                if ($arch -eq 'x86') {
-                                    'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID'
-                                    'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\'
-                                    'Registry::HKEY_CLASSES_ROOT\WOW6432Node\CLSID\'
-                                    'Registry::HKEY_CLASSES_ROOT\CLSID\'
-                                }
-                                else {
-                                    # Must be x64
-                                    'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\CLSID\'
-                                    'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Wow6432Node\CLSID'
-                                    'Registry::HKEY_CLASSES_ROOT\CLSID\'
-                                    'Registry::HKEY_CLASSES_ROOT\WOW6432Node\CLSID\'
-                                }
-                            }`
-                            | Join-Path -ChildPath $props['CLSID'] `
-                            | Join-Path -ChildPath $comServerType `
-                            | Get-ItemProperty -ErrorAction SilentlyContinue | & {
-                                param([Parameter(ValueFromPipeline)]$comSpec)
-                                process {
-                                    $props['Location'] = $comSpec.'(default)'
-                                    $props['ThreadingModel'] = $comSpec.ThreadingModel
-                                    $props['CodeBase'] = $comSpec.CodeBase
-                                    # Stop the pipeline
-                                    $true
-                                }
-                            }
+                            $clsIdSearchPaths | Join-Path -ChildPath $props.CLSID | Join-Path -ChildPath $comServerType
                         }
-                    } | Select-Object -First 1
+                    } `
+                    | Get-ItemProperty -ErrorAction SilentlyContinue `
+                    | & {
+                        param([Parameter(ValueFromPipeline)]$comSpec)
+                        process {
+                            $props.Location = $comSpec.'(default)'
+                            $props.ThreadingModel = $comSpec.ThreadingModel
+                            $props.CodeBase = $comSpec.CodeBase
+                            # Stop the pipeline
+                            $true
+                        }
+                    } `
+                    | Select-Object -First 1
                 }
                 elseif ($manifest = $addin.GetValue('Manifest')) {
                     # A managed addin does not have CLSID. Check "Manifest" instead.
-                    $props['Location'] = $manifest
-                    Write-Log "Manifest is found. This is a VSTO addin."
+                    $props.Location = $manifest
+                    Write-Log "Manifest is found for $($props.ProgId). This is a VSTO addin"
                 }
                 else {
                     # If both CLSID & Manifest are missing, ignore this entry.
+                    $clsidErr | Write-Log -Category Warning
                     return
                 }
-
-                # ToDo:text might get garbled in DBCS environment.
-                $props['Description'] = $addin.GetValue('Description')
-                $props['FriendlyName'] = $addin.GetValue('FriendlyName')
 
                 [PSCustomObject]$props
             }
@@ -8340,7 +8420,7 @@ function Start-ProcessCapture {
                                     $proc.Dispose()
                                 }
                                 else {
-                                    Write-Log "$errMsg because the process has already exited" -ErrorRecord $err -Category Warning
+                                    Write-Log "$errMsg because the process has already exited" -ErrorRecord $err
                                 }
                             }
                         }
