@@ -4440,7 +4440,13 @@ function Get-MapiAccount {
     }
 
     if ($emailAddressesBin = $emsmdb.$($PropTags.PR_PROFILE_USER_EMAIL_ADDRESSES)) {
-        $props.UserEmailAddresses = Convert-MVUnicode $emailAddressesBin
+        # TODO: To be removed later
+        try {
+            $props.UserEmailAddresses = Convert-MVUnicode $emailAddressesBin
+        }
+        catch {
+            Write-Error -Message "Convert-MVUnicode failed. $_" -Exception $_.Exception
+        }
     }
 
     # Get Sync Window
@@ -4505,10 +4511,17 @@ function Convert-MVUnicode {
         # Number of strings
         $count = $reader.ReadInt32()
 
-        # Next 8 bytes are offset to the start of each string
+        # Next 4 or 8 bytes are offset to the start of each string (4 bytes for 32 bit Outlook, 8 bytes 64 bit Outlook)
+        $officeInfo = Get-OfficeInfo
+
         $offsets = @(
             for ($i = 0; $i -lt $count; ++$i) {
-                $reader.ReadInt64()
+                if ($officeInfo.Architecture -eq 'x86') {
+                    $reader.ReadInt32()
+                }
+                else {
+                    $reader.ReadInt64()
+                }
             }
         )
 
@@ -6707,14 +6720,15 @@ function Get-OfficeInfo {
 
     if ($outlookReg) {
         $mapiDll = Get-ItemProperty $outlookReg.DLLPathEx -ErrorAction SilentlyContinue
+        $arch = Get-ImageInfo -Path $mapiDll | Select-Object -ExpandProperty Architecture
     }
 
-    $Script:OfficeInfoCache =
-    [PSCustomObject]@{
+    $Script:OfficeInfoCache = [PSCustomObject]@{
         DisplayName     = $displayName
         Version         = $version
         InstallPath     = $installPath
         MapiDllFileInfo = $mapiDll
+        Architecture    = $arch
     }
 
     $Script:OfficeInfoCache
@@ -7949,7 +7963,7 @@ function Get-OutlookAddin {
     # Depending on the arch type of Outlook/MAPI, change CLSID search paths order. If it is x86, search Wow6432 first.
     # The order of keys matters here for performance.
     # Checking sub key of HKEY_CLASSES_ROOT\CLSID\ & HKEY_CLASSES_ROOT\WOW6432Node\CLSID\ is quite slow when the path does not exist (> 100 ms). Thus they are checked later.
-    $arch = Get-ImageInfo -Path $officeInfo.MapiDllFileInfo.ToString() | Select-Object -ExpandProperty Architecture
+    $arch = $officeInfo.Architecture
 
     $clsIdSearchPaths = @(
         if ($arch -eq 'x86') {
