@@ -8528,9 +8528,12 @@ function Start-PsrMonitor {
         [bool]$Circular
     )
 
+    if ($IsStartedEvent) {
+        $null = $IsStartedEvent.Set()
+    }
+
     while ($true) {
         $startResult = Start-PSR -Path $Path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')"
-        $null = $IsStartedEvent.Set()
         $canceled = $CancellationToken.WaitHandle.WaitOne($WaitInterval)
         Stop-PSR -StartResult $startResult
 
