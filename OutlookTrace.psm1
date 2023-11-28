@@ -6565,11 +6565,11 @@ function Detach-TTD {
     [CmdletBinding(DefaultParameterSetName = 'InputObject')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
     param(
-        [Parameter(ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [Parameter(ParameterSetName = 'InputObject', Mandatory, ValueFromPipeline)]
         # Output of Attach-TTD
         $InputObject,
         # Target Process ID (Not ttd.exe's PID)
-        [Parameter(ParameterSetName = 'ProcessId')]
+        [Parameter(ParameterSetName = 'ProcessId', Mandatory)]
         [int]$ProcessId
     )
 
@@ -6577,28 +6577,39 @@ function Detach-TTD {
         $ProcessId = $InputObject.ProcessId
     }
 
-    if (-not $ProcessId) {
-        Write-Log "Detaching TTD. Invoking 'ttd.exe -stop all'"
-        $null = & ttd.exe -stop all
-    }
-    else {
-        Write-Log "Detaching TTD. Invoking 'ttd.exe -stop $ProcessId'"
-        $null = & ttd.exe -stop $ProcessId
-    }
+    # The target process might not exist anymore (e.g., it might have crashed)
+    $targetProcess = $null
 
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to detach TTD $(if ($ProcessId) { " from $ProcessId" })"
-        return
-    }
+    try {
+        $targetProcess = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
 
-    if ($InputObject) {
-        if ($InputObject.Process) {
-            $InputObject.Process.WaitForExit()
-            $InputObject.Process.Dispose()
+        if (-not $targetProcess) {
+            Write-Log "Target Process (PID:$ProcessId) does not exist anymore"
+            return
         }
 
-        if ((Test-Path $InputObject.StandardError) -and -not (Get-Content $InputObject.StandardError)) {
-            Remove-Item $InputObject.StandardError 2>&1 | Write-Log -Category Warning
+        Write-Log "Detaching TTD. Invoking 'ttd.exe -stop $ProcessId'"
+        $null = & ttd.exe -stop $ProcessId
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to detach TTD from $ProcessId"
+        }
+    }
+    finally {
+        if ($targetProcess) {
+            $targetProcess.Dispose()
+        }
+
+        if ($InputObject) {
+            if ($InputObject.Process) {
+                # Wait for ttd.exe to finish.
+                $InputObject.Process.WaitForExit()
+                $InputObject.Process.Dispose()
+            }
+
+            if ((Test-Path $InputObject.StandardError) -and -not (Get-Content $InputObject.StandardError)) {
+                Remove-Item $InputObject.StandardError 2>&1 | Write-Log -Category Warning
+            }
         }
     }
 }
