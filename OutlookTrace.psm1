@@ -6402,22 +6402,28 @@ function Start-TTDMonitor {
 function Stop-TTDMonitor {
     [CmdletBinding(DefaultParameterSetName = 'InputObject')]
     param(
-        [Parameter(ParameterSetName = 'InputObject', Mandatory, ValueFromPipeline)]
+        [Parameter(ParameterSetName = 'InputObject', ValueFromPipeline)]
         # Output of Start-TTDMonitor
-        $InputObject,
-        [Parameter(ParameterSetName = 'Process', Mandatory, ValueFromPipeline)]
-        # TTD.exe process
-        [System.Diagnostics.Process]$Process
+        $InputObject
     )
 
     if ($InputObject) {
-        $Process = $InputObject.Process
-    }
+        $ttdProcess = $InputObject.Process
 
-    # Check if the target process is ttd
-    if ($Process.Name -ne 'TTD') {
-        Write-Error "Given process is not TTD"
-        return
+        # Sanity check if the target process is ttd
+        if ($ttdProcess.Name -ne 'TTD') {
+            Write-Error "Given process is not TTD"
+            return
+        }
+    }
+    else {
+        # Even when multiple proceses are traced simultaneouly, there should be only one ttd.exe
+        $ttdProcess = Get-Process -Name 'ttd' -ErrorAction SilentlyContinue | Select-Object -First 1
+
+        if (-not $ttdProcess) {
+            Write-Error "Cannot find any running instance of ttd.exe"
+            return
+        }
     }
 
     # Stop current tracing, if any
@@ -6425,10 +6431,10 @@ function Stop-TTDMonitor {
     $null = & ttd.exe -stop all
 
     # Stop monitoring
-    Write-Log "Stopping ttd.exe (PID:$($Process.Id))"
-    Stop-Process -InputObject $Process
-    $Process.WaitForExit()
-    $Process.Dispose()
+    Write-Log "Stopping ttd.exe (PID:$($ttdProcess.Id))"
+    Stop-Process -InputObject $ttdProcess
+    $ttdProcess.WaitForExit()
+    $ttdProcess.Dispose()
 
     if ($InputObject) {
         if ((Test-Path $InputObject.StandardError) -and -not (Get-Content $InputObject.StandardError)) {
@@ -10999,8 +11005,7 @@ function Collect-OutlookInfo {
 
             # First make sure TTD.exe is available; Otherwise locate or download.
             if (-not (Get-Command 'ttd.exe' -ErrorAction SilentlyContinue)) {
-                $ttdDownloadPath = Join-Path $Path 'TTD Installer'
-                Download-TTD -Path $ttdDownloadPath -ErrorAction Stop | Install-TTD
+                Download-TTD -Path $Path -ErrorAction Stop | Install-TTD
             }
 
             # Log TTD version
