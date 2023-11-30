@@ -1359,8 +1359,8 @@ function Test-ProcessElevated {
         # Process ID. Support pipeline from both Get-Process & WMI Win32_Process
         [Parameter(Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName, Position = 0)]
         [Alias('ProcessId')]
-        # Note: CompletionResult is not used here, because CompletionResult does not work well for PowerShell (not ISE), when there are lot of items and it shows "Display all ... possiblities?" (it shows the list, but it ends the command input)
-        [ArgumentCompleter({ Get-Process | Sort-Object Id | Select-Object -ExpandProperty Id })]
+        # Note about ArgumentCompleter: CompletionResult is not used here, because CompletionResult does not work well for PowerShell (not ISE) when there are a lot of items. It shows "Display all ... possiblities?" (it shows the list, but it ends the command input)
+        # [ArgumentCompleter({ Get-Process | Sort-Object Id | Select-Object -ExpandProperty Id })]
         [int]$Id,
         [switch]$EnableDebugPrivilege
     )
@@ -10510,7 +10510,7 @@ function Collect-OutlookInfo {
         [ValidateRange('00:01:00', '01:00:00')]
         [TimeSpan]$PsrRecycleInterval = [Timespan]::FromMinutes(10),
         # Target user whose configuration is collected. By default, it's the logon user (Note:Not necessarily the current user running the script).
-        [ArgumentCompleter({ Get-LogonUser })]
+        # [ArgumentCompleter({ Get-LogonUser })]
         [string]$User,
         # Timespan used to detect a hung window when "HungDump" is requested in Component.
         [ValidateRange('00:00:01', '00:01:00')]
