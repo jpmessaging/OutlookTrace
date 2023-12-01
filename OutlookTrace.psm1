@@ -10305,6 +10305,8 @@ function Wait-EnterOrControlC {
                     break
                 }
             }
+
+            Start-Sleep -Seconds 1
         }
 
         [Console]::TreatControlCAsInput = $false
