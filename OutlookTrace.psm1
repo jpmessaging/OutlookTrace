@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2023-12-02'
+$Version = 'v2023-12-07'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -10558,6 +10558,7 @@ function Collect-OutlookInfo {
 
     # Try to enable Debug Privilege if running as admin
     $debugPrivilegeEnabled = $false
+    $enterDebugModeErrorRec = $null
 
     if ($runAsAdmin) {
         try {
@@ -10565,7 +10566,13 @@ function Collect-OutlookInfo {
             $debugPrivilegeEnabled = $true
         }
         catch {
-            Write-Log -Message "Failed to enable Debug Privilege. $_" -ErrorRecord $_ -Category Error
+            $enterDebugModeErrorRec = $_
+
+            # Debug Privilege is necessary when collecting normal & hung dump files; otherwise process's SafeHandle is not available (crash dumps are ok because they are collected by WER)
+            if ($Component -contains "Dump" -or $Component -contains 'HungDump') {
+                Write-Error -Message "Failed to enable Debug Privilege. $_" -Exception $_.Exception
+                return
+            }
         }
     }
 
@@ -10666,12 +10673,16 @@ function Collect-OutlookInfo {
     Write-Log "Script Version:$Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString())); PID:$pid"
     Write-Log "PSVersion:$($PSVersionTable.PSVersion); CLRVersion:$($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE:$env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432:$env:PROCESSOR_ARCHITEW6432"
-    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin:$runAsAdmin"
+    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin:$runAsAdmin; DebugPrivilegeEnabled:$debugPrivilegeEnabled"
     Write-Log "Target user:$($targetUser.Name) ($($targetUser.Sid))"
     Write-Log "AutoUpdate:$(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
 
     $invocation = Get-CommandExpression -Invocation $MyInvocation
     Write-Log "Invocation:$invocation"
+
+    if ($runAsAdmin -and -not $debugPrivilegeEnabled) {
+        Write-Log -Message "Running as admin, but failed to enable Debug Privilege. $enterDebugModeErrorRec (NativeErrorCode:$($enterDebugModeErrorRec.Exception.NativeErrorCode))" -ErrorRecord $enterDebugModeErrorRec -Category Error
+    }
 
     $ScriptInfo = [PSCustomObject]@{
         Version    = $Script:Version
