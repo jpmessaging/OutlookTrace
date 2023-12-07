@@ -4649,7 +4649,7 @@ function Get-OutlookOption {
             [Parameter(Mandatory)]
             $Description,
             [Parameter(Mandatory)]
-            [ValidateSet('Mail', 'Calendar', 'Tasks', 'Advanced', 'Power', 'Security', 'Setup', 'Search')]
+            [ValidateSet('Mail', 'Calendar', 'General', 'Tasks', 'Advanced', 'Power', 'Security', 'Setup', 'Search')]
             $Category,
             $Value
         )
@@ -4713,6 +4713,7 @@ function Get-OutlookOption {
         New-Option -Name 'NewMailDesktopAlertsDRMPreview' -Description 'Enable preview for Rights Protected messages' -Category Mail -Value $false
         New-Option -Name 'SaveSent' -Description 'Save copies of messages in the Sent Items folder' -Category Mail -Value $true
         New-Option -Name 'DelegateSentItemsStyle' -Description "When set to 1, items sent on behalf of a manager will now go to the manager's sent items box" -Category Mail -Value $false
+        New-Option -Name 'HideNewOutlookToggle' -Description 'Hide the "Try the new Outlook" toggle in Outlook Desktop' -Category General -Value $false
         New-Option -Name 'ShowLegacySharingUX' -Description 'Turn off Calendar Sharing REST API and use Legacy UI' -Category Calendar -Value $false
         New-Option -Name 'OpenTasksWithToDoApp' -Description 'When opening from a reminder, open tasks with ToDo App' -Category Tasks -Value $false
         New-Option -Name 'Autodetect_CodePageOut' -Description 'Automatically select encoding for outgoing messages' -Category Advanced -Value $true
@@ -4721,6 +4722,7 @@ function Get-OutlookOption {
         New-Option -Name 'ConservativeMeteredNetworkBehavior' -Description 'Behavior on a conservative metered network' -Category Power -Value 'Default'
         New-Option -Name 'BatteryMode' -Description 'Battery mode' -Category Power -Value 'Default'
         New-Option -Name 'MarkInternalAsUnsafe' -Description 'Use Protected View for attachments received from internal senders' -Category Security -Value $false
+        New-Option -Name 'EnableUnsafeClientMailRules' -Description 'Enable executing client side mail rules which start an application, or invoke a VBA macro' -Category Security -Value $false
         New-Option -Name 'DisableOffice365SimplifiedAccountCreation' -Description 'Using simplified account creation to add an account to Outlook' -Category Setup -Value $false
         New-Option -Name 'DisableServerAssistedSearch' -Description 'Disables Outlook from requesting and using Search results from Exchange for cached and non-cached mailbox items. Instead it will use search results from windows search service' -Category Search -Value $false
         New-Option -Name 'DisableServerAssistedSuggestions' -Description 'Disables Outlook from requesting search suggestions from Exchange' -Category Search -Value $false
@@ -4745,6 +4747,16 @@ function Get-OutlookOption {
         process {
             $PSDefaultParameterValues['Set-Option:Property'] = $_
             Set-Option -Name 'ShowLegacySharingUX'
+        }
+    }
+
+    & {
+        Join-Path $optionsPath 'General'
+        Join-Path $optionsPath 'General' | ConvertTo-PolicyPath
+    } | Get-ItemProperty -ErrorAction SilentlyContinue | & {
+        process {
+            $PSDefaultParameterValues['Set-Option:Property'] = $_
+            Set-Option -Name 'HideNewOutlookToggle'
         }
     }
 
@@ -4821,6 +4833,7 @@ function Get-OutlookOption {
         process {
             $PSDefaultParameterValues['Set-Option:Property'] = $_
             Set-Option -Name 'MarkInternalAsUnsafe'
+            Set-Option -Name 'EnableUnsafeClientMailRules'
         }
     }
 
@@ -10543,7 +10556,7 @@ function Collect-OutlookInfo {
         return
     }
 
-    # Enable Debug Privilege if running as admin
+    # Try to enable Debug Privilege if running as admin
     $debugPrivilegeEnabled = $false
 
     if ($runAsAdmin) {
@@ -10552,8 +10565,7 @@ function Collect-OutlookInfo {
             $debugPrivilegeEnabled = $true
         }
         catch {
-            Write-Error -Message "Cannot enable Debug Privilege. $_" -Exception $_.Exception
-            return
+            Write-Log -Message "Failed to enable Debug Privilege. $_" -ErrorRecord $_ -Category Error
         }
     }
 
@@ -11289,7 +11301,7 @@ function Collect-OutlookInfo {
                 [System.Diagnostics.Process]::LeaveDebugMode()
             }
             catch {
-                Write-Log -Message "System.Diagnostics.Process.LeaveDebugMode failed" -ErrorRecord $_
+                Write-Log -Message "System.Diagnostics.Process.LeaveDebugMode failed" -ErrorRecord $_ -Category Error
             }
         }
 
