@@ -991,7 +991,7 @@ function Write-Log {
 function Close-Log {
     if ($Script:LogWriter) {
         if ($Script:LogWriter.BaseStream.CanWrite) {
-            Write-Log "Closing LogWriter."
+            Write-Log "Closing LogWriter"
             $Script:LogWriter.Close()
         }
 
@@ -1052,7 +1052,7 @@ function Open-TaskRunspace {
         return
     }
 
-    Write-Log "Setting up a Runspace Pool with an initialSessionState. MinRunspaces:$MinRunspaces, MaxRunspaces:$MaxRunspaces."
+    Write-Log "Setting up a Runspace Pool with an initialSessionState. MinRunspaces:$MinRunspaces, MaxRunspaces:$MaxRunspaces"
     $initialSessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
 
     # Add functions from this script module. This will find all the functions including non-exported ones.
@@ -1091,7 +1091,7 @@ function Open-TaskRunspace {
     $Script:RunspacePool = [runspacefactory]::CreateRunspacePool($MinRunspaces, $MaxRunspaces, $initialSessionState, $Host)
     $Script:RunspacePool.Open()
 
-    Write-Log "RunspacePool ($($Script:RunspacePool.InstanceId.ToString())) is opened."
+    Write-Log "RunspacePool ($($Script:RunspacePool.InstanceId.ToString())) is opened"
 }
 
 function Close-TaskRunspace {
@@ -1105,7 +1105,7 @@ function Close-TaskRunspace {
     $id = $Script:RunspacePool.InstanceId.ToString()
     $Script:RunspacePool.Close()
     $Script:RunspacePool = $null
-    Write-Log "RunspacePool ($id) is closed."
+    Write-Log "RunspacePool ($id) is closed"
 }
 
 <#
@@ -1118,7 +1118,7 @@ if (Wait-Task $t -Timeout 00:01:00) {
     $t | Receive-Task
 }
 else {
-    Write-Error "Timeout."
+    Write-Error "Timeout"
 }
 
 .EXAMPLE
@@ -1145,7 +1145,7 @@ function Start-Task {
     )
 
     if (-not $Script:RunspacePool) {
-        Write-Error -Message "Open-TaskRunspace must be called in advance."
+        Write-Error -Message "Open-TaskRunspace must be called in advance"
         return
     }
 
@@ -1868,7 +1868,7 @@ function Compress-Folder {
 
         # There are no files to archive. This is not necessarily an error, but write as an error for the caller.
         if ($ddfWrittenCount -eq 0) {
-            Write-Error -Message "There are $($files.Count) files in $Path, but none can be opened."
+            Write-Error -Message "There are $($files.Count) files in $Path, but none can be opened"
             return
         }
 
@@ -1899,7 +1899,7 @@ function Compress-Folder {
 
     # Here's main body of Compress-Folder
     if ($FromDateTime -and $ToDateTime -and $FromDateTime -gt $ToDateTime) {
-        Write-Error "FromDateTime must be less than or equal to ToDateTime."
+        Write-Error "FromDateTime must be less than or equal to ToDateTime"
         return
     }
 
@@ -2119,7 +2119,7 @@ function Start-WamTrace {
 
     $traceFile = Join-Path $Path -ChildPath $FileName
 
-    Write-Log "Starting a WAM trace."
+    Write-Log "Starting a WAM trace"
     $err = $($stdout = Invoke-Command {
             $ErrorActionPreference = 'Continue'
             & logman.exe start trace $SessionName -pf $providerFile -o $traceFile -bs 128 -max $MaxFileSizeMB -mode $mode -ets
@@ -2257,14 +2257,14 @@ function Start-NetshTrace {
     }
 
     if (-not (Get-Command $netshexe -ErrorAction SilentlyContinue)) {
-        Write-Error "Cannot find $netshexe."
+        Write-Error "Cannot find $netshexe"
         return
     }
 
     Write-Log "Clearing dns cache"
     $null = & ipconfig.exe /flushdns
 
-    Write-Log "Starting a netsh trace."
+    Write-Log "Starting a netsh trace"
     $traceFile = Join-Path $Path -ChildPath $FileName
     $err = $($stdout = Invoke-Command {
             $ErrorActionPreference = 'Continue'
@@ -2287,7 +2287,7 @@ function Start-NetshTrace {
         'Full' { Set-ItemProperty -Path $netshRegPath -Name 'ReportEnabled' -Type DWord -Value 1; break }
     }
 
-    Write-Log "ReportMode $ReportMode is configured."
+    Write-Log "ReportMode $ReportMode is configured"
 }
 
 function Stop-NetshTrace {
@@ -2303,7 +2303,7 @@ function Stop-NetshTrace {
 
     while ($retry -le $maxRetry -and -not $sessionFound) {
         if ($retry) {
-            Write-Log "$SessionName was not found. Retrying after $retry seconds."
+            Write-Log "$SessionName was not found. Retrying after $retry seconds"
             Start-Sleep -Seconds $retry
         }
 
@@ -2337,7 +2337,7 @@ function Stop-NetshTrace {
         $reportMode = 'Mini'
     }
 
-    Write-Log "ReportMode $reportMode is found."
+    Write-Log "ReportMode $reportMode is found"
 
     if ($reportMode -ne 'None') {
         Write-Progress -Activity "Stopping netsh trace" -Status "This might take a while. Generating a $reportMode Report" -PercentComplete -1
@@ -2351,7 +2351,7 @@ function Stop-NetshTrace {
     }
 
     if (-not (Get-Command $netshexe -ErrorAction SilentlyContinue)) {
-        Write-Error "Cannot find $netshexe."
+        Write-Error "Cannot find $netshexe"
         return
     }
 
@@ -2409,7 +2409,7 @@ function Start-PSR {
     )
 
     if (-not (Get-Command 'psr.exe' -ErrorAction SilentlyContinue)) {
-        Write-Error "psr.exe is not available."
+        Write-Error "psr.exe is not available"
         return
     }
 
@@ -2648,7 +2648,7 @@ function Get-MicrosoftUpdate {
         }
         else {
             # This is the case where registry rediction takes place (32bit PowerShell on 64bit OS). Bail.
-            Write-Error "32bit PowerShell is running on 64bit OS and .NET 4.0 is not used. Please run 64bit PowerShell."
+            Write-Error "32bit PowerShell is running on 64bit OS and .NET 4.0 is not used. Please run 64bit PowerShell"
             return
         }
 
@@ -2877,7 +2877,7 @@ function Get-LogonUser {
 
                 # Without admin privilege, owner info other than self can be empty.
                 if (-not $owner.Sid) {
-                    Write-Verbose "Cannot obtain the owner of explorer (PID $($win32Process.ProcessID)). Probably you are runnning without admin privilege."
+                    Write-Verbose "Cannot obtain the owner of explorer (PID $($win32Process.ProcessID)). Probably you are runnning without admin privilege"
                     return
                 }
 
@@ -2916,12 +2916,12 @@ function Get-UserRegistryRoot {
         $userRegRoot = "HKEY_USERS\$($resolvedUser.Sid)"
 
         if (-not ($userRegRoot -and (Test-Path "Registry::$userRegRoot"))) {
-            Write-Error "Cannot find $userRegRoot."
+            Write-Error "Cannot find $userRegRoot"
             return
         }
     }
     else {
-        Write-Log "User is empty. Use HKCU."
+        Write-Log "User is empty. Use HKCU"
         $userRegRoot = 'HKCU'
     }
 
@@ -3050,7 +3050,7 @@ function Save-OfficeRegistry {
 
     # If, for some reason, reg.exe is not available, bail.
     if (-not (Get-Command $regexe -ErrorAction SilentlyContinue)) {
-        Write-Error "$regexe is not avaialble."
+        Write-Error "$regexe is not avaialble"
         return
     }
 
@@ -3302,7 +3302,7 @@ function Invoke-ScriptBlock {
     }
 
     $elapsed = Get-Elapsed $start
-    Write-Log "$scriptBlockName took $($elapsed.TotalMilliseconds) ms.$(if ($null -eq $result) {" It returned nothing."})"
+    Write-Log "$scriptBlockName took $($elapsed.TotalMilliseconds) ms.$(if ($null -eq $result) {" It returned nothing"})"
 
     if ($null -eq $result) {
         return
@@ -3414,9 +3414,9 @@ function Save-NetworkInfoMT {
 
     $PSDefaultParameterValues.Remove('Start-Task:ArgumentList')
 
-    Write-Log "Waiting for tasks to complete."
+    Write-Log "Waiting for tasks to complete"
     $tasks | Receive-Task -AutoRemoveTask
-    Write-Log "All tasks are complete."
+    Write-Log "All tasks are complete"
 }
 
 <#
@@ -3488,7 +3488,7 @@ function Get-WinInetProxy {
     # It's possible that there is no connection at all (maybe IE has never been started).
     # In this case, return the default configuration (This is what WinHttpGetIEProxyConfigForCurrentUser does anyway).
     if ($connections.Count -eq 0) {
-        Write-Log "No connections are found under $connectionsKey. Returning a default setting."
+        Write-Log "No connections are found under $connectionsKey. Returning a default setting"
 
         [PSCustomObject]@{
             ProxySettingsPerUser  = $proxySettingsPerUser
@@ -3693,7 +3693,7 @@ function Get-ProxyAutoConfig {
                     $pacUrl = $wpadUrl.ToString().ToLowerInvariant()
 
                     if ($urlCache.ContainsKey($pacUrl)) {
-                        Write-Log "Skipped $pacUrl because it's already tried."
+                        Write-Log "Skipped $pacUrl because it's already tried"
                     }
                     else {
                         $urlCache.Add($pacUrl, $true)
@@ -3720,7 +3720,7 @@ function Get-ProxyAutoConfig {
                 $pacUrl = $proxy.AutoConfigUrl.ToLowerInvariant()
 
                 if ($urlCache.ContainsKey($pacUrl)) {
-                    Write-Log "Skipped $pacUrl because it's already tried."
+                    Write-Log "Skipped $pacUrl because it's already tried"
                 }
                 else {
                     $urlCache.Add($pacUrl, $true)
@@ -3940,7 +3940,7 @@ function Get-JoinInformation {
     $sc = [Win32.Netapi32]::NetGetJoinInformation([NullString]::Value, [ref]$pName, [ref]$status)
 
     if ($sc -ne 0) {
-        Write-Error "NetGetJoinInformation failed with $sc." -Exception (New-Object ComponentModel.Win32Exception($sc))
+        Write-Error "NetGetJoinInformation failed with $sc" -Exception (New-Object ComponentModel.Win32Exception($sc))
         return
     }
 
@@ -3948,7 +3948,7 @@ function Get-JoinInformation {
     $sc = [Win32.Netapi32]::NetApiBufferFree($pName)
 
     if ($sc -ne 0) {
-        Write-Error "NetApiBufferFree failed with $sc." -Exception (New-Object ComponentModel.Win32Exception($sc))
+        Write-Error "NetApiBufferFree failed with $sc" -Exception (New-Object ComponentModel.Win32Exception($sc))
         return
     }
 
@@ -5116,7 +5116,7 @@ function Save-CachedOutlookConfig {
     $sourcePath = Get-UserShellFolder -User $User -ShellFolderName $LocalAppData | Join-Path -ChildPath 'Microsoft\Outlook\'
 
     if (-not $sourcePath) {
-        Write-Error "Cannot find $LocalAppData for $User."
+        Write-Error "Cannot find $LocalAppData for $User"
         return
     }
 
@@ -5176,7 +5176,7 @@ function Remove-CachedOutlookConfig {
         $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook'
     }
     else {
-        Write-Error "Cannot find LocalAppData for $User."
+        Write-Error "Cannot find LocalAppData for $User"
     }
 
     Get-ChildItem -LiteralPath $sourcePath -Filter '*Config*.json' -Force -Recurse | Remove-Item -Force
@@ -5456,7 +5456,7 @@ function Start-SavingOfficeModuleInfo_PSJob {
     # If MS Office is not installed, bail.
     $officeInfo = Get-OfficeInfo -ErrorAction SilentlyContinue
     if (-not $officeInfo) {
-        Write-Error "MS Office is not installed."
+        Write-Error "MS Office is not installed"
         return
     }
 
@@ -5565,21 +5565,21 @@ function Stop-SavingOfficeModuleInfo_PSJob {
         $namedEvent = $JobDescriptor.Event
 
         # Wait for the job up to timeout
-        Write-Log "Waiting for the job (ID:$($job.Id)) up to $TimeoutSecond seconds."
+        Write-Log "Waiting for the job (ID:$($job.Id)) up to $TimeoutSecond seconds"
         if (Wait-Job -Job $job -Timeout $TimeoutSecond) {
             # https://docs.microsoft.com/en-us/powershell/module/microsoft.powershell.core/wait-job
             # > This cmdlet returns job objects that represent the completed jobs. If the wait ends because the value of the Timeout parameter is exceeded, Wait-Job does not return any objects.
-            Write-Log "Job was completed."
+            Write-Log "Job was completed"
         }
         else {
-            Write-Log "Job did not complete. It will be stopped by event signal."
+            Write-Log "Job did not complete. It will be stopped by event signal"
         }
 
         # Signal the event and close
         try {
             $null = $namedEvent.Set()
             $namedEvent.Close()
-            Write-Log "Event (Handle:$($namedEvent.Handle)) was closed."
+            Write-Log "Event (Handle:$($namedEvent.Handle)) was closed"
         }
         catch {
             Write-Error -ErrorRecord $_
@@ -5590,7 +5590,7 @@ function Stop-SavingOfficeModuleInfo_PSJob {
         Stop-Job -Job $job
         # Receive-Job -Job $job
         Remove-Job -Job $job
-        Write-Log "Job (ID:$($job.Id)) was removed."
+        Write-Log "Job (ID:$($job.Id)) was removed"
     }
 }
 
@@ -5686,7 +5686,7 @@ function Start-FiddlerCap {
             # If it's not connected to internet, bail.
             $connectivity = Get-NLMConnectivity
             if (-not $connectivity.IsConnectedToInternet) {
-                Write-Error "It seems there is no connectivity to Internet. Please download FiddlerCapSetup.exe from `"$fiddlerCapUrl`" and place it `"$Path`". Then run again."
+                Write-Error "It seems there is no connectivity to Internet. Please download FiddlerCapSetup.exe from `"$fiddlerCapUrl`" and place it `"$Path`". Then run again"
                 return
             }
 
@@ -5728,7 +5728,7 @@ function Start-FiddlerCap {
                 }) 2>&1
 
             if ($process.ExitCode -ne 0) {
-                Write-Error "Failed to extract $fiddlerExe. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+                Write-Error "Failed to extract $fiddlerExe. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"}) $err"
                 return
             }
         }
@@ -5760,7 +5760,7 @@ function Start-FiddlerCap {
             }) 2>&1
 
         if (-not $process -or $process.HasExited) {
-            Write-Error "FiddlerCap failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+            Write-Error "FiddlerCap failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)"}) $err"
             return
         }
     }
@@ -5811,14 +5811,14 @@ function Start-Procmon {
         }
 
         if (-not $procmonFile) {
-            Write-Log "ProcmonSearchPath '$ProcmonSearchPath' is provided, but coulnd't find Procmon.exe or Procmon64.exe."
+            Write-Log "ProcmonSearchPath '$ProcmonSearchPath' is provided, but coulnd't find Procmon.exe or Procmon64.exe"
         }
     }
 
     $procmonZipDownloaded = $false
 
     if ($procmonFile -and (Test-Path $procmonFile)) {
-        Write-Log "$procmonFile is found. Skip searching & downloading ProcessMonitor.zip."
+        Write-Log "$procmonFile is found. Skip searching & downloading ProcessMonitor.zip"
     }
     else {
         $procmonDownloadUrl = 'https://download.sysinternals.com/files/ProcessMonitor.zip'
@@ -5837,7 +5837,7 @@ function Start-Procmon {
         }
 
         if (Test-Path $procmonZipFile) {
-            Write-Log "$procmonZipFile is found. Skip downloading."
+            Write-Log "$procmonZipFile is found. Skip downloading"
         }
         else {
             # If 'ProcessMonitor.zip' isn't there, download it.
@@ -5892,7 +5892,7 @@ function Start-Procmon {
     }
 
     if (-not ($procmonFile -and (Test-Path $procmonFile))) {
-        Write-Error "Failed to find $procmonFile."
+        Write-Error "Failed to find $procmonFile"
         return
     }
 
@@ -5919,7 +5919,7 @@ function Start-Procmon {
 
     try {
         if (-not $process -or $process.HasExited) {
-            Write-Error "procmon failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+            Write-Error "procmon failed to start or prematurely exited. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"}) $err"
             return
         }
     }
@@ -5973,7 +5973,7 @@ function Stop-Procmon {
             }) 2>&1
 
         if ($process.ExitCode -ne 0) {
-            Write-Error "procmon failed to stop. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)."}) $err"
+            Write-Error "procmon failed to stop. $(if ($process.ExitCode) {"exit code = $($process.ExitCode)"}) $err"
         }
     }
     finally {
@@ -5996,7 +5996,7 @@ function Start-TcoTrace {
     $userRegRoot = Get-UserRegistryRoot -User $User -ErrorAction Stop
     $keypath = Join-Path $userRegRoot "Software\Microsoft\Office\$majorVersion.0\Common\Debug"
 
-    Write-Log "Using $keypath."
+    Write-Log "Using $keypath"
 
     if (-not (Test-Path $keypath)) {
         $null = New-Item $keypath -ErrorAction Stop
@@ -6076,13 +6076,13 @@ function Start-TTTracer {
 
     # Check if tttracer.exe is available (Win10 RS5 and above should include it)
     if (-not ($tttracer = Get-Command 'tttracer.exe' -ErrorAction SilentlyContinue)) {
-        Write-Error "tttracer.exe is not available."
+        Write-Error "tttracer.exe is not available"
         return
     }
 
     # Make sure $Executable exists.
     if (-not (Test-Path $Executable)) {
-        Write-Error "Cannot find $Executable."
+        Write-Error "Cannot find $Executable"
         return
     }
 
@@ -6094,13 +6094,13 @@ function Start-TTTracer {
     $stderr = Join-Path $Path 'stderr.txt'
 
     if ($OnLaunch) {
-        Write-Log "TTD monitoring $Executable."
+        Write-Log "TTD monitoring $Executable"
         # trace file name must include a wildcard ("%") for OnLaunch recording
         $outPath = Join-Path $Path "$([IO.Path]::GetFileNameWithoutExtension($Executable))_$(Get-Date -Format "yyyyMMdd_HHmmss")_%.run"
         $process = Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "-onLaunch `"$Executable`"", "-parent *" -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     }
     else {
-        Write-Log "TTD launching $Executable."
+        Write-Log "TTD launching $Executable"
         $outPath = Join-Path $Path "$([IO.Path]::GetFileNameWithoutExtension($Executable))_$(Get-Date -Format "yyyyMMdd_HHmmss").run"
         $process = Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "`"$Executable`"" -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     }
@@ -6129,11 +6129,11 @@ function Start-TTTracer {
         }
 
         if (-not $targetProcess) {
-            Write-Error "Cannot find the new instance of $targetName."
+            Write-Error "Cannot find the new instance of $targetName"
             return
         }
 
-        Write-Log "Target process $($targetProcess.Name) (PID:$($targetProcess.Id)) has started."
+        Write-Log "Target process $($targetProcess.Name) (PID:$($targetProcess.Id)) has started"
 
         # To get ExitTime etc.
         $targetProcess.EnableRaisingEvents = $true
@@ -6165,7 +6165,7 @@ function Stop-TTTracer {
     $onLaunch = $Descriptor.OnLaunch
 
     if (-not ($tttracer = Get-Command 'tttracer.exe' -ErrorAction SilentlyContinue)) {
-        Write-Error "tttracer.exe is not available."
+        Write-Error "tttracer.exe is not available"
         return
     }
 
@@ -6202,7 +6202,7 @@ function Stop-TTTracer {
     }
 
     if ($onLaunch) {
-        Write-Log "Killing tttracer (PID:$($tttracerProcess.Id)) running in OnLaunch mode."
+        Write-Log "Killing tttracer (PID:$($tttracerProcess.Id)) running in OnLaunch mode"
         $tttracerProcess.Kill()
         $message += ";" + (& $tttracer -cleanup)
     }
@@ -6235,7 +6235,7 @@ function Attach-TTTracer {
 
     # Check if tttracer.exe is available (Win10 RS5 and above should include it)
     if (-not ($tttracer = Get-Command 'tttracer.exe' -ErrorAction SilentlyContinue)) {
-        Write-Error "tttracer.exe is not available."
+        Write-Error "tttracer.exe is not available"
         return
     }
 
@@ -6243,7 +6243,7 @@ function Attach-TTTracer {
         $targetName = $targetProcess.Name
     }
     else {
-        Write-Error "Cannot find a process with PID $ProcessID."
+        Write-Error "Cannot find a process with PID $ProcessID"
         return
     }
 
@@ -6863,7 +6863,7 @@ function Get-OfficeInfo {
             }
             else {
                 # This is the case where registry rediction takes place (32bit PowerShell on 64bit OS). Bail.
-                Write-Error "32bit PowerShell 2.0 is running on 64bit OS. Please run 64bit PowerShell."
+                Write-Error "32bit PowerShell 2.0 is running on 64bit OS. Please run 64bit PowerShell"
                 return
             }
 
@@ -7057,7 +7057,7 @@ function Add-WerDumpKey {
             }
         }
 
-        Write-Log "Temporarily disabling dwwin."
+        Write-Log "Temporarily disabling dwwin"
         Disable-DWWin 2>&1 | Write-Log
     }
 }
@@ -7074,7 +7074,7 @@ function Remove-WerDumpKey {
         $localDumpsKey = Join-Path $werKey 'LocalDumps'
 
         if (-not (Test-Path $localDumpsKey)) {
-            Write-Log "Cannot find $localDumpsKey."
+            Write-Log "Cannot find $localDumpsKey"
             return
         }
 
@@ -7102,7 +7102,7 @@ function Remove-WerDumpKey {
         }
 
         if (-not (Test-Path (Join-Path $localDumpsKey '*'))) {
-            Write-Log "Removing $localDumpsKey because it has no subkeys."
+            Write-Log "Removing $localDumpsKey because it has no subkeys"
             Remove-Item $localDumpsKey
         }
     }
@@ -7359,12 +7359,12 @@ function Save-Dump {
     $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
 
     if (-not $process) {
-        Write-Error "Cannot find a process with PID $ProcessId."
+        Write-Error "Cannot find a process with PID $ProcessId"
         return
     }
     elseif (-not $process.SafeHandle) {
         # This scenario is possible for a system process.
-        Write-Error "Cannot obtain the process SafeHandle of $($process.Name)."
+        Write-Error "Cannot obtain the process SafeHandle of $($process.Name)"
         return
     }
 
@@ -7463,7 +7463,7 @@ function Save-HungDump {
     )
 
     if (-not ($process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
-        Write-Error "Cannnot find a process with PID $ProcessId."
+        Write-Error "Cannnot find a process with PID $ProcessId"
         return
     }
 
@@ -7616,7 +7616,7 @@ function Save-PolicyNudge {
     $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
 
     if (-not $localAppdata) {
-        Write-Error "Cannot find LocalAppData folder for User $User."
+        Write-Error "Cannot find LocalAppData folder for User $User"
         return
     }
 
@@ -7624,7 +7624,7 @@ function Save-PolicyNudge {
     $fileNameFilter = 'PolicyNudge*'
 
     if (-not (Test-Path $sourcePath -Filter $fileNameFilter)) {
-        Write-Log "There are no files matching '$fileNameFilter' in $(Split-Path $sourcePath)."
+        Write-Log "There are no files matching '$fileNameFilter' in $(Split-Path $sourcePath)"
         return
     }
 
@@ -7657,14 +7657,14 @@ function Save-CLP {
     $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
 
     if (-not $localAppdata) {
-        Write-Error "Cannot find LocalAppData folder for User $User."
+        Write-Error "Cannot find LocalAppData folder for User $User"
         return
     }
 
     $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Office\CLP'
 
     if (-not (Test-Path $sourcePath)) {
-        Write-Log "Cannot find $sourcePath."
+        Write-Log "Cannot find $sourcePath"
         return
     }
 
@@ -7688,14 +7688,14 @@ function Save-DLP {
     $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
 
     if (-not $localAppdata) {
-        Write-Error "Cannot find LocalAppData folder for User $User."
+        Write-Error "Cannot find LocalAppData folder for User $User"
         return
     }
 
     $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Office\DLP'
 
     if (-not (Test-Path $sourcePath)) {
-        Write-Log "Cannot find $sourcePath."
+        Write-Log "Cannot find $sourcePath"
         return
     }
 
@@ -7984,7 +7984,7 @@ function Test-Autodiscover {
         # Check if URL is valid (it could be invalid if $Server is not provided).
         $uri = $null
         if (-not [Uri]::TryCreate($url, [UriKind]::Absolute, [ref]$uri)) {
-            Write-Log "Skipping $url because it's invalid."
+            Write-Log "Skipping $url because it's invalid"
             continue
         }
 
@@ -8252,12 +8252,12 @@ function Get-OutlookAddin {
                     $props.LoadBehavior = $LoadBehavior[$loadBehaviorValue]
                 }
                 else {
-                    Write-Log "Skipping $($props.ProgId) because its LoadBehavior is null."
+                    Write-Log "Skipping $($props.ProgId) because its LoadBehavior is null"
                     return
                 }
 
                 if ($cache.ContainsKey($props.ProgId)) {
-                    Write-Log "Skipping $($props.ProgId) because it's already found."
+                    Write-Log "Skipping $($props.ProgId) because it's already found"
                     return
                 }
                 else {
@@ -8354,7 +8354,7 @@ function Get-DeviceJoinStatus {
         & $dsregcmd /status
     }
     else {
-        Write-Log "$dsregcmd is not available."
+        Write-Log "$dsregcmd is not available"
     }
 }
 
@@ -8556,7 +8556,7 @@ function Start-ProcessMonitoring {
     )
 
     $targets = $Name | & { process { @{ Name = $_; Ids = @{} } } }
-    Write-Log "Start monitoring $($Name -join ', ')."
+    Write-Log "Start monitoring $($Name -join ', ')"
 
     while ($true) {
         $found = Get-Process -Name $Name -ErrorAction SilentlyContinue | & {
@@ -8569,7 +8569,7 @@ function Start-ProcessMonitoring {
 
                 foreach ($target in $targets) {
                     if ($name -like $target.Name -and (-not $target.Ids.ContainsKey($id) -or $target.Ids[$id] -ne $startTime) ) {
-                        Write-Log "Found new $name with PID $id, StartTime $startTime."
+                        Write-Log "Found new $name with PID $id, StartTime $startTime"
                         $target.Ids.Add($id, $startTime)
                         $true
                         break
@@ -8621,7 +8621,7 @@ function Start-ProcessCapture {
     $runAsAdmin = Test-RunAsAdministrator
 
     if (-not $runAsAdmin) {
-        Write-Log "Not running as admin. IncludeUserName won't be used." -Category Warning
+        Write-Log "Not running as admin. IncludeUserName won't be used" -Category Warning
     }
 
     # PowerShell 4's Get-Process has -IncludeUserName parameter. Use it if available (must be Elevated); otherwise fall back to WMI.
@@ -8877,7 +8877,7 @@ function Start-HungMonitor {
             Start-Sleep -Seconds 2
         }
 
-        Write-Log "Found $Name (PID:$targetPid). Starting hung window monitoring."
+        Write-Log "Found $Name (PID:$targetPid). Starting hung window monitoring"
 
         $argsTable = @{
             Path      = $Path
@@ -8914,10 +8914,10 @@ function Invoke-AutoUpdate {
     $module = $PSCmdlet.MyInvocation.MyCommand.Module
 
     if ($module.Version.ToString() -ne '0.0') {
-        $message = "Skipped autoupdate because OutlookTrace seems be installed as a module."
+        $message = "Skipped autoupdate because OutlookTrace seems be installed as a module"
     }
     elseif (-not (Get-NLMConnectivity).IsConnectedToInternet) {
-        $message = "Skipped autoupdate because there's no connectivity to internet."
+        $message = "Skipped autoupdate because there's no connectivity to internet"
     }
     else {
         try {
@@ -8925,7 +8925,7 @@ function Invoke-AutoUpdate {
             $release = Invoke-RestMethod -Uri $GitHubUri -UseDefaultCredentials -ErrorAction Stop
 
             if ($Version -ge $release.name) {
-                $message = "Skipped because the current script ($Version) is newer than or equal to GitHub's latest release ($($release.name))."
+                $message = "Skipped because the current script ($Version) is newer than or equal to GitHub's latest release ($($release.name))"
             }
             else {
                 Write-Verbose "Downloading the latest script"
@@ -8946,7 +8946,7 @@ function Invoke-AutoUpdate {
                 Rename-Item -LiteralPath $PSCommandPath -NewName $newName -ErrorAction Stop
                 [IO.File]::WriteAllBytes($PSCommandPath, $response.Content)
 
-                Write-Verbose "Lastest script ($($release.name)) was successfully downloaded."
+                Write-Verbose "Lastest script ($($release.name)) was successfully downloaded"
                 Import-Module $PSCommandPath -DisableNameChecking -Force -ErrorAction Stop
                 $autoUpdateSuccess = $true
             }
@@ -8975,7 +8975,7 @@ function Start-Wpr {
 
     # wpr is available on Win10 and above
     if (-not (Get-Command 'wpr.exe' -ErrorAction SilentlyContinue)) {
-        Write-Error "WPR is not available on this machine."
+        Write-Error "WPR is not available on this machine"
         return
     }
 
@@ -9019,7 +9019,7 @@ function Stop-Wpr {
 
     # wpr is available on Win10 and above
     if (-not (Get-Command 'wpr.exe' -ErrorAction SilentlyContinue)) {
-        Write-Error "WPR is not available on this machine."
+        Write-Error "WPR is not available on this machine"
         return
     }
 
@@ -9045,7 +9045,7 @@ function Stop-Wpr {
     }
 
     if ($exitCode -ne 0) {
-        Write-Error "wpr failed to stop. ExitCode:0x$('{0:x}' -f $exitCode)."
+        Write-Error "wpr failed to stop. ExitCode:0x$('{0:x}' -f $exitCode)"
     }
 }
 
@@ -9072,7 +9072,7 @@ function Get-IMProvider {
         'Teams' { '00425F68-FFC1-445F-8EDF-EF78B84BA1C7'; break }
         'Lync' { 'A0651028-BA7A-4D71-877F-12E0175A5806'; break }
         'MsTeams' { '88435F68-FFC1-445F-8EDF-EF78B84BA1C7'; break }
-        default { Write-Error "Failed to get CLSID of DefaultIMApp '$defaultIMApp'."; return }
+        default { Write-Error "Failed to get CLSID of DefaultIMApp '$defaultIMApp'"; return }
     }
 
     # The new Teams client's executable is "ms-teams.exe".
@@ -9226,11 +9226,11 @@ function Invoke-WamSignOut {
     $count = $accounts.Accounts | Measure-Object | Select-Object -ExpandProperty Count
 
     if ($count -eq 0) {
-        Write-Log "No account found."
+        Write-Log "No account found"
         return
     }
 
-    Write-Log "$count account$(if ($count -gt 1) {'s'}) found."
+    Write-Log "$count account$(if ($count -gt 1) {'s'}) found"
 
     foreach ($account in $accounts.Accounts) {
         $accountId = "UserName:$($account.UserName), Id:$($account.Id)"
@@ -9289,7 +9289,7 @@ function Get-RegistryChildItem {
     )
 
     if (-not (Test-Path $Path)) {
-        Write-Error "Cannot find $Path."
+        Write-Error "Cannot find $Path"
         return
     }
 
@@ -9373,7 +9373,7 @@ function Get-OfficeIdentity {
     $identities = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity\Identities\*' | Get-ItemProperty -ErrorAction SilentlyContinue
 
     if (-not $identities) {
-        Write-Log "Cannot find Office Identities."
+        Write-Log "Cannot find Office Identities"
         return
     }
 
@@ -9392,7 +9392,7 @@ function Get-OfficeIdentity {
     | Sort-Object 'LastSwitchedTime' -Descending | Select-Object -First 1
 
     if ($activeIdentity) {
-        Write-Log "Found active identity $($activeIdentity.EmailAddress) based on active profile."
+        Write-Log "Found active identity $($activeIdentity.EmailAddress) based on active profile"
     }
     else {
         # If there is no active profile, then pick one with LiveId, OrgId, or ADAL
@@ -9401,16 +9401,16 @@ function Get-OfficeIdentity {
         | Select-Object -First 1
 
         if ($activeIdentity) {
-            Write-Log "Found active identity $($activeIdentity.EmailAddress) based on IdP $($IdpMapping[$activeIdentity.IdP])."
+            Write-Log "Found active identity $($activeIdentity.EmailAddress) based on IdP $($IdpMapping[$activeIdentity.IdP])"
         }
         else {
             $activeIdentity = $identities | Where-Object { $_.SignedOut -ne 1 } | Select-Object -First 1
 
             if ($activeIdentity) {
-                Write-Log "Found active identity $($activeIdentity.EmailAddress) based on not SignedOut."
+                Write-Log "Found active identity $($activeIdentity.EmailAddress) based on not SignedOut"
             }
             else {
-                Write-Log "There is no active identity."
+                Write-Log "There is no active identity"
             }
         }
     }
@@ -9456,7 +9456,7 @@ function Get-ConnectedExperience {
     | Join-Path -ChildPath $profileName | Join-Path -ChildPath 'Settings\1272\{00000000-0000-0000-0000-000000000000}'
 
     if (-not (Test-Path $roamingSettingsPath)) {
-        Write-Log "Cannot find roaming settings for $profileName."
+        Write-Log "Cannot find roaming settings for $profileName"
         return
     }
 
@@ -9475,7 +9475,7 @@ function Get-ConnectedExperience {
         $value = [BitConverter]::ToInt32($data, 0)
     }
     else {
-        Write-Log "There is no roaming data for $profileName."
+        Write-Log "There is no roaming data for $profileName"
     }
 
     # 1 == Enabled, 2 == Disabled
@@ -10786,7 +10786,7 @@ function Collect-OutlookInfo {
     }
 
     if (-not $SkipVersionCheck -and -not (Test-ScriptExpiration)) {
-        Write-Error "This script is too old. The script version is $Version and it has passed $($Script:ValidTimeSpan.Days) days.`nPlease download the latest version from https://github.com/jpmessaging/OutlookTrace.`nYou can skip this check by using -SkipVersionCheck switch."
+        Write-Error "This script is too old. The script version is $Version and it has passed $($Script:ValidTimeSpan.Days) days.`nPlease download the latest version from https://github.com/jpmessaging/OutlookTrace.`nYou can skip this check by using -SkipVersionCheck switch"
         return
     }
 
@@ -10821,7 +10821,7 @@ function Collect-OutlookInfo {
         }
 
         if ($logonUsers.Count -eq 0) {
-            Write-Error "Cannot find any logon user."
+            Write-Error "Cannot find any logon user"
             return
         }
         elseif ($logonUsers.Count -eq 1) {
@@ -10829,7 +10829,7 @@ function Collect-OutlookInfo {
         }
         else {
             # Multiple logon users are found. 'User' parameter needs to be used.
-            Write-Error "Found multiple logon users ($($logonUsers.Count) users$(if ($logonUsers.Count -le 3) { "; $($logonUsers.Name -join ',')" })). Please specify the target user by `"-User`" parameter."
+            Write-Error "Found multiple logon users ($($logonUsers.Count) users$(if ($logonUsers.Count -le 3) { "; $($logonUsers.Name -join ',')" })). Please specify the target user by `"-User`" parameter"
             return
         }
     }
@@ -11064,12 +11064,12 @@ function Collect-OutlookInfo {
 
             if ($targetUser.Sid -eq $currentUser.Sid) {
                 $null = Start-FiddlerCap -Path $Path -ErrorAction Stop
-                Write-Warning "FiddlerCap has started. Please manually configure and start capture."
+                Write-Warning "FiddlerCap has started. Please manually configure and start capture"
             }
             else {
                 # If target user is different from current user, don't start FiddlerCap because it won't be able to capture (WinInet proxy needs to be configured for the target user).
                 $fiddler = Start-FiddlerCap -Path $Path -ErrorAction Stop -CheckAvailabilityOnly
-                Write-Warning "Let the user ($($targetUser.Name)) start $($fiddler.FiddlerPath)."
+                Write-Warning "Let the user ($($targetUser.Name)) start $($fiddler.FiddlerPath)"
             }
 
             $fiddlerCapStarted = $true
@@ -11104,7 +11104,7 @@ function Collect-OutlookInfo {
             $psrProcesses = @(Get-Process psr -ErrorAction SilentlyContinue)
 
             if ($psrProcesses.Count -gt 0) {
-                Write-Error "PSR is already running (PID:$($psrProcesses.ID -join ',')).`nPlease stop PSR first and run again."
+                Write-Error "PSR is already running (PID:$($psrProcesses.ID -join ',')).`nPlease stop PSR first and run again"
                 return
             }
 
@@ -11193,13 +11193,13 @@ function Collect-OutlookInfo {
                 }
 
                 if (-not ($process = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue)) {
-                    Write-Host "Cannot find Outlook.exe. Please start Outlook." -ForegroundColor Yellow
+                    Write-Host "Cannot find Outlook.exe. Please start Outlook" -ForegroundColor Yellow
                     continue
                 }
 
-                Write-Progress -Activity "Saving a process dump of Outlook." -Status "Please wait." -PercentComplete -1
+                Write-Progress -Activity "Saving a process dump of Outlook" -Status "Please wait" -PercentComplete -1
                 $dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $process.Id
-                Write-Progress -Activity "Saving a process dump of Outlook." -Status "Done" -Completed
+                Write-Progress -Activity "Saving a process dump of Outlook" -Status "Done" -Completed
                 Write-Log "Saved a dump file:$($dumpResult.DumpFile)"
                 $process.Dispose()
             }
@@ -11244,7 +11244,7 @@ function Collect-OutlookInfo {
 
             # If Outlook is already running, attach to it. Otherwise, start monitoring for outlook.exe.
             if ($outlookProcess = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue) {
-                Write-Log "Attaching TTD to Outlook (PID:$($outlookProcess.Id))."
+                Write-Log "Attaching TTD to Outlook (PID:$($outlookProcess.Id))"
                 Write-Progress -Status "Attaching TTD to Outlook (PID:$($outlookProcess.Id)). This might take a while. Please wait"
 
                 $ttdArgs.ProcessId = $outlookProcess.Id
@@ -11347,7 +11347,6 @@ function Collect-OutlookInfo {
 
         if ($capiTraceStarted) {
             Write-Progress -Status 'Stopping CAPI trace'
-            # Disable-EventLog 'Microsoft-Windows-CAPI2/Operational'
             Stop-CAPITrace
         }
 
@@ -11357,7 +11356,6 @@ function Collect-OutlookInfo {
 
         if ($wamTraceStarted) {
             Write-Progress -Status 'Stopping WAM trace'
-            # Disable-WamEventLog -ErrorAction SilentlyContinue
             Stop-WamTrace
         }
 
@@ -11391,7 +11389,7 @@ function Collect-OutlookInfo {
         }
 
         if ($fiddlerCapStarted) {
-            Write-Warning "Please stop FiddlerCap and save the capture manually."
+            Write-Warning "Please stop FiddlerCap and save the capture manually"
         }
 
         if ($psrStarted) {
@@ -11401,8 +11399,8 @@ function Collect-OutlookInfo {
             $psrCts.Dispose()
         }
 
-        # Restore all Event Log configurations
-        Get-EventLogConfigCache | Restore-EventLog
+        # Restore Event Log configurations
+        Get-EventLogConfigCache | Restore-EventLog 2>&1 | Write-Log -Category Error -PassThru
         Clear-EventLogConfigCache
 
         # Wait for the tasks started earlier and save the event logs
@@ -11465,10 +11463,10 @@ function Collect-OutlookInfo {
                     $timeout = [TimeSpan]::FromSeconds(30)
 
                     if (Wait-Task $officeModuleInfoTask -Timeout $timeout) {
-                        Write-Log "$($officeModuleInfoTask.Name) is complete before timeout."
+                        Write-Log "$($officeModuleInfoTask.Name) is complete before timeout"
                     }
                     else {
-                        Write-Log "$($officeModuleInfoTask.Name) timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
+                        Write-Log "$($officeModuleInfoTask.Name) timed out after $($timeout.TotalSeconds) seconds. Task will be canceled" -Category Warning
                         $officeModuleInfoTaskCts.Cancel()
                     }
                 }
@@ -11492,7 +11490,7 @@ function Collect-OutlookInfo {
                         Write-Log "$($gpresultTask.Name) is complete before timeout"
                     }
                     else {
-                        Write-Log "$($gpresultTask.Name) timed out after $($timeout.TotalSeconds) seconds. Task will be canceled." -Category Warning
+                        Write-Log "$($gpresultTask.Name) timed out after $($timeout.TotalSeconds) seconds. Task will be canceled" -Category Warning
                         $gpresultTaskCts.Cancel()
                     }
                 }
@@ -11587,4 +11585,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-# Export-ModuleMember -Function Test-ProcessElevated, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
