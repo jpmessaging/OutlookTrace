@@ -1930,16 +1930,45 @@ function Compress-Folder {
     & $compressCmd @params
 }
 
+<#
+.SYNOPSIS
+    Enable Event Log. This command returns a previous configuration
+#>
 function Enable-EventLog {
     [CmdletBinding(PositionalBinding = $false)]
     param(
         [Parameter(Mandatory = $true, Position = 0)]
-        [string]$EventName
+        [string]$EventName,
+        # Max size in bytes (Default:20MB)
+        [int]$MaxSize = 20971520
     )
 
-    $($null = wevtutil.exe set-log $EventName /enabled:true /retention:false /quiet:true) 2>&1 | ForEach-Object {
+    # Get the current configuration
+    $([xml]$configXml = wevtutil.exe get-log $EventName /format:xml) 2>&1 | ForEach-Object {
         Write-Error -ErrorRecord $_
     }
+
+    if (-not $configXml) {
+        return
+    }
+
+    # Values are not parsed and kept as string on purpose
+    $config = [PSCustomObject]@{
+        Name       = $EventName
+        Enabled    = $configXml.channel.enabled
+        Retention  = $configXml.channel.logging.retention
+        AutoBackup = $configXml.channel.logging.autoBackup
+        MaxSize    = $configXml.channel.logging.maxSize
+    }
+
+    $errs = $($null = wevtutil.exe set-log $EventName /enabled:true /retention:false /maxsize:$MaxSize /quiet:true) 2>&1
+
+    if ($errs) {
+        $errs | ForEach-Object { Write-Error -ErrorRecord $_ }
+        return
+    }
+
+    $config
 }
 
 function Disable-EventLog {
@@ -1954,14 +1983,85 @@ function Disable-EventLog {
     }
 }
 
+<#
+.SYNOPSIS
+    Restore Event Log configuration using the output of Enable-EventLog
+#>
+function Restore-EventLog {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        $Configuration
+    )
+
+    process {
+        $evtArgs = @(
+            'set-log'
+            $Configuration.Name
+
+            # Use interporated strings here so that there is no space inside "/key:value"
+            "/enabled:$($Configuration.Enabled)"
+            "/retention:$($Configuration.Retention)"
+            "/maxsize:$($Configuration.MaxSize)"
+            '/quiet:true'
+        )
+
+        $errs = $($null = wevtutil.exe $evtArgs) 2>&1
+
+        if ($errs) {
+            $err | ForEach-Object { Write-Error -ErrorRecord $_ }
+            return
+        }
+
+        Write-Log "Eveng Log config is restored for $($Configuration.Name). Enabled:$($Configuration.Enabled), MaxSize:$($Configuration.MaxSize)"
+    }
+}
+
+function Add-EventLogConfigCache {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        $Configuration
+    )
+
+    begin {
+        if ($null -eq $Script:EventLogConfigCache) {
+            $Script:EventLogConfigCache = @{}
+        }
+    }
+
+    process {
+        if (-not $Script:EventLogConfigCache.ContainsKey($_.Name)) {
+            $Script:EventLogConfigCache.Add($_.Name, $_)
+        }
+    }
+}
+
+function Get-EventLogConfigCache {
+    [CmdletBinding()]
+    param()
+
+    if ($Script:EventLogConfigCache.Count -gt 0) {
+        $Script:EventLogConfigCache.Values
+    }
+}
+
+function Clear-EventLogConfigCache {
+    if ($Script:EventLogConfigCache) {
+        $Script:EventLogConfigCache.Clear()
+    }
+}
+
 function Enable-WamEventLog {
     [CmdletBinding(PositionalBinding = $false)]
     param()
 
-    Enable-EventLog 'Microsoft-Windows-WebAuth/Operational'
-    Enable-EventLog 'Microsoft-Windows-WebAuthN/Operational'
-    Enable-EventLog 'Microsoft-Windows-AAD/Operational'
-    Enable-EventLog 'Microsoft-Windows-AAD/Analytic'
+    & {
+        Enable-EventLog 'Microsoft-Windows-WebAuth/Operational'
+        Enable-EventLog 'Microsoft-Windows-WebAuthN/Operational'
+        Enable-EventLog 'Microsoft-Windows-AAD/Operational'
+        Enable-EventLog 'Microsoft-Windows-AAD/Analytic'
+    } | Add-EventLogConfigCache
 }
 
 function Disable-WamEventLog {
@@ -1973,7 +2073,6 @@ function Disable-WamEventLog {
     Disable-EventLog 'Microsoft-Windows-AAD/Analytic'
     Disable-EventLog 'Microsoft-Windows-AAD/Operational'
 }
-
 
 function Start-WamTrace {
     [CmdletBinding(PositionalBinding = $false)]
@@ -11033,7 +11132,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'CAPI') {
-            Enable-EventLog 'Microsoft-Windows-CAPI2/Operational'
+            Enable-EventLog 'Microsoft-Windows-CAPI2/Operational' | Add-EventLogConfigCache
             Start-CAPITrace -Path (Join-Path $tempPath 'CAPI') -ErrorAction Stop
             $capiTraceStarted = $true
         }
@@ -11248,7 +11347,7 @@ function Collect-OutlookInfo {
 
         if ($capiTraceStarted) {
             Write-Progress -Status 'Stopping CAPI trace'
-            Disable-EventLog 'Microsoft-Windows-CAPI2/Operational'
+            # Disable-EventLog 'Microsoft-Windows-CAPI2/Operational'
             Stop-CAPITrace
         }
 
@@ -11258,7 +11357,7 @@ function Collect-OutlookInfo {
 
         if ($wamTraceStarted) {
             Write-Progress -Status 'Stopping WAM trace'
-            Disable-WamEventLog -ErrorAction SilentlyContinue
+            # Disable-WamEventLog -ErrorAction SilentlyContinue
             Stop-WamTrace
         }
 
@@ -11301,6 +11400,10 @@ function Collect-OutlookInfo {
             Receive-Task $psrTask -AutoRemoveTask 2>&1 | Write-Log -Category Error -PassThru
             $psrCts.Dispose()
         }
+
+        # Restore all Event Log configurations
+        Get-EventLogConfigCache | Restore-EventLog
+        Clear-EventLogConfigCache
 
         # Wait for the tasks started earlier and save the event logs
         if ($Component -contains 'Configuration') {
