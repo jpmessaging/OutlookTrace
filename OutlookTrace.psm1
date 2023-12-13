@@ -4808,12 +4808,14 @@ function Get-OutlookOption {
     # Set default values for options I'm interested in.
     $options = @(
         New-Option -Name 'Send Mail Immediately' -Description 'Send Mail Immediately' -Category Mail -Value $true
+        New-Option -Name 'SaveAllMIMENotJustHeaders' -Description 'Save entire MIME message' -Category Mail -Value $false
         New-Option -Name 'NewMailDesktopAlerts' -Description 'Display a Desktop Alert' -Category Mail -Value $true
         New-Option -Name 'NewMailDesktopAlertsDRMPreview' -Description 'Enable preview for Rights Protected messages' -Category Mail -Value $false
         New-Option -Name 'SaveSent' -Description 'Save copies of messages in the Sent Items folder' -Category Mail -Value $true
         New-Option -Name 'DelegateSentItemsStyle' -Description "When set to 1, items sent on behalf of a manager will now go to the manager's sent items box" -Category Mail -Value $false
         New-Option -Name 'HideNewOutlookToggle' -Description 'Hide the "Try the new Outlook" toggle in Outlook Desktop' -Category General -Value $false
         New-Option -Name 'ShowLegacySharingUX' -Description 'Turn off Calendar Sharing REST API and use Legacy UI' -Category Calendar -Value $false
+        New-Option -Name 'EnableMeetingCopy' -Description 'Re-enable copying meetings:' -Category Calendar -Value $false
         New-Option -Name 'OpenTasksWithToDoApp' -Description 'When opening from a reminder, open tasks with ToDo App' -Category Tasks -Value $false
         New-Option -Name 'Autodetect_CodePageOut' -Description 'Automatically select encoding for outgoing messages' -Category Advanced -Value $true
         New-Option -Name 'Default_CodePageOut' -Description 'Preferred encoding for outgoing messages' -Category Advanced -Value $null
@@ -4836,6 +4838,7 @@ function Get-OutlookOption {
         process {
             $PSDefaultParameterValues['Set-Option:Property'] = $_
             Set-Option -Name 'Send Mail Immediately'
+            Set-Option -Name 'SaveAllMIMENotJustHeaders'
         }
     }
 
@@ -4846,6 +4849,7 @@ function Get-OutlookOption {
         process {
             $PSDefaultParameterValues['Set-Option:Property'] = $_
             Set-Option -Name 'ShowLegacySharingUX'
+            Set-Option -Name 'EnableMeetingCopy'
         }
     }
 
