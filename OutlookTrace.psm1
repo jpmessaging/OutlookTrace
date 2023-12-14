@@ -8657,6 +8657,7 @@ function Start-ProcessCapture {
         [string]$NamePattern,
         [System.Threading.CancellationToken]$CancellationToken,
         [TimeSpan]$Interval = [TimeSpan]::FromSeconds(1),
+        [System.Threading.EventWaitHandle]$StartedEvent,
         # This is just for testing
         [Switch]$EnablePerfCheck
     )
@@ -8667,6 +8668,9 @@ function Start-ProcessCapture {
 
     # Using a Hash table is much faster than Where-Object.
     $hashSet = @{}
+
+    # If StartedEvent is given, signal after the first iteration.
+    $needSignal = $null -ne $StartedEvent
 
     while ($true) {
         $start = Get-Timestamp
@@ -8746,6 +8750,11 @@ function Start-ProcessCapture {
             }
         }
 
+        if ($needSignal) {
+            $null = $StartedEvent.Set()
+            $needSignal = $false
+        }
+
         if ($EnablePerfCheck) {
             $elapsed = Get-Elapsed $start
             Write-Log "Processing Win32_Process took $($elapsed.TotalMilliseconds) ms"
@@ -8773,12 +8782,12 @@ function Start-PsrMonitor {
         [string]$Path,
         [System.Threading.CancellationToken]$CancellationToken,
         [TimeSpan]$WaitInterval,
-        [System.Threading.EventWaitHandle]$IsStartedEvent,
+        [System.Threading.EventWaitHandle]$StartedEvent,
         [bool]$Circular
     )
 
-    if ($IsStartedEvent) {
-        $null = $IsStartedEvent.Set()
+    if ($StartedEvent) {
+        $null = $StartedEvent.Set()
     }
 
     while ($true) {
@@ -8831,7 +8840,7 @@ function Start-HungMonitor {
         [TimeSpan]$Timeout,
         [int]$DumpCount,
         [System.Threading.CancellationToken]$CancellationToken,
-        [System.Threading.EventWaitHandle]$IsStartedEvent
+        [System.Threading.EventWaitHandle]$StartedEvent
     )
 
     # Remove the extension ".exe" if exits.
@@ -8845,8 +8854,8 @@ function Start-HungMonitor {
         }
     }
 
-    if ($IsStartedEvent) {
-        $null = $IsStartedEvent.Set()
+    if ($StartedEvent) {
+        $null = $StartedEvent.Set()
     }
 
     # Key:Process Hash, Value:true/false for "need to log".
@@ -10984,6 +10993,9 @@ function Collect-OutlookInfo {
             $pageHeapEnabled = Enable-PageHeap -ProcessName 'outlook.exe' -ErrorAction Stop
         }
 
+        # List of "Started" events for Wait & Close all at once.
+        $startedEventList = New-Object System.Collections.Generic.List[System.Threading.EventWaitHandle]
+
         Write-Log "Starting traces"
 
         if ($Component -contains 'Configuration') {
@@ -11044,11 +11056,14 @@ function Collect-OutlookInfo {
 
             Write-Log "Starting ProcessCaptureTask"
             $processCaptureTaskCts = New-Object System.Threading.CancellationTokenSource
-            $processCaptureTask = Start-Task -Name 'ProcessCaptureTask' -ScriptBlock { param($Path, $NamePattern, $CancellationToken) Start-ProcessCapture @PSBoundParameters } `
+            $processCaptureStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
+            $startedEventList.Add($processCaptureStartedEvent)
+            $processCaptureTask = Start-Task -Name 'ProcessCaptureTask' -ScriptBlock { param($Path, $NamePattern, $CancellationToken, $StartedEvent) Start-ProcessCapture @PSBoundParameters } `
                 -ArgumentList @{
                 Path              = $OSDir
                 NamePattern       = 'outlook|fiddler|explorer|backgroundTaskHost'
                 CancellationToken = $processCaptureTaskCts.Token
+                StartedEvent      = $processCaptureStartedEvent
             }
 
             Write-Log "Starting GPResultTask"
@@ -11160,19 +11175,18 @@ function Collect-OutlookInfo {
 
             $psrCts = New-Object System.Threading.CancellationTokenSource
             $psrStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
+            $startedEventList.Add($psrStartedEvent)
             Write-Log "Starting PSRTask. PsrRecycleInterval:$PsrRecycleInterval"
 
-            $psrTask = Start-Task -Name 'PSRTask' -ScriptBlock { param($Path, $CancellationToken, $WaitInterval, $IsStartedEvent, $Circular) Start-PsrMonitor @PSBoundParameters } `
+            $psrTask = Start-Task -Name 'PSRTask' -ScriptBlock { param($Path, $CancellationToken, $WaitInterval, $StartedEvent, $Circular) Start-PsrMonitor @PSBoundParameters } `
                 -ArgumentList @{
                 Path              = Join-Path $tempPath 'PSR'
                 CancellationToken = $psrCts.Token
                 WaitInterval      = $PsrRecycleInterval
-                IsStartedEvent    = $psrStartedEvent
+                StartedEvent    = $psrStartedEvent
                 Circular          = $LogFileMode -eq 'Circular'
             }
 
-            $null = $psrStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan)
-            $psrStartedEvent.Dispose()
             $psrStarted = $true
         }
 
@@ -11274,9 +11288,10 @@ function Collect-OutlookInfo {
             Write-Progress -Status 'Starting HungMonitorTask'
             $hungDumpCts = New-Object System.Threading.CancellationTokenSource
             $monitorStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
+            $startedEventList.Add($monitorStartedEvent)
             Write-Log "Starting HungMonitorTask. HungMonitorTarget:$HungMonitorTarget, HungTimeout:$HungTimeout, User:$targetUser"
 
-            $hungMonitorTask = Start-Task -Name 'HungMonitorTask' -ScriptBlock { param($Path, $Name, $User, $Timeout, $DumpCount, $CancellationToken, $IsStartedEvent) Start-HungMonitor @PSBoundParameters } `
+            $hungMonitorTask = Start-Task -Name 'HungMonitorTask' -ScriptBlock { param($Path, $Name, $User, $Timeout, $DumpCount, $CancellationToken, $StartedEvent) Start-HungMonitor @PSBoundParameters } `
                 -ArgumentList @{
                 Path              = Join-Path $tempPath 'HungDump'
                 Name              = $HungMonitorTarget
@@ -11284,11 +11299,9 @@ function Collect-OutlookInfo {
                 Timeout           = $HungTimeout
                 DumpCount         = $MaxHungDumpCount
                 CancellationToken = $hungDumpCts.Token
-                IsStartedEvent    = $monitorStartedEvent
+                StartedEvent      = $monitorStartedEvent
             }
 
-            $null = $monitorStartedEvent.WaitOne([System.Threading.Timeout]::InfiniteTimeSpan)
-            $monitorStartedEvent.Dispose()
             $hungDumpStarted = $true
         }
 
@@ -11332,6 +11345,12 @@ function Collect-OutlookInfo {
         if ($Component -contains 'Recording') {
             $recording = Start-Recording -ZoomItDownloadPath (Join-Path $Path 'ZoomIt') -ZoomItSearchPath $Path -ErrorAction Stop
             $recordingStarted = $true
+        }
+
+        # Wait all "Started" events
+        foreach ($event in $startedEventList) {
+            $null = $event.WaitOne()
+            $event.Dispose()
         }
 
         Write-Progress -Completed
