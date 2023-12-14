@@ -2820,7 +2820,7 @@ function Resolve-User {
 
     $sid = $account = $null
 
-    # Is is SID?
+    # Is SID?
     try {
         $sid = New-Object System.Security.Principal.SecurityIdentifier($Identity)
         $account = $sid.Translate([System.Security.Principal.NTAccount])
@@ -2834,6 +2834,9 @@ function Resolve-User {
         try {
             $account = New-Object System.Security.Principal.NTAccount($Identity)
             $sid = $account.Translate([System.Security.Principal.SecurityIdentifier])
+
+            # Translate from SID to acccount so that the account name is more complete (domain\name)
+            $account = $sid.Translate([System.Security.Principal.NTAccount])
         }
         catch {
             # Ignore
@@ -2869,26 +2872,58 @@ function Get-LogonUser {
     # Find unique users of explorer.exe instances.
     Get-CimInstance Win32_Process -Filter 'Name = "explorer.exe"' | & {
         param([Parameter(ValueFromPipeline)]$win32Process)
+
         begin { $usersCache = @{} }
 
         process {
             try {
-                $owner = Invoke-CimMethod -InputObject $win32Process -MethodName GetOwnerSid
+                $owner = $win32Process | Get-ProcessOwner
 
-                # Without admin privilege, owner info other than self can be empty.
-                if (-not $owner.Sid) {
-                    Write-Verbose "Cannot obtain the owner of explorer (PID $($win32Process.ProcessID)). Probably you are runnning without admin privilege"
+                if (-not $owner) {
+                    Write-Verbose "Cannot obtain the owner of explorer (PID $($win32Process.ProcessId)). Probably you are runnning without admin privilege"
                     return
                 }
 
-                if (-not $usersCache.ContainsKey($owner.Sid)) {
-                    $usersCache.Add($owner.Sid, $null)
-                    Resolve-User $owner.Sid
+                if ($usersCache.ContainsKey($owner.Sid)) {
+                    return
                 }
+
+                $usersCache.Add($owner.Sid, $null)
+                $owner
             }
             finally {
                 $win32Process.Dispose()
             }
+        }
+    }
+}
+
+function Get-ProcessOwner {
+    [CmdletBinding()]
+    param(
+        [Parameter(ParameterSetName = 'Id', Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('ProcessId')]
+        [int]$Id,
+        [Parameter(ParameterSetName = 'Win32Process', Mandatory, ValueFromPipeline)]
+        # CinInstance of Win32_Process (Technically this parameter is not necessary, but it helps to speed up by skipping Get-CinInstance, which is quite slow)
+        [Microsoft.Management.Infrastructure.CimInstance]$Win32Process
+    )
+
+    process {
+        if (-not $Win32Process) {
+            $Win32Process = Get-CimInstance 'Win32_Process' -Filter "ProcessId = $Id"
+            $needDispose = $true
+        }
+
+        # Note: If the process is null or has exited, GetOwnerSid emits non-terminating error. Ignore this error.
+        $null = $($owner = Invoke-CimMethod -InputObject $Win32Process -MethodName 'GetOwnerSid') 2>&1
+
+        if ($owner.ReturnValue -eq 0) {
+            Resolve-User $owner.Sid
+        }
+
+        if ($Win32Process -and $needDispose) {
+            $Win32Process.Dispose()
         }
     }
 }
@@ -2948,6 +2983,7 @@ function Get-UserProfilePath {
     }
 
     $resolvedUser = Resolve-User $User
+
     if (-not $resolvedUser) {
         return
     }
@@ -7368,7 +7404,8 @@ function Save-Dump {
     }
     elseif (-not $process.SafeHandle) {
         # This scenario is possible for a system process.
-        Write-Error "Cannot obtain the process SafeHandle of $($process.Name)"
+        Write-Error "Cannot obtain the process handle of $($process.Name) (PID:$($process.Id))"
+        $process.Dispose()
         return
     }
 
@@ -7473,7 +7510,7 @@ function Save-HungDump {
 
     $ERROR_TIMEOUT = 1460
     $savedDumpCount = 0
-    $intervalSeconds = 1
+    $interval = [TimeSpan]::FromSeconds(1)
 
     # Keep monitoring until one of the following is met:
     # - Cancellation is requested
@@ -7491,6 +7528,11 @@ function Save-HungDump {
                 return
             }
 
+            if (-not $process.Handle) {
+                Write-Error "Cannot obtain the process handle of $($process.Name) (PID:$($process.Id))"
+                return
+            }
+
             # Need to get the process object every time since MainWindowHandle can change during the life time of a process.
             if ($proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
                 $hWnd = $proc.MainWindowHandle
@@ -7498,7 +7540,7 @@ function Save-HungDump {
 
                 # During start up and shut down, MainWindowHandle can be 0.
                 if ($hWnd -eq 0) {
-                    Start-Sleep -Seconds $intervalSeconds
+                    Start-Sleep -Seconds $interval.TotalSeconds
                     continue
                 }
             }
@@ -7508,6 +7550,7 @@ function Save-HungDump {
             }
 
             $result = [IntPtr]::Zero
+
             if (-not ([Win32.User32]::SendMessageTimeoutW($hWnd, 0, [IntPtr]::Zero, [IntPtr]::Zero, 0, $Timeout.TotalMilliseconds, [ref]$result))) {
                 $ec = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
 
@@ -7531,7 +7574,7 @@ function Save-HungDump {
                 }
             }
 
-            Start-Sleep -Seconds $intervalSeconds
+            Start-Sleep -Seconds $interval.TotalSeconds
         }
     }
     finally {
@@ -8622,15 +8665,6 @@ function Start-ProcessCapture {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
-    $runAsAdmin = Test-RunAsAdministrator
-
-    if (-not $runAsAdmin) {
-        Write-Log "Not running as admin. IncludeUserName won't be used" -Category Warning
-    }
-
-    # PowerShell 4's Get-Process has -IncludeUserName parameter. Use it if available (must be Elevated); otherwise fall back to WMI.
-    $includeUserNameAvailable = $runAsAdmin -and ((Get-Command -Name 'Get-Process').Parameters.ContainsKey('IncludeUserName'))
-
     # Using a Hash table is much faster than Where-Object.
     $hashSet = @{}
 
@@ -8689,30 +8723,18 @@ function Start-ProcessCapture {
                     }
 
                     # For processes specified in NamePattern parameter, save its User & Environment Variables.
-                    if ($win32Process.ProcessName -match $NamePattern) {
-                        Write-Log "Found a new instance of $($win32Process.ProcessName) (PID:$($win32Process.ProcessId), Elevated:$isElevated)"
+                    if ($win32Process.Name -match $NamePattern) {
+                        Write-Log "Found a new instance of $($win32Process.Name) (PID:$($win32Process.ProcessId), Elevated:$isElevated)"
 
-                        if ($includeUserNameAvailable) {
-                            if ($proc = Get-Process -Id $win32Process.ProcessId -IncludeUserName -ErrorAction SilentlyContinue) {
-                                $obj.Add('User', $proc.UserName)
-                                $obj.Add('EnvironmentVariables', $proc.StartInfo.EnvironmentVariables)
-                                $proc.Dispose()
-                            }
+                        $owner = $win32Process | Get-ProcessOwner
+
+                        if ($owner) {
+                            $obj.User = $owner.Name
                         }
-                        else {
-                            try {
-                                # GetOwner() could fail if the process has exited. Not likely, but be defensive here.
-                                $owner = Invoke-CimMethod -InputObject $win32Process -MethodName 'GetOwner'
-                                $obj.Add('User', "$($owner.Domain)\$($owner.User)")
-                            }
-                            catch {
-                                Write-Error "Invoke-CimMethod with GetOwner failed for $($win32Process.Name)" -Exception $_.Exception
-                            }
 
-                            if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
-                                $obj.Add('EnvironmentVariables', $proc.StartInfo.EnvironmentVariables)
-                                $proc.Dispose()
-                            }
+                        if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
+                            $obj.EnvironmentVariables = $proc.StartInfo.EnvironmentVariables
+                            $proc.Dispose()
                         }
                     }
 
@@ -8798,14 +8820,30 @@ function Start-HungMonitor {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        $Path,
+        # Destination folder path
+        [string]$Path,
         [Parameter(Mandatory)]
-        $Name,
+        # Name of the target process (e.g. "Outlook")
+        [string]$Name,
+        [Parameter(Mandatory)]
+        # Owner of the target process
+        $User,
         [TimeSpan]$Timeout,
         [int]$DumpCount,
-        $CancellationToken,
+        [System.Threading.CancellationToken]$CancellationToken,
         [System.Threading.EventWaitHandle]$IsStartedEvent
     )
+
+    # Remove the extension ".exe" if exits.
+    $Name = [IO.Path]::GetFileNameWithoutExtension($Name)
+
+    if (-not $User.Sid) {
+        $User = Resolve-User $User
+
+        if (-not $User) {
+            return
+        }
+    }
 
     if ($IsStartedEvent) {
         $null = $IsStartedEvent.Set()
@@ -8814,7 +8852,9 @@ function Start-HungMonitor {
     # Key:Process Hash, Value:true/false for "need to log".
     $procCache = @{}
 
-    # The target process may restart while being monitored. Keep monitoring until canceled (via hungDumpCts).
+    $internal = [TimeSpan]::FromSeconds(1)
+
+    # The target process may restart while being monitored. Keep monitoring until canceled (via CancellationToken).
     while ($true) {
         # Wait for the target process ($Name) to come live.
         while ($true) {
@@ -8822,70 +8862,68 @@ function Start-HungMonitor {
                 return
             }
 
+            # Find the target process run by the specified user.
             # There could be multiple process instances.
             # Not really expected for Outlook, but monitor the one that started first, while skipping the ones that have been monitored already.
             $targetList = @(
-                Get-Process -Name $Name -ErrorAction SilentlyContinue | & {
-                    param(
-                        [Parameter(ValueFromPipeline)]
-                        [System.Diagnostics.Process]$process)
+                Get-CimInstance 'Win32_Process' -Filter "Name = '$Name.exe'" | & {
+                    param([Parameter(ValueFromPipeline)]$win32Process)
                     process {
-                        if (-not $process.SafeHandle) {
-                            Write-Log "Cannot obtain SafeHandle of $($process.Name) (PID:$($process.Id)). Skipping this instance"
-                            return
-                        }
-
-                        $target = [PSCustomObject]@{
-                            Id        = $process.Id
-                            StartTime = [DateTime]::MinValue
-                        }
-
-                        # It's possible to get Access Denied on StartTime (If SafeHandle is available, StartTime should also be available, but be defensive just in case)
                         try {
-                            $target.StartTime = $process.StartTime
-                        }
-                        catch {
-                            Write-Error -Message "Failed to get StartTime of $($process.Name) (PID:$($process.Id))" -Exception $_.Exception
-                        }
+                            $hash = $win32Process.GetHashCode()
 
-                        $process.Dispose()
+                            if ($procCache.ContainsKey($hash)) {
+                                if ($procCache[$hash]) {
+                                    Write-Log "This instance of $($win32Process.Name) (PID:$($win32Process.ProcessId), CreationDate:$($win32Process.CreationDate)) has been seen already. This instance will be not be monitored"
+                                    $procCache[$hash] = $false
+                                }
 
-                        # Do not use GetHashCode() for the Process itself because it returns a new value every time.
-                        $hash = $target.Id.GetHashCode() -bxor $target.StartTime.GetHashCode()
+                                return
+                            }
 
-                        if ($procCache.ContainsKey($hash)) {
-                            if ($procCache[$hash]) {
-                                Write-Log "This instance of $Name (PID:$($target.Id), StartTime:$($target.StartTime)) has been seen already. This instance will be not be monitored"
-                                $procCache[$hash] = $false
+                            # Check if the owner matches the User
+                            $owner = $win32Process | Get-ProcessOwner
+
+                            if ($owner -and $owner.Sid -ne $User.Sid) {
+                                Write-Log "This instance of $($win32Process.Name) (PID:$($win32Process.ProcessId)) has owner '$owner', and it is different from the target user '$User'. This instance will be not be monitored"
+                                $procCache.Add($hash, $false)
+                                return
+                            }
+
+                            # Found a target process
+                            $procCache.Add($hash, $true)
+
+                            [PSCustomObject]@{
+                                Id           = $win32Process.ProcessId
+                                CreationDate = $win32Process.CreationDate
                             }
                         }
-                        else {
-                            $procCache.Add($hash, $true)
-                            $target
+                        finally {
+                            $win32Process.Dispose()
                         }
                     }
                 }
             )
 
             # If there are multiple processes available, pick the one that started earliest.
-            $targetPid = $targetList | Sort-Object StartTime | Select-Object -First 1 -ExpandProperty Id
+            $target = $targetList | Sort-Object CreationDate | Select-Object -First 1
 
             if ($targetList.Count -gt 1) {
                 Write-Log "There are $($targetList.Count) instances of $Name found"
             }
 
-            if ($targetPid) {
+            if ($target) {
                 break
             }
 
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds $internal.TotalSeconds
         }
 
-        Write-Log "Found $Name (PID:$targetPid). Starting hung window monitoring"
+        Write-Log "Found $Name (PID:$($target.Id), CreationDate:$($target.CreationDate)). Starting hung window monitoring"
 
         $argsTable = @{
             Path      = $Path
-            ProcessId = $targetPid
+            ProcessId = $target.Id
         }
 
         if ($DumpCount) {
@@ -10352,7 +10390,7 @@ function Save-GPResult {
 
     if ($Format -eq 'TEXT') {
         # TODO:Using -RedirectStandardOutput is very slow. Refactor later by configuring System.Diagnostics.Process with StartInfo
-        $startProcArgs['RedirectStandardOutput'] = $filePath
+        $startProcArgs.RedirectStandardOutput = $filePath
     }
 
     $start = Get-Timestamp
@@ -10764,7 +10802,7 @@ function Collect-OutlookInfo {
         return
     }
 
-    # Try to enable Debug Privilege if running as admin
+    # Try to enable Debug Privilege if running as admin (It's possible that the user does not have SeDebugPrivilege)
     $debugPrivilegeEnabled = $false
     $enterDebugModeErrorRec = $null
 
@@ -10775,12 +10813,6 @@ function Collect-OutlookInfo {
         }
         catch {
             $enterDebugModeErrorRec = $_
-
-            # Debug Privilege is necessary when collecting normal & hung dump files; otherwise process's SafeHandle is not available (crash dumps are ok because they are collected by WER)
-            if ($Component -contains "Dump" -or $Component -contains 'HungDump') {
-                Write-Error -Message "Failed to enable Debug Privilege. $_" -Exception $_.Exception
-                return
-            }
         }
     }
 
@@ -10836,6 +10868,20 @@ function Collect-OutlookInfo {
             Write-Error "Found multiple logon users ($($logonUsers.Count) users$(if ($logonUsers.Count -le 3) { "; $($logonUsers.Name -join ',')" })). Please specify the target user by `"-User`" parameter"
             return
         }
+    }
+
+    # For TTD, the current user must have Debug Privilege (even for his/her own processes)
+    if ($Component -contains 'TTD' -and -not $debugPrivilegeEnabled) {
+        Write-Error "Cannot collect TTD because the current user `"$currentUser`" does not have Debug Privilege"
+        return
+    }
+
+    # Collecting Dump/HungDump is possible when the current user has DebugPrivilege or the target process's user is the same as the current user.
+    # Otherwise process's handle is not available (crash dumps are OK because they are collected by WER)
+    # Note: Even if this check passes, Save-Dump might still fail if the current user does not have Debug Privilege and the target process is running by a different user.
+    if (($Component -contains "Dump" -or $Component -contains 'HungDump') -and ($targetUser.Sid -ne $currentUser.Sid -and -not $debugPrivilegeEnabled)) {
+        Write-Error -Message "Cannot collect process dump files (Dump or HungDump) for the target user `"$targetUser`" because the current user `"$currentUser`" does not have Debug Privilege"
+        return
     }
 
     if (-not $SkipAutoUpdate) {
@@ -11196,16 +11242,31 @@ function Collect-OutlookInfo {
                     break
                 }
 
-                if (-not ($process = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue)) {
+                $win32Process = Get-CimInstance 'Win32_Process' -Filter "Name = 'Outlook.exe'" | Select-Object -First 1
+
+                if (-not $win32Process) {
                     Write-Host "Cannot find Outlook.exe. Please start Outlook" -ForegroundColor Yellow
                     continue
                 }
 
-                Write-Progress -Activity "Saving a process dump of Outlook" -Status "Please wait" -PercentComplete -1
-                $dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $process.Id
-                Write-Progress -Activity "Saving a process dump of Outlook" -Status "Done" -Completed
-                Write-Log "Saved a dump file:$($dumpResult.DumpFile)"
-                $process.Dispose()
+                try {
+                    # Check its owner is the target user
+                    $owner = $win32Process | Get-ProcessOwner
+
+                    if ($owner -and $owner.Sid -ne $targetUser.Sid) {
+                        $owner = Resolve-User $owner.Sid
+                        Write-Host "Found Outlook.exe (PID:$($win32Process.ProcessId)), but its owner is `"$owner`", not the target user `"$targetUser`"" -ForegroundColor Yellow
+                        continue
+                    }
+
+                    Write-Progress -Activity "Saving a process dump of Outlook" -Status "Please wait" -PercentComplete -1
+                    $dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $win32Process.ProcessId
+                    Write-Progress -Activity "Saving a process dump of Outlook" -Status "Done" -Completed
+                    Write-Log "Saved a dump file:$($dumpResult.DumpFile)"
+                }
+                finally {
+                    $win32Process.Dispose()
+                }
             }
         }
 
@@ -11213,15 +11274,16 @@ function Collect-OutlookInfo {
             Write-Progress -Status 'Starting HungMonitorTask'
             $hungDumpCts = New-Object System.Threading.CancellationTokenSource
             $monitorStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
-            Write-Log "Starting HungMonitorTask. HungMonitorTarget:$HungMonitorTarget, HungTimeout:$HungTimeout"
+            Write-Log "Starting HungMonitorTask. HungMonitorTarget:$HungMonitorTarget, HungTimeout:$HungTimeout, User:$targetUser"
 
-            $hungMonitorTask = Start-Task -Name 'HungMonitorTask' -ScriptBlock { param($Path, $Timeout, $DumpCount, $CancellationToken, $Name, $IsStartedEvent) Start-HungMonitor @PSBoundParameters } `
+            $hungMonitorTask = Start-Task -Name 'HungMonitorTask' -ScriptBlock { param($Path, $Name, $User, $Timeout, $DumpCount, $CancellationToken, $IsStartedEvent) Start-HungMonitor @PSBoundParameters } `
                 -ArgumentList @{
                 Path              = Join-Path $tempPath 'HungDump'
+                Name              = $HungMonitorTarget
+                User              = $targetUser
                 Timeout           = $HungTimeout
                 DumpCount         = $MaxHungDumpCount
                 CancellationToken = $hungDumpCts.Token
-                Name              = $HungMonitorTarget
                 IsStartedEvent    = $monitorStartedEvent
             }
 
