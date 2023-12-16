@@ -1370,13 +1370,8 @@ function Test-ProcessElevated {
         $debugPrivilegeEnabled = $false
 
         if ($EnableDebugPrivilege) {
-            try {
-                [System.Diagnostics.Process]::EnterDebugMode()
-                $debugPrivilegeEnabled = $true
-            }
-            catch {
-                Write-Log -Message "EnterDebugMode failed" -ErrorRecord $_ -Category Warning
-            }
+            $err = Enable-DebugPrivilege 2>&1
+            $debugPrivilegeEnabled = $null -eq $err
         }
     }
 
@@ -1431,8 +1426,96 @@ function Test-ProcessElevated {
 
     end {
         if ($debugPrivilegeEnabled) {
-            [System.Diagnostics.Process]::LeaveDebugMode()
+            Disable-DebugPrivilege
         }
+    }
+}
+
+function Get-Privilege {
+    [CmdletBinding()]
+    param(
+        # [switch]$SkipCache
+    )
+
+    # if (-not $SkipCache -and $Script:PrivilegeCache) {
+    #     Write-Log "Returning PrivilegeCache"
+    #     $Script:PrivilegeCache
+    #     return
+    # }
+
+    $err = $($privileges = & whoami.exe /PRIV /FO CSV) 2>&1
+
+    if ($err) {
+        foreach ($e in $err) {
+            Write-Error -Message "whoami.exe /Priv failed. $e"
+        }
+
+        return
+    }
+
+    # $Script:PrivilegeCache =
+    for ($i = 1; $i -lt $privileges.Count; ++$i) {
+        # Note: Index starts from 1 to skip the first header line
+        $priv = $privileges[$i] -split ',' | & { process { $_.Trim('"') } }
+
+        [PSCustomObject]@{
+            Name        = $priv[0]
+            Description = $priv[1]
+            Enabled     = $priv[2] -eq 'Enabled'
+        }
+    }
+
+    # $Script:PrivilegeCache
+}
+
+function Test-DebugPrivilege {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    $debugPrivilege = Get-Privilege | Where-Object { $_.Name -eq 'SeDebugPrivilege'}
+
+    if (-not $debugPrivilege) {
+        Write-Verbose "The user does not have DebugPrivilege"
+        $false
+    }
+    elseif (-not $debugPrivilege.Enabled) {
+        Write-Verbose " DebugPrivilege is not enabled"
+        $false
+    }
+    else {
+        $true
+    }
+}
+
+function Enable-DebugPrivilege {
+    [CmdletBinding()]
+    param()
+
+    try {
+        [System.Diagnostics.Process]::EnterDebugMode()
+    }
+    catch {
+        $msg = "Failed to enable Debug Privilege"
+        $debugPrivilege = Get-Privilege | Where-Object { $_.Name -eq 'SeDebugPrivilege'}
+
+        if (-not $debugPrivilege) {
+            $msg += " because the user does not have DebugPrivilege"
+        }
+
+        Write-Error -Message $msg -Exception $_.Exception
+    }
+}
+
+function Disable-DebugPrivilege {
+    [CmdletBinding()]
+    param()
+
+    try {
+        [System.Diagnostics.Process]::LeaveDebugMode()
+    }
+    catch {
+        Write-Error -Message "Failed to disale Debug Privilege. $_" -Exception $_.Exception
     }
 }
 
@@ -8666,6 +8749,10 @@ function Start-ProcessCapture {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
+    # This is an optimization. Get-Process's IncludeUserName is faster than Win32_Process CimClass's GetOwnerSid method (although Win32_Process's GetOwner(Sid) works without Debug Privilege)
+    $useIncludeUserName = (Get-Command Get-Process).Parameters.ContainsKey('IncludeUserName') -and (Test-DebugPrivilege)
+    Write-Log "useIncludeUserName:$useIncludeUserName"
+
     # Using a Hash table is much faster than Where-Object.
     $hashSet = @{}
 
@@ -8730,15 +8817,22 @@ function Start-ProcessCapture {
                     if ($win32Process.Name -match $NamePattern) {
                         Write-Log "Found a new instance of $($win32Process.Name) (PID:$($win32Process.ProcessId), Elevated:$isElevated)"
 
-                        $owner = $win32Process | Get-ProcessOwner
-
-                        if ($owner) {
-                            $obj.User = $owner.Name
+                        if ($useIncludeUserName) {
+                            if ($proc = Get-Process -Id $win32Process.ProcessId -IncludeUserName -ErrorAction SilentlyContinue) {
+                                $obj.User = $proc.UserName
+                                $obj.EnvironmentVariables = $proc.StartInfo.EnvironmentVariables
+                            }
                         }
+                        else {
+                            $owner = $win32Process | Get-ProcessOwner
 
-                        if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
-                            $obj.EnvironmentVariables = $proc.StartInfo.EnvironmentVariables
-                            $proc.Dispose()
+                            if ($owner) {
+                                $obj.User = $owner.Name
+                            }
+
+                            if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
+                                $obj.EnvironmentVariables = $proc.StartInfo.EnvironmentVariables
+                            }
                         }
                     }
 
@@ -8746,6 +8840,10 @@ function Start-ProcessCapture {
                 }
                 finally {
                     $win32Process.Dispose()
+
+                    if ($proc) {
+                        $proc.Dispose()
+                    }
                 }
             }
         }
@@ -10813,16 +10911,11 @@ function Collect-OutlookInfo {
 
     # Try to enable Debug Privilege if running as admin (It's possible that the user does not have SeDebugPrivilege)
     $debugPrivilegeEnabled = $false
-    $enterDebugModeErrorRec = $null
+    $debugPrivilegeError = $null
 
     if ($runAsAdmin) {
-        try {
-            [System.Diagnostics.Process]::EnterDebugMode()
-            $debugPrivilegeEnabled = $true
-        }
-        catch {
-            $enterDebugModeErrorRec = $_
-        }
+        $debugPrivilegeError = Enable-DebugPrivilege 2>&1
+        $debugPrivilegeEnabled = $null -eq $debugPrivilegeError
     }
 
     if ($env:PROCESSOR_ARCHITEW6432) {
@@ -10944,7 +11037,7 @@ function Collect-OutlookInfo {
     Write-Log "Invocation:$invocation"
 
     if ($runAsAdmin -and -not $debugPrivilegeEnabled) {
-        Write-Log -Message "Running as admin, but failed to enable Debug Privilege. $enterDebugModeErrorRec (NativeErrorCode:$($enterDebugModeErrorRec.Exception.NativeErrorCode))" -ErrorRecord $enterDebugModeErrorRec -Category Error
+        Write-Log -Message "Running as admin, but failed to enable Debug Privilege. $debugPrivilegeError" -ErrorRecord $debugPrivilegeError -Category Error
     }
 
     $ScriptInfo = [PSCustomObject]@{
@@ -11058,12 +11151,13 @@ function Collect-OutlookInfo {
             $processCaptureTaskCts = New-Object System.Threading.CancellationTokenSource
             $processCaptureStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
             $startedEventList.Add($processCaptureStartedEvent)
-            $processCaptureTask = Start-Task -Name 'ProcessCaptureTask' -ScriptBlock { param($Path, $NamePattern, $CancellationToken, $StartedEvent) Start-ProcessCapture @PSBoundParameters } `
+            $processCaptureTask = Start-Task -Name 'ProcessCaptureTask' -ScriptBlock { param($Path, $NamePattern, $CancellationToken, $StartedEvent, $EnablePerfCheck) Start-ProcessCapture @PSBoundParameters } `
                 -ArgumentList @{
                 Path              = $OSDir
-                NamePattern       = 'outlook|fiddler|explorer|backgroundTaskHost'
+                NamePattern       = '.' #'outlook|fiddler|explorer|backgroundTaskHost'
                 CancellationToken = $processCaptureTaskCts.Token
                 StartedEvent      = $processCaptureStartedEvent
+                EnablePerfCheck   = $true
             }
 
             Write-Log "Starting GPResultTask"
@@ -11348,6 +11442,9 @@ function Collect-OutlookInfo {
         }
 
         # Wait all "Started" events
+        Write-Progress -Status "Waiting for all the tasks to start"
+        Write-Log "Waiting for all the tasks to start"
+
         foreach ($event in $startedEventList) {
             $null = $event.WaitOne()
             $event.Dispose()
@@ -11670,4 +11767,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Test-ProcessElevated, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
