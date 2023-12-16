@@ -1473,7 +1473,7 @@ function Test-DebugPrivilege {
     [OutputType([bool])]
     param()
 
-    $debugPrivilege = Get-Privilege | Where-Object { $_.Name -eq 'SeDebugPrivilege'}
+    $debugPrivilege = Get-Privilege | Where-Object { $_.Name -eq 'SeDebugPrivilege' }
 
     if (-not $debugPrivilege) {
         Write-Verbose "The user does not have DebugPrivilege"
@@ -1497,7 +1497,7 @@ function Enable-DebugPrivilege {
     }
     catch {
         $msg = "Failed to enable Debug Privilege"
-        $debugPrivilege = Get-Privilege | Where-Object { $_.Name -eq 'SeDebugPrivilege'}
+        $debugPrivilege = Get-Privilege | Where-Object { $_.Name -eq 'SeDebugPrivilege' }
 
         if (-not $debugPrivilege) {
             $msg += " because the user does not have DebugPrivilege"
@@ -2696,133 +2696,6 @@ function Save-EventLog {
     }
 }
 
-<#
-.SYNOPSIS
-    Get-MicrosoftUpdate
-.NOTES
-    Deprecated. Use Get-InstalledUpdate instead.
-#>
-function Get-MicrosoftUpdate {
-    [CmdletBinding()]
-    param(
-        [switch]$OfficeOnly,
-        [switch]$AppliedOnly
-    )
-
-    # Constants
-    # https://docs.microsoft.com/en-us/windows/desktop/api/msi/nf-msi-msienumpatchesexa
-    $PatchState = @{
-        1  = 'MSIPATCHSTATE_APPLIED'
-        2  = 'MSIPATCHSTATE_SUPERSEDED'
-        4  = 'MSIPATCHSTATE_OBSOLETED'
-        8  = 'MSIPATCHSTATE_REGISTERED'
-        15 = 'MSIPATCHSTATE_ALL'
-    }
-
-    $hklm = $productsKey = $null
-    try {
-        # Use .NET registry API (with [RegistryView]::Registry64) instead of PowerShell here to avoid registry redirection occurs on 32bit PowerShell on 64bit OS for HKLM\SOFTWARE.
-        if ('Microsoft.Win32.RegistryView' -as [type]) {
-            $hklm = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64);
-        }
-        elseif (-not $env:PROCESSOR_ARCHITEW6432) {
-            # RegistryView is not available, but it's OK because no WOW64.
-            $hklm = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [string]::Empty);
-        }
-        else {
-            # This is the case where registry rediction takes place (32bit PowerShell on 64bit OS). Bail.
-            Write-Error "32bit PowerShell is running on 64bit OS and .NET 4.0 is not used. Please run 64bit PowerShell"
-            return
-        }
-
-        $productsKey = $hklm.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products')
-
-        foreach ($productName in $productsKey.GetSubKeyNames()) {
-            if ($null -eq $productName -or ($OfficeOnly -and $productName -notmatch 'F01FEC')) {
-                continue
-            }
-
-            $productKey = $productsKey.OpenSubKey($productName)
-
-            foreach ($subkeyName in $productKey.GetSubKeyNames()) {
-                if ($subkeyName -ne 'Patches') {
-                    continue
-                }
-
-                $patchesKey = $productKey.OpenSubKey($subkeyName)
-                foreach ($patchName in $patchesKey.GetSubKeyNames()) {
-                    $patchKey = $patchesKey.OpenSubKey($patchName)
-
-                    $state = $patchKey.GetValue('State')
-
-                    if ($AppliedOnly -and $PatchState[$state] -ne 'MSIPATCHSTATE_APPLIED') {
-                        continue
-                    }
-
-                    $displayName = $patchKey.GetValue('DisplayName')
-                    $moreInfoURL = $patchKey.GetValue('MoreInfoURL')
-                    $installed = $patchKey.GetValue('Installed')
-
-                    if (-not $displayName -and -not $moreInfoURL) {
-                        continue
-                    }
-
-                    # extract KB number
-                    $KB = $null
-                    if ($moreInfoURL -match 'https?://support.microsoft.com/kb/(?<KB>\d+)') {
-                        $KB = $Matches['KB']
-                    }
-
-                    [PSCustomObject]@{
-                        DisplayName = $displayName
-                        KB          = $KB
-                        MoreInfoURL = $moreInfoURL
-                        Installed   = $installed
-                        PatchState  = $PatchState[$state]
-                    }
-
-                    $patchKey.Close()
-                }
-
-                $patchesKey.Close()
-            }
-
-            $productKey.Close()
-        }
-    }
-    finally {
-        if ($productsKey) {
-            $productsKey.Close()
-        }
-
-        if ($hklm) {
-            $hklm.Close()
-        }
-    }
-}
-
-<#
-.SYNOPSIS
-    Save-MicrosoftUpdate
-.NOTES
-    Deprecated. Use Get-InstalledUpdate instead.
-#>
-function Save-MicrosoftUpdate {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        $Path
-    )
-
-    if (-not (Test-Path $Path)) {
-        $null = New-Item $Path -ItemType directory -ErrorAction Stop
-    }
-
-    $cmdletName = $PSCmdlet.MyInvocation.MyCommand.Name
-    $name = $cmdletName.Substring($cmdletName.IndexOf('-') + 1)
-    Get-MicrosoftUpdate | Export-Clixml -Depth 4 -Path $(Join-Path $Path -ChildPath "$name.xml")
-}
-
 function Get-InstalledUpdate {
     [CmdletBinding()]
     param()
@@ -3264,42 +3137,6 @@ function Save-OSConfiguration {
     }
 }
 
-function Save-OSConfigurationMT {
-    [CmdletBinding()]
-    param (
-        [parameter(Mandatory = $true)]
-        $Path
-    )
-
-    # If this command is run by itself (not from Collect-OutlookInfo), need to create a runspace pool.
-    if (-not $Script:RunspacePool) {
-        Open-TaskRunspace
-        $runspaceOpened = $true
-    }
-
-    if (-not (Test-Path $Path)) {
-        $null = New-Item $Path -ItemType directory -ErrorAction Stop
-    }
-
-    $tasks = @(
-        Start-Task { param($path) Get-WmiObject -Class Win32_ComputerSystem | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "Win32_ComputerSystem.xml")
-        Start-Task { param($path) Get-WmiObject -Class Win32_OperatingSystem | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "Win32_OperatingSystem.xml")
-        Start-Task { param($path) Get-ProxySetting | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "ProxySetting.xml")
-        Start-Task { param($path) Get-NLMConnectivity | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "NLMConnectivity.xml")
-        Start-Task { param($path) Get-WSCAntivirus -ErrorAction SilentlyContinue | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "WSCAntivirus.xml")
-        Start-Task { param($path) Get-InstalledUpdate -ErrorAction SilentlyContinue | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "InstalledUpdate.xml")
-        Start-Task { param($path) Get-JoinInformation -ErrorAction SilentlyContinue | Export-Clixml -Path $path } -ArgumentList (Join-Path $Path "JoinInformation.xml")
-        Start-Task { param($path) Get-DeviceJoinStatus -ErrorAction SilentlyContinue | Out-File -FilePath $path } -ArgumentList (Join-Path $Path "DeviceJoinStatus.txt")
-    )
-
-    Write-Verbose "waiting for tasks..."
-    $tasks | Receive-Task -AutoRemoveTask
-
-    if ($runspaceOpened) {
-        Close-TaskRunspace
-    }
-}
-
 function Save-NetworkInfo {
     [CmdletBinding()]
     param (
@@ -3493,49 +3330,6 @@ function Invoke-ScriptBlock {
             $_.Dispose()
         }
     }
-}
-
-function Save-NetworkInfoMT {
-    [CmdletBinding()]
-    param (
-        [parameter(Mandatory = $true)]
-        $Path
-    )
-
-    if (-not (Test-Path $Path)) {
-        $null = New-Item $Path -ItemType directory -ErrorAction Stop
-    }
-
-    # Path must be resolved before it's used as an argument to Start-Task.
-    $Path = Resolve-Path -LiteralPath $Path
-    $PSDefaultParameterValues.Add('Start-Task:ArgumentList', $Path)
-
-    # These are from C:\Windows\System32\gatherNetworkInfo.vbs with some extra.
-    $tasks = @(
-        Start-Task { param ($Path) Get-NetAdapter -IncludeHidden | Export-Clixml (Join-Path $Path 'NetAdapter.xml') }
-        Start-Task { param ($Path) Get-NetAdapterAdvancedProperty | Export-Clixml (Join-Path $Path 'NetAdapterAdvancedProperty.xml') }
-        Start-Task { param ($Path) Get-NetAdapterBinding -IncludeHidden | Export-Clixml (Join-Path $Path 'NetAdapterBinding.xml') }
-        Start-Task { param ($Path) Get-NetIpConfiguration -Detailed | Export-Clixml (Join-Path $Path 'NetIpConfiguration.xml') }
-        Start-Task { param ($Path) Get-DnsClientNrptPolicy | Export-Clixml (Join-Path $Path 'DnsClientNrptPolicy.xml') }
-        Start-Task { param ($Path) Get-NetRoute | Export-Clixml (Join-Path $Path 'NetRoute.xml') }
-        Start-Task { param ($Path) Get-NetIPaddress | Export-Clixml (Join-Path $Path 'NetIPaddress.xml') }
-        Start-Task { param ($Path) Get-NetLbfoTeam | Export-Clixml (Join-Path $Path 'NetLbfoTeam.xml') }
-        Start-Task { param ($Path) Get-NetIPInterface | Export-Clixml (Join-Path $Path 'NetIPInterface.xml') }
-        Start-Task { param ($Path) Get-NetConnectionProfile | Export-Clixml (Join-Path $Path 'NetConnectionProfile.xml') }
-        Start-Task { param ($Path) ipconfig /all | Out-File (Join-Path $Path 'ipconfig_all.txt') }
-        Start-Task { param ($Path) netsh advfirewall monitor show currentprofile | Out-File (Join-Path $Path 'netsh advfirewall monitor show currentprofile.txt') }
-        Start-Task { param ($Path) netsh advfirewall monitor show firewall | Out-File (Join-Path $Path 'netsh advfirewall monitor show firewall.txt') }
-        Start-Task { param ($Path) netsh advfirewall firewall show rule name=all verbose | Out-File (Join-Path $Path 'netsh advfirewall firewall show rule name=all verbose.txt') }
-        Start-Task { param ($Path) netsh advfirewall consec show rule name=all verbose | Out-File (Join-Path $Path 'netsh advfirewall consec show rule name=all verbose.txt') }
-        Start-Task { param ($Path) netsh advfirewall monitor show firewall rule name=all | Out-File (Join-Path $Path 'netsh advfirewall monitor show firewall rule name=all.txt') }
-        Start-Task { param ($Path) netsh advfirewall monitor show consec rule name=all | Out-File (Join-Path $Path 'netsh advfirewall monitor show consec rule name=all.txt') }
-    )
-
-    $PSDefaultParameterValues.Remove('Start-Task:ArgumentList')
-
-    Write-Log "Waiting for tasks to complete"
-    $tasks | Receive-Task -AutoRemoveTask
-    Write-Log "All tasks are complete"
 }
 
 <#
@@ -8672,56 +8466,6 @@ function Save-Process {
     Write-Log "Win32_Process saved as $outFileName"
 }
 
-function Start-ProcessMonitoring {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        # Folder path to save process list
-        [string]$Path,
-        [Parameter(Mandatory = $true)]
-        # Name of processes to monitor
-        [string[]]$Name,
-        [System.Threading.CancellationToken]$CancellationToken,
-        [TimeSpan]$Interval = [TimeSpan]::FromSeconds(3)
-    )
-
-    $targets = $Name | & { process { @{ Name = $_; Ids = @{} } } }
-    Write-Log "Start monitoring $($Name -join ', ')"
-
-    while ($true) {
-        $found = Get-Process -Name $Name -ErrorAction SilentlyContinue | & {
-            process {
-                # Update the found target's info.
-                $name = $_.ProcessName
-                $id = $_.Id
-                $startTime = $_.StartTime
-                $_.Dispose()
-
-                foreach ($target in $targets) {
-                    if ($name -like $target.Name -and (-not $target.Ids.ContainsKey($id) -or $target.Ids[$id] -ne $startTime) ) {
-                        Write-Log "Found new $name with PID $id, StartTime $startTime"
-                        $target.Ids.Add($id, $startTime)
-                        $true
-                        break
-                    }
-                }
-            }
-        }
-
-        # $found can be a bool or an array of bool, and either case is ok.
-        if ($found) {
-            Save-Process -Path $Path -Name $Name
-        }
-
-        if ($CancellationToken.IsCancellationRequested) {
-            Write-Log "Cancel request acknowledged"
-            return
-        }
-
-        Start-Sleep -Seconds $Interval.TotalSeconds
-    }
-}
-
 <#
 .SYNOPSIS
     Start enumerating processes
@@ -11277,7 +11021,7 @@ function Collect-OutlookInfo {
                 Path              = Join-Path $tempPath 'PSR'
                 CancellationToken = $psrCts.Token
                 WaitInterval      = $PsrRecycleInterval
-                StartedEvent    = $psrStartedEvent
+                StartedEvent      = $psrStartedEvent
                 Circular          = $LogFileMode -eq 'Circular'
             }
 
