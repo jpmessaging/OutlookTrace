@@ -1433,15 +1433,7 @@ function Test-ProcessElevated {
 
 function Get-Privilege {
     [CmdletBinding()]
-    param(
-        # [switch]$SkipCache
-    )
-
-    # if (-not $SkipCache -and $Script:PrivilegeCache) {
-    #     Write-Log "Returning PrivilegeCache"
-    #     $Script:PrivilegeCache
-    #     return
-    # }
+    param()
 
     $err = $($privileges = & whoami.exe /PRIV /FO CSV) 2>&1
 
@@ -1453,7 +1445,6 @@ function Get-Privilege {
         return
     }
 
-    # $Script:PrivilegeCache =
     for ($i = 1; $i -lt $privileges.Count; ++$i) {
         # Note: Index starts from 1 to skip the first header line
         $priv = $privileges[$i] -split ',' | & { process { $_.Trim('"') } }
@@ -1464,8 +1455,6 @@ function Get-Privilege {
             Enabled     = $priv[2] -eq 'Enabled'
         }
     }
-
-    # $Script:PrivilegeCache
 }
 
 function Test-DebugPrivilege {
@@ -1497,10 +1486,17 @@ function Enable-DebugPrivilege {
     }
     catch {
         $msg = "Failed to enable Debug Privilege"
-        $debugPrivilege = Get-Privilege | Where-Object { $_.Name -eq 'SeDebugPrivilege' }
+        $runAsAdmin = Test-RunAsAdministrator
 
-        if (-not $debugPrivilege) {
-            $msg += " because the user does not have DebugPrivilege"
+        if (-not $runAsAdmin) {
+            $msg += " because the process is not running as Administrator"
+        }
+        else {
+            $debugPrivilege = Get-Privilege | Where-Object { $_.Name -eq 'SeDebugPrivilege' }
+
+            if (-not $debugPrivilege) {
+                $msg += " because the user does not have DebugPrivilege"
+            }
         }
 
         Write-Error -Message $msg -Exception $_.Exception
