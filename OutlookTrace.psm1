@@ -1361,19 +1361,8 @@ function Test-ProcessElevated {
         [Alias('ProcessId')]
         # Note about ArgumentCompleter: CompletionResult is not used here, because CompletionResult does not work well for PowerShell (not ISE) when there are a lot of items. It shows "Display all ... possiblities?" (it shows the list, but it ends the command input)
         # [ArgumentCompleter({ Get-Process | Sort-Object Id | Select-Object -ExpandProperty Id })]
-        [int]$Id,
-        [switch]$EnableDebugPrivilege
+        [int]$Id
     )
-
-    begin {
-        # Enable Debug privilege if possible
-        $debugPrivilegeEnabled = $false
-
-        if ($EnableDebugPrivilege) {
-            $err = Enable-DebugPrivilege 2>&1
-            $debugPrivilegeEnabled = $null -eq $err
-        }
-    }
 
     process {
         $hProcess = $null
@@ -1421,12 +1410,6 @@ function Test-ProcessElevated {
             if ($hProcess) {
                 $hProcess.Dispose()
             }
-        }
-    }
-
-    end {
-        if ($debugPrivilegeEnabled) {
-            Disable-DebugPrivilege
         }
     }
 }
