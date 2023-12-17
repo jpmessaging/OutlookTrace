@@ -2857,7 +2857,7 @@ function Get-ProcessOwner {
         [Alias('ProcessId')]
         [int]$Id,
         [Parameter(ParameterSetName = 'Win32Process', Mandatory, ValueFromPipeline)]
-        # CinInstance of Win32_Process (Technically this parameter is not necessary, but it helps to speed up by skipping Get-CinInstance, which is quite slow)
+        # CimInstance of Win32_Process (Technically this parameter is not necessary because "ProcessId" alias can match, but it helps to speed up by skipping Get-CimInstance, which is quite slow)
         [Microsoft.Management.Infrastructure.CimInstance]$Win32Process
     )
 
@@ -7429,7 +7429,7 @@ function Save-HungDump {
 
                 # if error code is 0 or ERROR_TIMEOUT, timeout occurred.
                 if ($ec -eq 0 -or $ec -eq $ERROR_TIMEOUT) {
-                    Write-Log "Hung window detected with $name (PID:$ProcessId, hWnd:$hWnd). $($savedDumpCount+1)/$DumpCount" -Category Warning
+                    Write-Log "Hung window is detected for $name (PID:$ProcessId, hWnd:$hWnd). $($savedDumpCount+1)/$DumpCount" -Category Warning
                     $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId
 
                     if ($dumpResult) {
@@ -8493,6 +8493,8 @@ function Start-ProcessCapture {
     $useIncludeUserName = (Get-Command Get-Process).Parameters.ContainsKey('IncludeUserName') -and (Test-DebugPrivilege)
     Write-Log "useIncludeUserName:$useIncludeUserName"
 
+    $runAsAdmin = Test-RunAsAdministrator
+
     # Using a Hash table is much faster than Where-Object.
     $hashSet = @{}
 
@@ -8506,18 +8508,31 @@ function Start-ProcessCapture {
             param ([Parameter(ValueFromPipeline)]$win32Process)
             process {
                 try {
-                    $key = "$($win32Process.ProcessId),$($win32Process.CreationDate)"
+                    # Don't use GetHashCode() because it changes for the same process in each iteration.
+                    $key = $win32Process.ProcessId.GetHashCode() -bxor $win32Process.CreationDate.GetHashCode()
 
                     if ($hashSet.ContainsKey($key)) {
                         return
                     }
 
-                    # Check if process is elevated except for "System Idle Process" (PID 0) and "System" (PID 4))
-                    $isElevated = $null
+                    $obj = @{
+                        Name                 = $win32Process.Name
+                        Id                   = $win32Process.ProcessId
+                        CreationDate         = $win32Process.CreationDate
+                        Path                 = $win32Process.Path
+                        Elevated             = $null
+                        CommandLine          = $win32Process.CommandLine
+                        ParentProcessId      = $win32Process.ParentProcessId
+                        User                 = $null
+                        EnvironmentVariables = $null
+                    }
 
+                    $proc = $null
+
+                    # Check if process is elevated, except for "System Idle Process" (PID 0) and "System" (PID 4)
                     if ($win32Process.ProcessId -gt 4) {
                         try {
-                            $err = $($isElevated = Test-ProcessElevated $win32Process.ProcessId) 2>&1
+                            $err = $($obj.Elevated = Test-ProcessElevated $win32Process.ProcessId) 2>&1
                         }
                         catch {
                             $err = $_
@@ -8525,8 +8540,7 @@ function Start-ProcessCapture {
 
                         if ($err) {
                             if (-not $runAsAdmin -and $err.Exception.NativeErrorCode -eq 5) {
-                                # If not running as admin, Test-ProcessElevated is expected to fail with Access Denied (5) for some processes.
-                                # No need to log this error.
+                                # If not running as admin, Test-ProcessElevated is expected to fail with Access Denied (5) for some processes. No need to log this error.
                             }
                             else {
                                 $errMsg = "Test-ProcessElevated failed for $($win32Process.Name) (PID:$($win32Process.ProcessId))"
@@ -8543,19 +8557,9 @@ function Start-ProcessCapture {
                         }
                     }
 
-                    $obj = @{
-                        Name            = $win32Process.Name
-                        Id              = $win32Process.ProcessId
-                        CreationDate    = $win32Process.CreationDate
-                        Path            = $win32Process.Path
-                        Elevated        = $isElevated
-                        CommandLine     = $win32Process.CommandLine
-                        ParentProcessId = $win32Process.ParentProcessId
-                    }
-
                     # For processes specified in NamePattern parameter, save its User & Environment Variables.
                     if ($win32Process.Name -match $NamePattern) {
-                        Write-Log "Found a new instance of $($win32Process.Name) (PID:$($win32Process.ProcessId), Elevated:$isElevated)"
+                        Write-Log "Found a new instance of $($win32Process.Name) (PID:$($win32Process.ProcessId), Elevated:$($obj.Elevated))"
 
                         if ($useIncludeUserName) {
                             if ($proc = Get-Process -Id $win32Process.ProcessId -IncludeUserName -ErrorAction SilentlyContinue) {
@@ -8564,9 +8568,7 @@ function Start-ProcessCapture {
                             }
                         }
                         else {
-                            $owner = $win32Process | Get-ProcessOwner
-
-                            if ($owner) {
+                            if ($owner = $win32Process | Get-ProcessOwner) {
                                 $obj.User = $owner.Name
                             }
 
@@ -8709,20 +8711,19 @@ function Start-HungMonitor {
                 return
             }
 
-            # Find the target process run by the specified user.
-            # There could be multiple process instances.
-            # Not really expected for Outlook, but monitor the one that started first, while skipping the ones that have been monitored already.
+            # Find the target processes run by the specified user (There could be multiple process instances)
             $targetList = @(
                 Get-CimInstance 'Win32_Process' -Filter "Name = '$Name.exe'" | & {
                     param([Parameter(ValueFromPipeline)]$win32Process)
                     process {
                         try {
-                            $hash = $win32Process.GetHashCode()
+                            # Don't use GetHashCode() because it changes for the same process in each iteration.
+                            $key = $win32Process.ProcessId.GetHashCode() -bxor $win32Process.CreationDate.GetHashCode()
 
-                            if ($procCache.ContainsKey($hash)) {
-                                if ($procCache[$hash]) {
+                            if ($procCache.ContainsKey($key)) {
+                                if ($procCache[$key]) {
                                     Write-Log "This instance of $($win32Process.Name) (PID:$($win32Process.ProcessId), CreationDate:$($win32Process.CreationDate)) has been seen already. This instance will be not be monitored"
-                                    $procCache[$hash] = $false
+                                    $procCache[$key] = $false
                                 }
 
                                 return
@@ -8733,12 +8734,12 @@ function Start-HungMonitor {
 
                             if ($owner -and $owner.Sid -ne $User.Sid) {
                                 Write-Log "This instance of $($win32Process.Name) (PID:$($win32Process.ProcessId)) has owner '$owner', and it is different from the target user '$User'. This instance will be not be monitored"
-                                $procCache.Add($hash, $false)
+                                $procCache.Add($key, $false)
                                 return
                             }
 
                             # Found a target process
-                            $procCache.Add($hash, $true)
+                            $procCache.Add($key, $true)
 
                             [PSCustomObject]@{
                                 Id           = $win32Process.ProcessId
@@ -8768,24 +8769,24 @@ function Start-HungMonitor {
 
         Write-Log "Found $Name (PID:$($target.Id), CreationDate:$($target.CreationDate)). Starting hung window monitoring"
 
-        $argsTable = @{
+        $hungDumpArgs = @{
             Path      = $Path
             ProcessId = $target.Id
         }
 
         if ($DumpCount) {
-            $argsTable.DumpCount = $DumpCount
+            $hungDumpArgs.DumpCount = $DumpCount
         }
 
         if ($Timeout) {
-            $argsTable.Timeout = $Timeout
+            $hungDumpArgs.Timeout = $Timeout
         }
 
         if ($CancellationToken) {
-            $argsTable.CancellationToken = $CancellationToken
-        }
+            $hungDumpArgs.CancellationToken = $CancellationToken
 
-        Save-HungDump @argsTable 2>&1 | Write-Log -Category Error -PassThru
+        }
+        Save-HungDump @hungDumpArgs 2>&1 | Write-Log -Category Error -PassThru
     }
 }
 
@@ -10891,13 +10892,12 @@ function Collect-OutlookInfo {
             $processCaptureTaskCts = New-Object System.Threading.CancellationTokenSource
             $processCaptureStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
             $startedEventList.Add($processCaptureStartedEvent)
-            $processCaptureTask = Start-Task -Name 'ProcessCaptureTask' -ScriptBlock { param($Path, $NamePattern, $CancellationToken, $StartedEvent, $EnablePerfCheck) Start-ProcessCapture @PSBoundParameters } `
+            $processCaptureTask = Start-Task -Name 'ProcessCaptureTask' -ScriptBlock { param($Path, $NamePattern, $CancellationToken, $StartedEvent) Start-ProcessCapture @PSBoundParameters } `
                 -ArgumentList @{
                 Path              = $OSDir
-                NamePattern       = '.' #'outlook|fiddler|explorer|backgroundTaskHost'
+                NamePattern       = 'outlook|fiddler|explorer|backgroundTaskHost'
                 CancellationToken = $processCaptureTaskCts.Token
                 StartedEvent      = $processCaptureStartedEvent
-                EnablePerfCheck   = $true
             }
 
             Write-Log "Starting GPResultTask"
@@ -11182,8 +11182,8 @@ function Collect-OutlookInfo {
         }
 
         # Wait all "Started" events
-        Write-Progress -Status "Waiting for all the tasks to start"
-        Write-Log "Waiting for all the tasks to start"
+        Write-Progress -Status "Waiting for all tasks to start"
+        Write-Log "Waiting for all tasks to start"
 
         foreach ($event in $startedEventList) {
             $null = $event.WaitOne()
@@ -11455,6 +11455,7 @@ function Collect-OutlookInfo {
 
     # Bail if something failed or user interruped with Ctrl+C.
     if (-not $startSuccess) {
+        Write-Warning "Temporary folder is `"$tempPath`""
         return
     }
 
