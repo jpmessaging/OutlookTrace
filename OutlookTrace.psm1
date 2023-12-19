@@ -142,11 +142,50 @@ namespace Win32
             uint TokenInformationLength,
             out uint ReturnLength);
 
+        // https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+        public static extern bool GetTokenInformation(
+            IntPtr TokenHandle,
+            int TokenInformationClass,
+            IntPtr TokenPrivileges,
+            uint TokenInformationLength,
+            out uint ReturnLength);
+
+        // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-lookupprivilegenamew
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool LookupPrivilegeNameW(
+            string lpSystemName,
+            IntPtr pLUID,
+            [Out] char[] lpName,
+            out uint cchName
+        );
+
         // https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_elevation
         [StructLayout(LayoutKind.Sequential)]
         public struct TOKEN_ELEVATION
         {
             public bool TokenIsElevated;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct TOKEN_PRIVILEGES
+        {
+            public int PrivilegeCount;
+            public LUID_AND_ATTRIBUTES Privileges;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LUID_AND_ATTRIBUTES
+        {
+            public LUID Luid;
+            public uint Attributes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LUID
+        {
+            public int LowPart;
+            public int HighPart;
         }
 
         // https://docs.microsoft.com/en-us/windows/win32/api/evntrace/ns-evntrace-event_trace_properties
@@ -1418,24 +1457,99 @@ function Get-Privilege {
     [CmdletBinding()]
     param()
 
-    $err = $($privileges = & whoami.exe /PRIV /FO CSV) 2>&1
+    # A pseudo handle for the current (no need to close)
+    $hProcess = New-Object Microsoft.Win32.SafeHandles.SafeProcessHandle -ArgumentList ([IntPtr]::new(-1)), $false
 
-    if ($err) {
-        foreach ($e in $err) {
-            Write-Error -Message "whoami.exe /Priv failed. $e"
+    $hToken = [IntPtr]::Zero
+    $buffer = $null
+
+    try {
+        if (-not [Win32.Advapi32]::OpenProcessToken($hProcess, [System.Security.Principal.TokenAccessLevels]::Query, [ref]$hToken)) {
+            $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+            Write-Error -Message "OpenProcessToken failed for PID $Id. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
+            return
         }
 
-        return
+        # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class
+        $TokenPrivileges = 3
+
+        # Get the necessary buffer size (in bytes)
+        $cbSize = 0;
+
+        $null = [Win32.Advapi32]::GetTokenInformation(
+            $hToken,
+            $TokenPrivileges,
+            [IntPtr]::Zero,
+            $cbSize,
+            [ref]$cbSize)
+
+        # Expected to get ERROR_INSUFFICIENT_BUFFER
+        $ERROR_INSUFFICIENT_BUFFER = 0x7a
+        $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+
+        if ($errorCode -ne $ERROR_INSUFFICIENT_BUFFER) {
+            $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+            Write-Error -Message "GetTokenInformation failed. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
+            return
+        }
+
+        # Allocate buffer & retry
+        $buffer = [System.Runtime.InteropServices.Marshal]::AllocCoTaskMem($cbSize)
+
+        if (-not [Win32.Advapi32]::GetTokenInformation(
+                $hToken,
+                $TokenPrivileges,
+                $buffer,
+                $cbSize,
+                [ref]$cbSize)) {
+            $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+            Write-Error -Message "GetTokenInformation failed. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
+            return
+        }
+
+        # Map the pointer to TOKEN_PRIVILEGES
+        # For usage of [Type], see https://support.microsoft.com/en-us/topic/exceptions-in-windows-powershell-other-dynamic-languages-and-dynamically-executed-c-code-when-code-that-targets-the-net-framework-calls-some-methods-680ca719-0782-1052-7999-183d00e9cc93
+        $privileges = [System.Runtime.InteropServices.Marshal]::PtrToStructure($buffer, [Type][Win32.Advapi32+TOKEN_PRIVILEGES])
+
+        # This is the pointer to LUID_ATTRIBUTES[PrivilegeCount].
+        # LUID_ATTRIBUTES[] is at offset 4 of TOKEN_PRIVILEGES (after "DWORD PrivilegeCount").
+        $pPrivilges = [IntPtr]::Add($buffer, 4)
+
+        # Size of each privilege
+        $privSize = [System.Runtime.InteropServices.Marshal]::SizeOf([Type][Win32.Advapi32+LUID_AND_ATTRIBUTES])
+
+        $privNameBuffer = New-Object 'char[]' -ArgumentList 256
+        $SE_PRIVILEGE_ENABLED = 0x00000002
+
+        for ($i = 0; $i -lt $privileges.PrivilegeCount; ++$i) {
+            # Move to the current privilege (type is LUID_AND_ATTRIBUTES)
+            $pCurrent = [IntPtr]::Add($pPrivilges, $i * $privSize)
+            $priv = [System.Runtime.InteropServices.Marshal]::PtrToStructure($pCurrent, [Type][Win32.Advapi32+LUID_AND_ATTRIBUTES])
+
+            # Get Privilege name
+            $cchName = $privNameBuffer.Length
+
+            if (-not [Win32.Advapi32]::LookupPrivilegeNameW($null, $pCurrent, $privNameBuffer, [ref]$cchName)) {
+                Write-Error "LookupPrivilegeNameW failed for $($pCurrent.Luid) with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                continue
+            }
+
+            $privName = New-Object string -ArgumentList $privNameBuffer, 0, $cchName
+            $isEnabled = ($priv.Attributes -band $SE_PRIVILEGE_ENABLED) -eq $SE_PRIVILEGE_ENABLED
+
+            [PSCustomObject]@{
+                Name    = $privName
+                Enabled = $isEnabled
+            }
+        }
     }
+    finally {
+        if ($buffer) {
+            [System.Runtime.InteropServices.Marshal]::FreeCoTaskMem($buffer)
+        }
 
-    for ($i = 1; $i -lt $privileges.Count; ++$i) {
-        # Note: Index starts from 1 to skip the first header line
-        $priv = $privileges[$i] -split ',' | & { process { $_.Trim('"') } }
-
-        [PSCustomObject]@{
-            Name        = $priv[0]
-            Description = $priv[1]
-            Enabled     = $priv[2] -eq 'Enabled'
+        if ($hToken) {
+            $null = [Win32.Kernel32]::CloseHandle($hToken)
         }
     }
 }
@@ -1452,7 +1566,7 @@ function Test-DebugPrivilege {
         $false
     }
     elseif (-not $debugPrivilege.Enabled) {
-        Write-Verbose " DebugPrivilege is not enabled"
+        Write-Verbose "DebugPrivilege is not enabled"
         $false
     }
     else {
