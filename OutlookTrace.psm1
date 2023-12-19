@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2023-12-17'
+$Version = 'v2023-12-18'
 #Requires -Version 3.0
 
 # Outlook's ETW pvoviders
@@ -1457,8 +1457,8 @@ function Get-Privilege {
     [CmdletBinding()]
     param()
 
-    # A pseudo handle for the current (no need to close)
-    $hProcess = New-Object Microsoft.Win32.SafeHandles.SafeProcessHandle -ArgumentList ([IntPtr]::new(-1)), $false
+    # A pseudo handle for the current process (no need to close)
+    $hProcess = New-Object Microsoft.Win32.SafeHandles.SafeProcessHandle -ArgumentList (New-Object IntPtr -ArgumentList -1), $false
 
     $hToken = [IntPtr]::Zero
     $buffer = $null
@@ -3219,6 +3219,7 @@ function Save-OSConfiguration {
         # These are just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
         @{ScriptBlock = { whoami.exe /USER }; FileName = 'whoami.txt' }
+        @{ScriptBlock = { Get-Privilege } }
     } | & {
         process {
             if ($CancellationToken.IsCancellationRequested) {
