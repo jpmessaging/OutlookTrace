@@ -138,16 +138,7 @@ namespace Win32
         public static extern bool GetTokenInformation(
             IntPtr TokenHandle,
             int TokenInformationClass,
-            out TOKEN_ELEVATION TokenElevation,
-            uint TokenInformationLength,
-            out uint ReturnLength);
-
-        // https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation
-        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
-        public static extern bool GetTokenInformation(
-            IntPtr TokenHandle,
-            int TokenInformationClass,
-            IntPtr TokenPrivileges,
+            IntPtr TokenInformation,
             uint TokenInformationLength,
             out uint ReturnLength);
 
@@ -157,14 +148,13 @@ namespace Win32
             string lpSystemName,
             IntPtr pLUID,
             [Out] char[] lpName,
-            out uint cchName
-        );
+            out uint cchName);
 
         // https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_elevation
         [StructLayout(LayoutKind.Sequential)]
         public struct TOKEN_ELEVATION
         {
-            public bool TokenIsElevated;
+            public uint TokenIsElevated;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -1403,6 +1393,14 @@ function Test-ProcessElevated {
         [int]$Id
     )
 
+    begin {
+        # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class
+        $TokenElevation = 20
+
+        $cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type]'Win32.Advapi32+TOKEN_ELEVATION')
+        $buffer = [System.Runtime.InteropServices.Marshal]::AllocCoTaskMem($cbSize)
+    }
+
     process {
         $hProcess = $null
         $hToken = [IntPtr]::Zero
@@ -1422,24 +1420,22 @@ function Test-ProcessElevated {
                 return
             }
 
-            # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class
-            $TokenElevation = 20
-
-            $length = 0;
-            $elevation = New-Object Win32.Advapi32+TOKEN_ELEVATION
-
             if (-not [Win32.Advapi32]::GetTokenInformation(
                     $hToken,
                     $TokenElevation,
-                    [ref]$elevation,
-                    [System.Runtime.InteropServices.Marshal]::SizeOf([type]'Win32.Advapi32+TOKEN_ELEVATION'),
-                    [ref]$length)) {
+                    $buffer,
+                    $cbSize,
+                    [ref]$cbSize)) {
                 $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
                 Write-Error -Message "GetTokenInformation failed for PID $Id. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
                 return
             }
 
-            $elevation.TokenIsElevated
+            $elevation = [System.Runtime.InteropServices.Marshal]::PtrToStructure($buffer, [Type][Win32.Advapi32+TOKEN_ELEVATION])
+
+            # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_elevation
+            # > "A nonzero value if the token has elevated privileges; otherwise, a zero value"
+            $elevation.TokenIsElevated -ne 0
         }
         finally {
             if ($hToken) {
@@ -1449,6 +1445,12 @@ function Test-ProcessElevated {
             if ($hProcess) {
                 $hProcess.Dispose()
             }
+        }
+    }
+
+    end {
+        if ($buffer) {
+            [System.Runtime.InteropServices.Marshal]::FreeCoTaskMem($buffer)
         }
     }
 }
@@ -1518,7 +1520,7 @@ function Get-Privilege {
         # Size of each privilege
         $privSize = [System.Runtime.InteropServices.Marshal]::SizeOf([Type][Win32.Advapi32+LUID_AND_ATTRIBUTES])
 
-        $privNameBuffer = New-Object 'char[]' -ArgumentList 256
+        $nameBuffer = New-Object 'char[]' -ArgumentList 256
         $SE_PRIVILEGE_ENABLED = 0x00000002
 
         for ($i = 0; $i -lt $privileges.PrivilegeCount; ++$i) {
@@ -1527,14 +1529,14 @@ function Get-Privilege {
             $priv = [System.Runtime.InteropServices.Marshal]::PtrToStructure($pCurrent, [Type][Win32.Advapi32+LUID_AND_ATTRIBUTES])
 
             # Get Privilege name
-            $cchName = $privNameBuffer.Length
+            $cchName = $nameBuffer.Length
 
-            if (-not [Win32.Advapi32]::LookupPrivilegeNameW($null, $pCurrent, $privNameBuffer, [ref]$cchName)) {
+            if (-not [Win32.Advapi32]::LookupPrivilegeNameW($null, $pCurrent, $nameBuffer, [ref]$cchName)) {
                 Write-Error "LookupPrivilegeNameW failed for $($pCurrent.Luid) with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
                 continue
             }
 
-            $privName = New-Object string -ArgumentList $privNameBuffer, 0, $cchName
+            $privName = New-Object string -ArgumentList $nameBuffer, 0, $cchName
             $isEnabled = ($priv.Attributes -band $SE_PRIVILEGE_ENABLED) -eq $SE_PRIVILEGE_ENABLED
 
             [PSCustomObject]@{
