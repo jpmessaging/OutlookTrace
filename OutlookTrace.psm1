@@ -142,6 +142,14 @@ namespace Win32
             uint TokenInformationLength,
             out uint ReturnLength);
 
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+        public static extern bool GetTokenInformation(
+            IntPtr TokenHandle,
+            int TokenInformationClass,
+            out TOKEN_ELEVATION TokenElevation,
+            uint TokenInformationLength,
+            out uint ReturnLength);
+            
         // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-lookupprivilegenamew
         [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern bool LookupPrivilegeNameW(
@@ -1398,7 +1406,7 @@ function Test-ProcessElevated {
         $TokenElevation = 20
 
         $cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type]'Win32.Advapi32+TOKEN_ELEVATION')
-        $buffer = [System.Runtime.InteropServices.Marshal]::AllocCoTaskMem($cbSize)
+        $elevation = New-Object Win32.Advapi32+TOKEN_ELEVATION
     }
 
     process {
@@ -1423,7 +1431,7 @@ function Test-ProcessElevated {
             if (-not [Win32.Advapi32]::GetTokenInformation(
                     $hToken,
                     $TokenElevation,
-                    $buffer,
+                    [ref]$elevation,
                     $cbSize,
                     [ref]$cbSize)) {
                 $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
@@ -1431,26 +1439,18 @@ function Test-ProcessElevated {
                 return
             }
 
-            $elevation = [System.Runtime.InteropServices.Marshal]::PtrToStructure($buffer, [Type][Win32.Advapi32+TOKEN_ELEVATION])
-
             # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_elevation
             # > "A nonzero value if the token has elevated privileges; otherwise, a zero value"
             $elevation.TokenIsElevated -ne 0
         }
         finally {
-            if ($hToken) {
+            if ($hToken -ne [IntPtr]::Zero) {
                 $null = [Win32.Kernel32]::CloseHandle($hToken)
             }
 
             if ($hProcess) {
                 $hProcess.Dispose()
             }
-        }
-    }
-
-    end {
-        if ($buffer) {
-            [System.Runtime.InteropServices.Marshal]::FreeCoTaskMem($buffer)
         }
     }
 }
@@ -1550,7 +1550,7 @@ function Get-Privilege {
             [System.Runtime.InteropServices.Marshal]::FreeCoTaskMem($buffer)
         }
 
-        if ($hToken) {
+        if ($hToken -ne [IntPtr]::Zero) {
             $null = [Win32.Kernel32]::CloseHandle($hToken)
         }
     }
