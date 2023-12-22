@@ -149,7 +149,7 @@ namespace Win32
             out TOKEN_ELEVATION TokenElevation,
             uint TokenInformationLength,
             out uint ReturnLength);
-            
+
         // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-lookupprivilegenamew
         [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
         public static extern bool LookupPrivilegeNameW(
@@ -4620,15 +4620,20 @@ function Convert-MVUnicode {
         $count = $reader.ReadInt32()
 
         # Next 4 or 8 bytes are offset to the start of each string (4 bytes for 32 bit Outlook, 8 bytes 64 bit Outlook)
-        $officeInfo = Get-OfficeInfo
-
+        # Note: For unknown reason, sometimes there are mix of both 4 bytes and 8 bytes in different accounts. So, can't just rely on the Office bitness.
+        # Because these offsets must be less than 32-bit int max, first read 8 bytes then if it's greater than 0xffffffff, assume 4 byte offsets.
         $offsets = @(
             for ($i = 0; $i -lt $count; ++$i) {
-                if ($officeInfo.Architecture -eq 'x86') {
-                    $reader.ReadInt32()
+                $offset64 = $reader.ReadInt64()
+
+                # suffix "l" is for long date type
+                if ($offset64 -le 0xffffffffl) {
+                    $offset64
                 }
                 else {
-                    $reader.ReadInt64()
+                    # Rewind and read as 4-byte int
+                    $reader.BaseStream.Position -= 8
+                    $reader.ReadInt32()
                 }
             }
         )
