@@ -133,10 +133,16 @@ namespace Win32
             System.Security.Principal.TokenAccessLevels DesiredAccess,
             out IntPtr TokenHandle);
 
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+        public static extern bool OpenProcessToken(
+            SafeProcessHandle ProcessToken,
+            System.Security.Principal.TokenAccessLevels DesiredAccess,
+            out SafeProcessTokenHandle TokenHandle);
+
         // https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation
         [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
         public static extern bool GetTokenInformation(
-            IntPtr TokenHandle,
+            SafeProcessTokenHandle TokenHandle,
             int TokenInformationClass,
             IntPtr TokenInformation,
             uint TokenInformationLength,
@@ -144,7 +150,15 @@ namespace Win32
 
         [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
         public static extern bool GetTokenInformation(
-            IntPtr TokenHandle,
+            SafeProcessTokenHandle TokenHandle,
+            int TokenInformationClass,
+            SafeCoTaskMemFreeHandle TokenInformation,
+            uint TokenInformationLength,
+            out uint ReturnLength);
+
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+        public static extern bool GetTokenInformation(
+            SafeProcessTokenHandle TokenHandle,
             int TokenInformationClass,
             out TOKEN_ELEVATION TokenElevation,
             uint TokenInformationLength,
@@ -622,9 +636,20 @@ namespace Win32
     public class SafeCoTaskMemFreeHandle: SafeHandle
     {
         public SafeCoTaskMemFreeHandle(): base(IntPtr.Zero, true) {}
+
         public SafeCoTaskMemFreeHandle(IntPtr handle, bool ownsHandle = true): base(IntPtr.Zero, ownsHandle)
         {
             SetHandle(handle);
+        }
+
+        public SafeCoTaskMemFreeHandle(int size) : this(Marshal.AllocCoTaskMem(size)) {}
+
+        public static SafeCoTaskMemFreeHandle InvalidHandle
+        {
+            get
+            {
+                return new SafeCoTaskMemFreeHandle();
+            }
         }
 
         public override bool IsInvalid
@@ -632,10 +657,25 @@ namespace Win32
             get { return IsClosed || handle == IntPtr.Zero; }
         }
 
-        override protected bool ReleaseHandle()
+        protected override bool ReleaseHandle()
         {
             Marshal.FreeCoTaskMem(handle);
             return true;
+        }
+    }
+
+    public class SafeProcessTokenHandle : SafeHandleZeroOrMinusOneIsInvalid
+    {
+        public SafeProcessTokenHandle() : base(true) {}
+
+        public SafeProcessTokenHandle(IntPtr handle) : base(true)
+        {
+            SetHandle(handle);
+        }
+
+        protected override bool ReleaseHandle()
+        {
+            return Win32.Kernel32.CloseHandle(handle);
         }
     }
 
@@ -1411,7 +1451,7 @@ function Test-ProcessElevated {
 
     process {
         $hProcess = $null
-        $hToken = [IntPtr]::Zero
+        $hToken = New-Object Win32.SafeProcessTokenHandle
 
         try {
             $hProcess = [Win32.Kernel32]::OpenProcess([Win32.Kernel32]::PROCESS_QUERY_LIMITED_INFORMATION, $false, $Id)
@@ -1444,8 +1484,8 @@ function Test-ProcessElevated {
             $elevation.TokenIsElevated -ne 0
         }
         finally {
-            if ($hToken -ne [IntPtr]::Zero) {
-                $null = [Win32.Kernel32]::CloseHandle($hToken)
+            if ($hToken) {
+                $hToken.Dispose()
             }
 
             if ($hProcess) {
@@ -1462,7 +1502,7 @@ function Get-Privilege {
     # A pseudo handle for the current process (no need to close)
     $hProcess = New-Object Microsoft.Win32.SafeHandles.SafeProcessHandle -ArgumentList (New-Object IntPtr -ArgumentList -1), $false
 
-    $hToken = [IntPtr]::Zero
+    $hToken = New-Object Win32.SafeProcessTokenHandle
     $buffer = $null
 
     try {
@@ -1476,12 +1516,12 @@ function Get-Privilege {
         $TokenPrivileges = 3
 
         # Get the necessary buffer size (in bytes)
-        $cbSize = 0;
+        $cbSize = 0
 
         $null = [Win32.Advapi32]::GetTokenInformation(
             $hToken,
             $TokenPrivileges,
-            [IntPtr]::Zero,
+            [Win32.SafeCoTaskMemFreeHandle]::InvalidHandle,
             $cbSize,
             [ref]$cbSize)
 
@@ -1496,7 +1536,7 @@ function Get-Privilege {
         }
 
         # Allocate buffer & retry
-        $buffer = [System.Runtime.InteropServices.Marshal]::AllocCoTaskMem($cbSize)
+        $buffer = New-Object Win32.SafeCoTaskMemFreeHandle -ArgumentList $cbSize
 
         if (-not [Win32.Advapi32]::GetTokenInformation(
                 $hToken,
@@ -1511,16 +1551,16 @@ function Get-Privilege {
 
         # Map the pointer to TOKEN_PRIVILEGES
         # For usage of [Type], see https://support.microsoft.com/en-us/topic/exceptions-in-windows-powershell-other-dynamic-languages-and-dynamically-executed-c-code-when-code-that-targets-the-net-framework-calls-some-methods-680ca719-0782-1052-7999-183d00e9cc93
-        $privileges = [System.Runtime.InteropServices.Marshal]::PtrToStructure($buffer, [Type][Win32.Advapi32+TOKEN_PRIVILEGES])
+        $privileges = [System.Runtime.InteropServices.Marshal]::PtrToStructure($buffer.DangerousGetHandle(), [Type][Win32.Advapi32+TOKEN_PRIVILEGES])
 
         # This is the pointer to LUID_ATTRIBUTES[PrivilegeCount].
         # LUID_ATTRIBUTES[] is at offset 4 of TOKEN_PRIVILEGES (after "DWORD PrivilegeCount").
-        $pPrivilges = [IntPtr]::Add($buffer, 4)
+        $pPrivilges = [IntPtr]::Add($buffer.DangerousGetHandle(), 4)
 
         # Size of each privilege
         $privSize = [System.Runtime.InteropServices.Marshal]::SizeOf([Type][Win32.Advapi32+LUID_AND_ATTRIBUTES])
 
-        $nameBuffer = New-Object 'char[]' -ArgumentList 256
+        $nameBuffer = New-Object char[] -ArgumentList 256
         $SE_PRIVILEGE_ENABLED = 0x00000002
 
         for ($i = 0; $i -lt $privileges.PrivilegeCount; ++$i) {
@@ -1537,7 +1577,7 @@ function Get-Privilege {
             }
 
             $privName = New-Object string -ArgumentList $nameBuffer, 0, $cchName
-            $isEnabled = ($priv.Attributes -band $SE_PRIVILEGE_ENABLED) -eq $SE_PRIVILEGE_ENABLED
+            $isEnabled = ($priv.Attributes -band $SE_PRIVILEGE_ENABLED) -ne 0
 
             [PSCustomObject]@{
                 Name    = $privName
@@ -1547,11 +1587,11 @@ function Get-Privilege {
     }
     finally {
         if ($buffer) {
-            [System.Runtime.InteropServices.Marshal]::FreeCoTaskMem($buffer)
+            $buffer.Dispose()
         }
 
-        if ($hToken -ne [IntPtr]::Zero) {
-            $null = [Win32.Kernel32]::CloseHandle($hToken)
+        if ($hToken) {
+            $hToken.Dispose()
         }
     }
 }
