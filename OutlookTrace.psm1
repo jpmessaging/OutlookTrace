@@ -8607,6 +8607,49 @@ function Save-Process {
     Write-Log "Win32_Process saved as $outFileName"
 }
 
+
+<#
+.SYNOPSIS
+    Helper function to get a hash code of a Process (*), based on ProcessId & CreationDate.
+    * Process can be either System.Diagnostics.Process or WIN32_PROCESS CimClass instance.
+
+    Note: Be careful when passing a System.Diagnostics.Process because its StartTime might cause "Access is denied" if running without Debug Privilege
+#>
+function Get-ProcessHash {
+    [OutputType([UInt32])]
+    param(
+        [Parameter(ValueFromPipelineByPropertyName)]
+        [Alias('ProcessId')]
+        [int]$Id,
+        [Parameter(ValueFromPipelineByPropertyName)]
+        [Alias('CreationDate')]
+        [DateTime]$StartTime
+    )
+
+    # FNV-1a algorithm
+    # I wish I could use HashCode.Combine(), but that's only available for .NET Core
+    process {
+        [UInt32]$hash = 2166136261
+        [UInt64]$prime = 16777619 # long here to avoid conversion to Double
+
+        # Note: I could use [BitConverter]::GetBytes(), but it allocates a byte array from heap. Prefer no allocation.
+        for ($i = 0; $i -lt 4; $i++) {
+            $byte = ($Id -shr (8 * $i)) -band 0xff
+            $hash = ($hash -bxor $byte) * $prime % 0x100000000l
+        }
+
+        for ($i = 0; $i -lt 8; $i++) {
+            $byte = ($StartTime.Ticks -shr (8 * $i)) -band 0xff
+            $hash = ($hash -bxor $byte) * $prime % 0x100000000l
+        }
+
+        $hash
+
+        # If I need to return Int32, instead of UInt32 (But since [BitConverter]::GetBytes allocates, might want to use unchecked conversion in C#)
+        # [BitConverter]::ToInt32([BitConverter]::GetBytes($hash), 0)
+    }
+}
+
 <#
 .SYNOPSIS
     Start enumerating processes
@@ -8640,8 +8683,11 @@ function Start-ProcessCapture {
 
     $runAsAdmin = Test-RunAsAdministrator
 
-    # Using a Hash table is much faster than Where-Object.
-    $hashSet = @{}
+    # HashTable of final objects to be returned (Using a HashTable is much faster than Where-Object)
+    $win32ProcTable = @{}
+
+    # HashTable for System.Diagnostics.Process
+    $procTable = @{}
 
     # If StartedEvent is given, signal after the first iteration.
     $needSignal = $null -ne $StartedEvent
@@ -8654,25 +8700,44 @@ function Start-ProcessCapture {
             process {
                 try {
                     # Don't use GetHashCode() because it changes for the same process in each iteration.
-                    $key = $win32Process.ProcessId.GetHashCode() -bxor $win32Process.CreationDate.GetHashCode()
+                    $key = $win32Process | Get-ProcessHash
 
-                    if ($hashSet.ContainsKey($key)) {
-                        return
+                    if ($win32ProcTable.ContainsKey($key)) {
+                        # Very rare, but cache collision could occur.
+                        $cache = $win32ProcTable[$key]
+
+                        if ($cache.Id -eq $win32Process.ProcessId -and $cache.StartTime -eq $win32Process.CreationDate) {
+                            return
+                        }
                     }
 
-                    $obj = @{
+                    $obj = [ordered]@{
                         Name                 = $win32Process.Name
                         Id                   = $win32Process.ProcessId
-                        CreationDate         = $win32Process.CreationDate
                         Path                 = $win32Process.Path
-                        Elevated             = $null
                         CommandLine          = $win32Process.CommandLine
                         ParentProcessId      = $win32Process.ParentProcessId
+                        StartTime            = $win32Process.CreationDate
+                        ExitTime             = $null
+                        Elevated             = $null
                         User                 = $null
                         EnvironmentVariables = $null
                     }
 
-                    $proc = $null
+                    if ($useIncludeUserName) {
+                        $proc = Get-Process -Id $win32Process.ProcessId -IncludeUserName -ErrorAction SilentlyContinue
+                    }
+                    else {
+                        $proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue
+                    }
+
+                    if ($proc) {
+                        $procTable.Add($key, $proc)
+                        $obj.User = $proc.UserName
+
+                        # To get ExitTime later, touch Handle property
+                        $null = $proc.Handle
+                    }
 
                     # Check if process is elevated, except for "System Idle Process" (PID 0) and "System" (PID 4)
                     if ($win32Process.ProcessId -gt 4) {
@@ -8691,9 +8756,8 @@ function Start-ProcessCapture {
                                 $errMsg = "Test-ProcessElevated failed for $($win32Process.Name) (PID:$($win32Process.ProcessId))"
 
                                 # Maybe the process is gone already. In this case, OpenProcess would fail with ERROR_INVALID_PARAMETER (87).
-                                if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
+                                if ($proc) {
                                     Write-Log $errMsg -ErrorRecord $err -Category Error
-                                    $proc.Dispose()
                                 }
                                 else {
                                     Write-Log "$errMsg because the process has already exited" -ErrorRecord $err
@@ -8702,35 +8766,24 @@ function Start-ProcessCapture {
                         }
                     }
 
-                    # For processes specified in NamePattern parameter, save its User & Environment Variables.
+                    # For processes specified in NamePattern parameter, save its User & EnvironmentVariables
                     if ($win32Process.Name -match $NamePattern) {
                         Write-Log "Found a new instance of $($win32Process.Name) (PID:$($win32Process.ProcessId), Elevated:$($obj.Elevated))"
 
-                        if ($useIncludeUserName) {
-                            if ($proc = Get-Process -Id $win32Process.ProcessId -IncludeUserName -ErrorAction SilentlyContinue) {
-                                $obj.User = $proc.UserName
-                                $obj.EnvironmentVariables = $proc.StartInfo.EnvironmentVariables
-                            }
+                        # If not found by Get-Process, then retrieve from WIN32_PROCESS
+                        if (-not $obj.User -and ($owner = $win32Process | Get-ProcessOwner)) {
+                            $obj.User = $owner.Name
                         }
-                        else {
-                            if ($owner = $win32Process | Get-ProcessOwner) {
-                                $obj.User = $owner.Name
-                            }
 
-                            if ($proc = Get-Process -Id $win32Process.ProcessId -ErrorAction SilentlyContinue) {
-                                $obj.EnvironmentVariables = $proc.StartInfo.EnvironmentVariables
-                            }
+                        if ($proc) {
+                            $obj.EnvironmentVariables = $proc.StartInfo.EnvironmentVariables
                         }
                     }
 
-                    $hashSet.Add($key, [PSCustomObject]$obj)
+                    $win32ProcTable.Add($key, [PSCustomObject]$obj)
                 }
                 finally {
                     $win32Process.Dispose()
-
-                    if ($proc) {
-                        $proc.Dispose()
-                    }
                 }
             }
         }
@@ -8753,7 +8806,20 @@ function Start-ProcessCapture {
         Start-Sleep -Seconds $Interval.TotalSeconds
     }
 
-    $hashSet.Values | Export-Clixml -Path (Join-Path $Path 'Win32_Process.xml')
+    # Check ExitTime
+    foreach ($key in $procTable.Keys) {
+        $proc = $procTable[$key]
+        $err = $($win32ProcTable[$key].ExitTime = $proc.ExitTime) 2>&1
+
+        # TODO: remove later
+        if ($err) {
+            Write-Log "Failed to get ExitTime of $($proc.Name) (PID:$($proc.Id))"
+        }
+
+        $proc.Dispose()
+    }
+
+    $win32ProcTable.Values | Export-Clixml -Path (Join-Path $Path 'Win32_Process.xml')
 }
 
 <#
@@ -8863,7 +8929,7 @@ function Start-HungMonitor {
                     process {
                         try {
                             # Don't use GetHashCode() because it changes for the same process in each iteration.
-                            $key = $win32Process.ProcessId.GetHashCode() -bxor $win32Process.CreationDate.GetHashCode()
+                            $key = $win32Process | Get-ProcessHash
 
                             if ($procCache.ContainsKey($key)) {
                                 if ($procCache[$key]) {
