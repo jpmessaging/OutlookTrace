@@ -7636,44 +7636,29 @@ function Save-MSIPC {
         return
     }
 
-    # Copy "MSIPC" folder and its subfolders, except ".lock" files.
+    $copyArgs = @{
+        LiteralPath = "\\?\$msipcPath" # Need to use LiteralPath param for long path
+        Destination = $Path
+        Recurse     = $true
+        Force       = $true
+    }
+
     if ($All) {
-        try {
-            if (-not (Test-Path $Path)) {
-                $null = New-Item -ItemType Directory $Path -ErrorAction Stop
-            }
-
-            Join-Path $msipcPath '*' | Copy-Item -Exclude '*.lock' -Destination $Path -Recurse -Force
-        }
-        catch {
-            Write-Error -ErrorRecord $_
-        }
-
-        return
+        # Copy "MSIPC" folder and its subfolders, except ".lock" files.
+        $copyArgs.Exclude = '*.lock'
     }
-
-    # Just copy *.ipclog files
-    $msipcLogPath = Join-Path $msipcPath '\Logs\*.ipclog'
-    $destination = Join-Path $Path 'Logs'
-
-    if (-not (Test-Path $msipcLogPath)) {
-        Write-Log "There are no files matching $msipcLogPath"
-        return
-    }
-
-    # Because copying only contents of a folder, need to create the destination folder first.
-    if (-not (Test-Path $destination)) {
-        $null = New-Item -ItemType Directory $destination -ErrorAction Stop
+    else {
+        # Copy only *.ipclog files under Logs folder
+        $copyArgs.Filter = '*.ipclog'
     }
 
     try {
-        Copy-Item $msipcLogPath -Destination $destination
+        Copy-Item @copyArgs
     }
     catch {
         Write-Error -ErrorRecord $_
     }
 }
-
 
 <#
 .SYNOPSIS
