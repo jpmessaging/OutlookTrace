@@ -8622,28 +8622,38 @@ function Get-ProcessHash {
         [DateTime]$StartTime
     )
 
-    # FNV-1a algorithm
-    # I wish I could use HashCode.Combine(), but that's only available for .NET Core
     process {
-        [UInt32]$hash = 2166136261
-        [UInt64]$prime = 16777619 # long here to avoid conversion to Double
-
-        # Note: I could use [BitConverter]::GetBytes(), but it allocates a byte array from heap. Prefer no allocation.
-        for ($i = 0; $i -lt 4; $i++) {
-            $byte = ($Id -shr (8 * $i)) -band 0xff
-            $hash = ($hash -bxor $byte) * $prime % 0x100000000l
-        }
-
-        for ($i = 0; $i -lt 8; $i++) {
-            $byte = ($StartTime.Ticks -shr (8 * $i)) -band 0xff
-            $hash = ($hash -bxor $byte) * $prime % 0x100000000l
-        }
-
-        $hash
-
-        # If I need to return Int32, instead of UInt32 (But since [BitConverter]::GetBytes allocates, might want to use unchecked conversion in C#)
-        # [BitConverter]::ToInt32([BitConverter]::GetBytes($hash), 0)
+        Get-CombinedHash $Id, $StartTime
     }
+}
+
+<#
+.SYNOPSIS
+    Helper function to combine hash values of multiple objects
+
+.NOTES
+    It'd be nice to be able to use HashCode.Combine(), but that's only available for .NET Core.
+    The current implementation is from boost::hash_combine():
+    https://www.boost.org/doc/libs/1_55_0/doc/html/hash/reference.html#boost.hash_combine
+#>
+function Get-CombinedHash {
+    [OutputType([UInt32])]
+    [CmdletBinding()]
+    param(
+        [object[]]$InputObject
+    )
+
+    [UInt32]$hash = 0
+
+    # The (Reciprocal of) Golden Ratio (i.e. ([Math]::sqrt(5) - 1) / 2) * [Math]::Pow(2, 32)).
+    # Suffix "l" for long. Avoid conversion to Double.
+    [UInt64]$random = 0x9e3779b9l
+
+    foreach ($obj in $InputObject) {
+        $hash = $hash -bxor ($obj.GetHashCode() + $random + ($hash -shl 6) + ($hash -shr 2)) % 0x100000000l
+    }
+
+    $hash
 }
 
 <#
@@ -8802,7 +8812,7 @@ function Start-ProcessCapture {
         Start-Sleep -Seconds $Interval.TotalSeconds
     }
 
-    # Check ExitTime
+    # Check ExitTime & dispose System.Diagnostics.Process instances
     foreach ($key in $procTable.Keys) {
         $proc = $procTable[$key]
         $err = $($win32ProcTable[$key].ExitTime = $proc.ExitTime) 2>&1
