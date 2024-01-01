@@ -8612,7 +8612,7 @@ function Save-Process {
     Note: Be careful when passing a System.Diagnostics.Process because its StartTime might cause "Access is denied" if running without Debug Privilege
 #>
 function Get-ProcessHash {
-    [OutputType([UInt32])]
+    [OutputType([Int32])]
     param(
         [Parameter(ValueFromPipelineByPropertyName)]
         [Alias('ProcessId')]
@@ -8623,13 +8623,13 @@ function Get-ProcessHash {
     )
 
     process {
-        Get-CombinedHash $Id, $StartTime
+        Get-CombinedHash $Id.GetHashCode(), $StartTime.GetHashCode()
     }
 }
 
 <#
 .SYNOPSIS
-    Helper function to combine hash values of multiple objects
+    Helper function to combine hash values
 
 .NOTES
     It'd be nice to be able to use HashCode.Combine(), but that's only available for .NET Core.
@@ -8637,23 +8637,64 @@ function Get-ProcessHash {
     https://www.boost.org/doc/libs/1_55_0/doc/html/hash/reference.html#boost.hash_combine
 #>
 function Get-CombinedHash {
-    [OutputType([UInt32])]
+    [OutputType([Int32])]
     [CmdletBinding()]
     param(
-        [object[]]$InputObject
+        [int[]]$HashValues
     )
 
     [UInt32]$hash = 0
 
-    # The (Reciprocal of) Golden Ratio (i.e. ([Math]::sqrt(5) - 1) / 2) * [Math]::Pow(2, 32)).
-    # Suffix "l" for long. Avoid conversion to Double.
-    [UInt64]$random = 0x9e3779b9l
+    # The Golden Ratio (i.e. ([Math]::sqrt(5) - 1) / 2) * [Math]::Pow(2, 32)).
+    # Suffix "L" for long. Avoid conversion to Double.
+    [UInt64]$random = 0x9e3779b9L
 
-    foreach ($obj in $InputObject) {
-        $hash = $hash -bxor ($obj.GetHashCode() + $random + ($hash -shl 6) + ($hash -shr 2)) % 0x100000000l
+    foreach ($val in $HashValues) {
+        $hash = $hash -bxor ($val + $random + ($hash -shl 6) + ($hash -shr 2)) % 0x100000000
     }
 
-    $hash
+    ConvertTo-Int32 $hash
+}
+
+<#
+.SYNOPSIS
+    Reinterpret Int32 to UInt32.
+    Note that [Convert]::ToUInt32() does not work in general because it throws an OverflowException when the input is a negative value.
+#>
+
+function ConvertTo-UInt32 {
+    [OutputType([UInt32])]
+    param(
+        [int]$i
+    )
+
+    [UInt32]$u = $i -band 0x7fffffff
+
+    if ($i -band 0x80000000) {
+        $u = $u -bor 0x80000000
+    }
+
+    $u
+}
+
+<#
+.SYNOPSIS
+    Reinterpret UInt32 to Int32.
+    Note that [Convert]::Int32() does not work in general because it throws an OverflowException when the input is larger than [int]::MaxValue.
+#>
+function ConvertTo-Int32 {
+    [OutputType([Int32])]
+    param(
+        [UInt32]$u
+    )
+
+    [int]$i = $u -band 0x7fffffff
+
+    if ($u -band 0x80000000) {
+        $i = $i -bor 0x80000000
+    }
+
+    $i
 }
 
 <#
