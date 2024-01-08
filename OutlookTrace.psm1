@@ -5475,11 +5475,17 @@ function Get-OfficeModuleInfo {
                 $fileVersion = $file.VersionInfo.FileVersion
             }
 
+            $($arch = Get-ImageInfo $file.FullName | Select-Object -ExpandProperty Architecture) 2>&1 | & {
+                process {
+                    Write-Log -Message "Get-ImageInfo failed for $($file.FullName)" -ErrorRecord $_
+                }
+            }
+
             [PSCustomObject]@{
-                Name        = $file.Name
-                FullName    = $file.FullName
-                #VersionInfo = $item.VersionInfo # too much info and FileVersionRaw is harder to find
-                FileVersion = $fileVersion
+                Name         = $file.Name
+                FullName     = $file.FullName
+                FileVersion  = $fileVersion
+                Architecture = $arch
             }
         }
     }
@@ -10261,6 +10267,13 @@ function Get-ImageInfo {
 
     try {
         $stream = [System.IO.File]::OpenRead($Path)
+
+        #  Bail if size is 0
+        if ($stream.Length -eq 0) {
+            Write-Error "The file size is 0"
+            return
+        }
+
         $reader = New-Object System.IO.BinaryReader $stream
 
         # Read IMAGE_DOS_HEADER. The first 2 bytes is "MZ" (0x5a4d)
