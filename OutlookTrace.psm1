@@ -6784,7 +6784,7 @@ function Attach-TTD {
     }
 
     # Make sure TTD.exe is available.
-    if (-not (Test-Path $TTDPath)) {
+    if (-not (Test-Path $TTDPath -PathType Leaf)) {
         Write-Error "TTD is not available"
         return
     }
