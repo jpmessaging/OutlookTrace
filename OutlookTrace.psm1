@@ -9143,6 +9143,16 @@ function Start-Wpr {
 
     Write-Log "Starting WPR trace"
 
+    $wprArgs = @(
+        '-start', 'GeneralProfile'
+        '-start', 'CPU'
+        '-start', 'DiskIO'
+        '-start', 'FileIO'
+        '-start', 'Registry'
+        '-start', 'Network'
+        '-filemode'
+    )
+
     if ($Path) {
         # For some reason, if the path contains a space & is double-quoted & ends with a backslash, wpr fails with "Invalid temporary trace directory. Error code:0xc5586004"
         # Make sure to remove the last backslash.
@@ -9150,13 +9160,16 @@ function Start-Wpr {
             $Path = $Path.Remove($Path.Length - 1)
         }
 
-        $errs = $($null = wpr.exe -start GeneralProfile -start CPU -start Network -filemode -RecordTempTo $Path) 2>&1
-    }
-    else {
-        $errs = $($null = wpr.exe -start GeneralProfile -start CPU -start Network -filemode) 2>&1
+        $wprArgs += '-RecordTempTo', $Path
     }
 
-    $errorMsg = $errs | ForEach-Object { $msg = $_.Exception.Message.Trim(); if ($msg) { $msg } }
+    Write-Log "Invoking wpr.exe $wprArgs"
+
+    $errorMsg = $($null = wpr.exe $wprArgs) 2>&1 | & {
+        process {
+            $_.Exception.Message.Trim()
+        }
+    }
 
     if ($LASTEXITCODE -ne 0) {
         Write-Error "wpr failed to start. LASTEXITCODE:0x$('{0:x}' -f $LASTEXITCODE).`n$errorMsg"
@@ -9184,16 +9197,29 @@ function Stop-Wpr {
     $Path = Resolve-Path $Path
     $filePath = Join-Path $Path $FileName
 
+    if ($filePath.IndexOf(' ') -gt 0) {
+        $filePath = "`"$filePath`""
+    }
+
     Write-Log "Stopping WPR trace"
 
     # Here Start-Process is used to suppress progress bar written by wpr.exe.
-    $process = Start-Process -FilePath 'wpr.exe' -ArgumentList "-stop `"$filePath`"", '-skipPdbGen' -WindowStyle Hidden -PassThru -Wait
+    $startProcArgs = @{
+        FilePath     = 'wpr.exe'
+        ArgumentList = @('-stop', $filePath, '-skipPdbGen')
+        WindowStyle  = 'Hidden'
+        PassThru     = $true
+        Wait         = $true
+    }
+
+    $process = Start-Process @startProcArgs
     $exitCode = $process.ExitCode
     $process.Dispose()
 
     # If "Invalid command syntax", retry without -skipPdbGen because the option might not be available (e.g. W2019)
     if ($exitCode -eq 0xc5600602) {
-        $process = Start-Process -FilePath 'wpr.exe' -ArgumentList "-stop `"$filePath`"" -WindowStyle Hidden -PassThru -Wait
+        $startProcArgs.ArgumentList = @('-stop', $filePath)
+        $process = Start-Process @startProcArgs
         $exitCode = $process.ExitCode
         $process.Dispose()
     }
