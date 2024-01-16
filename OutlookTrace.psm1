@@ -5284,7 +5284,9 @@ function Remove-IdentityCache {
         return
     }
 
-    Stop-Service 'TokenBroker'
+    $TokenBrokerService = 'TokenBroker'
+    Set-Service $TokenBrokerService -StartupType Disabled
+    Stop-Service $TokenBrokerService
 
     # Remove identity and token cache
     & {
@@ -5293,9 +5295,13 @@ function Remove-IdentityCache {
         # IdentityCache
         'Microsoft\IdentityCache'
 
+        # TokenBroker Cache
+        'Microsoft\TokenBroker\Cache'
+
         # Accounts
         'Packages\Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy\ac\TokenBroker\Accounts'
         'Packages\Microsoft.Windows.CloudExperienceHost_cw5n1h2txyewy\AC\TokenBroker\Accounts'
+
     } `
     | Join-Path $localAppData -ChildPath { $_ } `
     | Where-Object { Test-Path $_ } `
@@ -5303,7 +5309,8 @@ function Remove-IdentityCache {
 
     # Restart TokenBroker service
     Write-Verbose "Restarting TokenBroker service"
-    Start-Service 'TokenBroker'
+    Set-Service $TokenBrokerService -StartupType Manual
+    Start-Service $TokenBrokerService
 }
 
 function Start-LdapTrace {
