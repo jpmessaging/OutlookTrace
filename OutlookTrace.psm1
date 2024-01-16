@@ -9819,8 +9819,18 @@ function Get-AlternateId {
     | Select-Object -ExpandProperty 'EnableAlternateIdSupport'
 
     if ($domainHint) {
-        $domainZone = Join-Path $userRegRoot "Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\Domains\$domainHint" `
-        | Get-ChildItem `
+        # Split (e.g., "fs.test.contoso.com" -> "contoso.com" & "fs.test")
+        $domains = $domainHint.Split('.')
+
+        if ($domains.Count -ge 2) {
+            $root = "$($domains[$domains.Count - 2]).$($domains[$domains.Count - 1])"
+        }
+        else {
+            $root = $domainHint
+        }
+
+        $domainZone = Join-Path $userRegRoot "Software\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMap\Domains\$root" `
+        | Get-ChildItem -ErrorAction SilentlyContinue `
         | Get-ItemProperty -ErrorAction SilentlyContinue `
         | & {
             process {
