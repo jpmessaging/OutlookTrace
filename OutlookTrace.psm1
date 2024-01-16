@@ -9124,7 +9124,9 @@ function Start-Wpr {
     [CmdletBinding(PositionalBinding = $false)]
     param(
         # Path to store temporary trace files
-        [string]$Path
+        [string]$Path,
+        [ValidateSet('GeneralProfile', 'CPU', 'DiskIO', 'FileIO', 'Registry', 'Network', 'Heap', 'Pool', 'VirtualAllocation', 'Audio', 'Video', 'Power', 'InternetExplorer', 'EdgeBrowser', 'Minifilter', 'GPU', 'Handle', 'XAMLActivity', 'HTMLActivity', 'DesktopComposition', 'XAMLAppResponsiveness', 'HTMLResponsiveness', 'ReferenceSet', 'ResidentSet', 'XAMLHTMLAppMemoryAnalysis', 'UTC', 'DotNET', 'WdfTraceLoggingProvider', 'HeapSnapshot')]
+        [string[]]$Profiles = @('GeneralProfile', 'CPU', 'DiskIO', 'FileIO', 'Registry', 'Network')
     )
 
     # wpr is available on Win10 and above
@@ -9141,15 +9143,11 @@ function Start-Wpr {
         $Path = Resolve-Path $Path
     }
 
-    Write-Log "Starting WPR trace"
-
     $wprArgs = @(
-        '-start', 'GeneralProfile'
-        '-start', 'CPU'
-        '-start', 'DiskIO'
-        '-start', 'FileIO'
-        '-start', 'Registry'
-        '-start', 'Network'
+        foreach ($prof in $Profiles) {
+            '-start', $prof
+        }
+
         '-filemode'
     )
 
@@ -9172,7 +9170,7 @@ function Start-Wpr {
     }
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Error "wpr failed to start. LASTEXITCODE:0x$('{0:x}' -f $LASTEXITCODE).`n$errorMsg"
+        Write-Error "wpr failed to start. LASTEXITCODE:0x$('{0:x}' -f $LASTEXITCODE).$errorMsg"
     }
 }
 
@@ -10945,6 +10943,9 @@ function Collect-OutlookInfo {
         [string]$TTDCommandlineFilter,
         # Switch to show TTD UI
         [switch]$TTDShowUI,
+        [ValidateSet('GeneralProfile', 'CPU', 'DiskIO', 'FileIO', 'Registry', 'Network', 'Heap', 'Pool', 'VirtualAllocation', 'Audio', 'Video', 'Power', 'InternetExplorer', 'EdgeBrowser', 'Minifilter', 'GPU', 'Handle', 'XAMLActivity', 'HTMLActivity', 'DesktopComposition', 'XAMLAppResponsiveness', 'HTMLResponsiveness', 'ReferenceSet', 'ResidentSet', 'XAMLHTMLAppMemoryAnalysis', 'UTC', 'DotNET', 'WdfTraceLoggingProvider', 'HeapSnapshot')]
+        # WPR profiles
+        [string[]]$WprProfiles = @('GeneralProfile', 'CPU', 'DiskIO', 'FileIO', 'Registry', 'Network'),
         # Switch to remove cached identites & authentication tokens
         [switch]$RemoveIdentityCache
     )
@@ -11375,7 +11376,7 @@ function Collect-OutlookInfo {
 
         if ($Component -contains 'WPR') {
             Write-Progress -Status 'Starting WPR trace'
-            Start-Wpr -Path (Join-Path $tempPath 'WPR') -ErrorAction Stop
+            Start-Wpr -Path (Join-Path $tempPath 'WPR') -Profiles $WprProfiles -ErrorAction Stop
             $wprStarted = $true
         }
 

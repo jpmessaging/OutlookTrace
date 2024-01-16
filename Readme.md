@@ -174,6 +174,7 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 | SkipVersionCheck     | Switch to skip script version check                                                                                                            |
 | TTDCommandlineFilter | Command line filter for TTD monitor                                                                                                            |
 | TTDShowUI            | Switch to show TTD UI                                                                                                                          |
+| WprProfiles          | WPR profiles to capture (Default: `GeneralProfile`, `CPU`, `DiskIO`, `FileIO`, `Registry`, `Network`)                                          |
 
 ## License
 
