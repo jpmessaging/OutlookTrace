@@ -9,7 +9,7 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 - [FiddlerCapSetup](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe)
 - [Process Monitor](https://download.sysinternals.com/files/ProcessMonitor.zip)
 - [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)
-- [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-261-0/TTD.msixbundle)
+- [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-304-0/TTD.msixbundle)
 
 いずれも `Collect-OutlookInfo` の `-Path` パラメータで指定するフォルダ配下に配置ください。  
 
