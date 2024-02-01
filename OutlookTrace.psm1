@@ -3249,6 +3249,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-Service } }
         @{ScriptBlock = { Get-SmbMapping } }
         @{ScriptBlock = { Get-AnsiCodePage } }
+        @{ScriptBlock = { Get-Volume } }
         @{ScriptBlock = { cmdkey /list }; FileName = 'cmdkey.txt' }
 
         $userArg = @{ User = $User }
@@ -3364,7 +3365,7 @@ function Invoke-ScriptBlock {
         }
     }
 
-    # Wrap is an array in case a single object is passed as ArgumentList (otherwise, splatting does not work as expected)
+    # Wrap in an array in case a single object is passed as ArgumentList (otherwise, splatting does not work as expected)
     if ($null -ne $ArgumentList -and $ArgumentList -isnot [System.Collections.ICollection]) {
         $ArgumentList = @($ArgumentList)
     }
@@ -6860,7 +6861,7 @@ function Attach-TTD {
     }
 
     $attachElapsed = Get-Elapsed $attachStart
-    Write-Log "TTD (PID:$($process.Id)) successfully attached the target (PID:$ProcessId). MainWindowTitle:$($process.MainWindowTitle); Attach Wait:$attachElapsed"
+    Write-Log "TTD (PID:$($process.Id)) successfully attached to the target (PID:$ProcessId). Attach Wait:$attachElapsed"
 
     [PSCustomObject]@{
         TTDPath         = $TTDPath
@@ -7651,7 +7652,7 @@ function Save-MSIPC {
 
     $copyArgs = @{
         LiteralPath = "\\?\$msipcPath" # Need to use LiteralPath param for long path
-        Destination = $Path
+        Destination = "\\.\$Path"
         Recurse     = $true
         Force       = $true
     }
@@ -8820,7 +8821,7 @@ function Start-ProcessCapture {
                                     Write-Log $errMsg -ErrorRecord $err -Category Error
                                 }
                                 else {
-                                    Write-Log "$errMsg because the process has already exited" -ErrorRecord $err
+                                    Write-Log "$errMsg because the process has already exited"
                                 }
                             }
                         }
