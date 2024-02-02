@@ -10638,7 +10638,7 @@ function Get-StructuredQuerySchema {
     }
 
     Join-Path $localAppdata 'Microsoft\Windows' `
-    | Get-ChildItem -Filter 'StructuredQuerySchema.bin' -Recurse `
+    | Get-ChildItem -Filter 'StructuredQuerySchema.bin' -Recurse -ErrorAction SilentlyContinue `
     | & {
         param(
             [Parameter(ValueFromPipeline)]
