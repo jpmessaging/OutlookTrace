@@ -3250,6 +3250,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-SmbMapping } }
         @{ScriptBlock = { Get-AnsiCodePage } }
         @{ScriptBlock = { Get-Volume } }
+        @{ScriptBlock = { Get-NetFrameworkVersion } }
         @{ScriptBlock = { cmdkey /list }; FileName = 'cmdkey.txt' }
 
         $userArg = @{ User = $User }
@@ -10666,6 +10667,151 @@ function Get-StructuredQuerySchema {
     }
 }
 
+function Get-NetFrameworkVersion {
+    [CmdletBinding()]
+    param (
+        [Parameter(ValueFromPipeline)]
+        [string]$ComputerName = $env:COMPUTERNAME
+    )
+
+    process {
+        # Read NDP registry
+        $reg = $ndpKey = $null
+
+        try {
+            $reg = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $ComputerName)
+            $ndpKey = $reg.OpenSubKey("SOFTWARE\Microsoft\NET Framework Setup\NDP")
+
+            if (-not $ndpKey) {
+                Write-Error "OpenSubKey failed on 'SOFTWARE\Microsoft\NET Framework Setup\NDP'"
+                return
+            }
+
+            @(
+                foreach ($versionKeyName in $ndpKey.GetSubKeyNames()) {
+                    # ignore "CDF" etc
+                    if ($versionKeyName -notlike "v*") {
+                        continue
+                    }
+
+                    $versionKey = $null
+
+                    try {
+                        $versionKey = $ndpKey.OpenSubKey($versionKeyName)
+
+                        if (-not $versionKey) {
+                            Write-Error "OpenSubKey failed on $versionKeyName. Skipping."
+                            continue
+                        }
+
+                        $version = $versionKey.GetValue('Version', "")
+                        $sp = $versionKey.GetValue('SP', "")
+                        $install = $versionKey.GetValue('Install', "")
+
+                        if ($version) {
+                            [PSCustomObject]@{
+                                Version      = $version
+                                SP           = $sp
+                                Install      = $install
+                                SubKey       = $null
+                                Release      = $release
+                                NET45Version = $null
+                                ComputerName = $ComputerName
+                            }
+
+                            continue
+                        }
+
+                        # for v4 and V4.0, check sub keys
+                        foreach ($subKeyName in $versionKey.GetSubKeyNames()) {
+                            if (-not $subKeyName) {
+                                continue
+                            }
+
+                            $subKey = $null
+
+                            try {
+                                $subKey = $versionKey.OpenSubKey($subKeyName)
+
+                                if (-not $subKey) {
+                                    Write-Error "OpenSubKey failed on $subKeyName. Skipping."
+                                    continue
+                                }
+
+                                $version = $subKey.GetValue("Version", "")
+                                $install = $subKey.GetValue("Install", "")
+                                $release = $subKey.GetValue("Release", "")
+
+                                $NET45Version = $null
+
+                                if ($release) {
+                                    $NET45Version = Get-Net45Version $release
+                                }
+
+                                [PSCustomObject]@{
+                                    Version      = $version
+                                    SP           = $sp
+                                    Install      = $install
+                                    SubKey       = $subKeyName
+                                    Release      = $release
+                                    NET45Version = $NET45Version
+                                    ComputerName = $ComputerName
+                                }
+                            }
+                            finally {
+                                if ($subKey) {
+                                    $subKey.Close()
+                                }
+                            }
+                        }
+                    }
+                    finally {
+                        if ($versionKey) {
+                            $versionKey.Close()
+                        }
+                    }
+                }
+            ) | Sort-Object -Property Version
+        }
+        catch {
+            Write-Error -ErrorRecord $_
+        }
+        finally {
+            if ($ndpKey) {
+                $ndpKey.Close()
+            }
+
+            if ($reg) {
+                $reg.Close()
+            }
+        }
+
+    } # end of process block
+}
+
+function Get-Net45Version {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param (
+        [Parameter(Mandatory)]
+        $Release
+    )
+
+    switch ($Release) {
+        { $_ -ge 533320 } { '4.8.1 or later'; break }
+        { $_ -ge 528040 } { '4.8'; break }
+        { $_ -ge 461808 } { '4.7.2'; break }
+        { $_ -ge 460798 } { '4.7'; break }
+        { $_ -ge 394802 } { "4.6.2"; break }
+        { $_ -ge 394254 } { "4.6.1"; break }
+        { $_ -ge 393295 } { "4.6"; break }
+        { $_ -ge 379893 } { "4.5.2"; break }
+        { $_ -ge 378675 } { '4.5.1'; break }
+        { $_ -ge 378389 } { '4.5'; break }
+        default { $null }
+    }
+}
+
 <#
 .SYNOPSIS
 Check if this sript is too old.
@@ -11824,4 +11970,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]'120.00:00:00'
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-NetFrameworkVersion, Collect-OutlookInfo
