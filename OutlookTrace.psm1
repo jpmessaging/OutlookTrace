@@ -5485,7 +5485,7 @@ function Get-OfficeModuleInfo {
 
             $($arch = Get-ImageInfo $file.FullName | Select-Object -ExpandProperty Architecture) 2>&1 | & {
                 process {
-                    Write-Log -Message "Get-ImageInfo failed for $($file.FullName)" -ErrorRecord $_
+                    Write-Log -Message "Get-ImageInfo failed for '$($file.FullName)'" -ErrorRecord $_
                 }
             }
 
@@ -7658,8 +7658,8 @@ function Save-MSIPC {
     }
 
     if ($All) {
-        # Copy "MSIPC" folder and its subfolders, except ".lock" files.
-        $copyArgs.Exclude = '*.lock'
+        # Copy "MSIPC" folder and its subfolders, except ".lock" & "*.drm" files
+        $copyArgs.Exclude = '*.lock', '*.drm'
     }
     else {
         # Copy only *.ipclog files under Logs folder
