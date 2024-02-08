@@ -662,6 +662,16 @@ namespace Win32
             Marshal.FreeCoTaskMem(handle);
             return true;
         }
+
+        public void Reset(IntPtr handle)
+        {
+            if (!IsInvalid)
+            {
+                ReleaseHandle();
+            }
+
+            this.handle = handle;
+        }
     }
 
     public class SafeProcessTokenHandle : SafeHandleZeroOrMinusOneIsInvalid
@@ -1536,7 +1546,14 @@ function Get-Privilege {
         }
 
         # Allocate buffer & retry
-        $buffer = New-Object Win32.SafeCoTaskMemFreeHandle -ArgumentList $cbSize
+        # Note: The following line does not work in PSv4 due to an overload resolutuion issue:
+        #
+        #   $buffer = New-Object Win32.SafeCoTaskMemFreeHandle -ArgumentList $cbSize
+        #
+        # It fails with IndexOutOfRangeException at System.Management.Automation.Adapter.CompareOverloadCandidates()
+        # To workaround, manually assign a raw IntPtr to SafeCoTaskMemFreeHandle
+        $buffer = New-Object Win32.SafeCoTaskMemFreeHandle
+        $buffer.Reset([System.Runtime.InteropServices.Marshal]::AllocCoTaskMem($cbSize))
 
         if (-not [Win32.Advapi32]::GetTokenInformation(
                 $hToken,
