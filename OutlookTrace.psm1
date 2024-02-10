@@ -8406,7 +8406,7 @@ function Get-OutlookAddin {
                 $addin.Close()
             }
         }
-    }
+    } | Sort-Object -Property 'ProgId'
 }
 
 function Get-ClickToRunConfiguration {
