@@ -4342,7 +4342,7 @@ function Get-Pop3Account {
         AccountType          = 'POP3'
         IsDefaultAccount     = $false
         DisplayName          = $Account.'Display Name'
-        Eamil                = $Account.Email
+        Email                = $Account.Email
         Pop3Server           = $Account.'POP3 Server'
         Pop3Port             = if ($Account.'Pop3 Port') { $Account.'Pop3 Port' } else { $Pop3DefaultPort }
         Pop3User             = $Account.'POP3 User'
@@ -4370,7 +4370,7 @@ function Get-Imap4Account {
         AccountType          = 'IMAP4'
         IsDefaultAccount     = $false
         DisplayName          = $Account.'Display Name'
-        Eamil                = $Account.Email
+        Email                = $Account.Email
         ImapServer           = $Account.'IMAP Server'
         ImapPort             = if ($Account.'IMAP Port') { $Account.'IMAP Port' } else { $ImapDefaultPort }
         ImapUser             = $Account.'IMAP User'
