@@ -3159,6 +3159,7 @@ function Save-OfficeRegistry {
         'HKCU\Software\IM Providers'
         'HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications'
         'HKCU\Software\Microsoft\AuthN' # for Alternate Login ID. https://docs.microsoft.com/en-us/windows-server/identity/ad-fs/operations/configuring-alternate-login-id
+        'HKCU\Software\Microsoft\IdentityCRL' # WAM related
 
         # HKLM
         'HKLM\SOFTWARE\Microsoft\Office'
