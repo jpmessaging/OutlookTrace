@@ -4369,7 +4369,7 @@ function Get-Pop3Account {
         SmtpUser             = $Account.'SMTP User'
         SmtpUseAuth          = $Account.'SMTP Use Auth' -eq 1
         SmtpUseSPA           = $Account.'SMTP Use SPA' -eq 1
-        SmtpSecureConnection = switch ($Account.'SMTP Secure Connection') { 0 { 'None'; break } 1 { 'SSL'; break } 2 { 'TLS'; break } 3 { 'Auto'; break } }
+        SmtpSecureConnection = switch ($Account.'SMTP Secure Connection') { 0 { 'None'; break } 1 { 'SSL/TLS'; break } 2 { 'STARTTLS'; break } 3 { 'Auto'; break } }
     }
 }
 
@@ -4398,7 +4398,7 @@ function Get-Imap4Account {
         SmtpUser             = $Account.'SMTP User'
         SmtpUseAuth          = $Account.'SMTP Use Auth' -eq 1
         SmtpUseSPA           = $Account.'SMTP Use SPA' -eq 1
-        SmtpSecureConnection = switch ($Account.'SMTP Secure Connection') { 0 { 'None'; break } 1 { 'SSL'; break } 2 { 'TLS'; break } 3 { 'Auto'; break } }
+        SmtpSecureConnection = switch ($Account.'SMTP Secure Connection') { 0 { 'None'; break } 1 { 'SSL/TLS'; break } 2 { 'STARTTLS'; break } 3 { 'Auto'; break } }
     }
 }
 
