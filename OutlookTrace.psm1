@@ -4231,15 +4231,35 @@ function Get-CachedModePolicy {
 
     $props = @{}
 
-    if ($cachedModePolicy.enable) {
-        $props.Enable = $cachedModePolicy.enable -eq 1
+    if ($cachedModePolicy.Enable) {
+        $props.Enable = $cachedModePolicy.Enable -eq 1
     }
 
-    if ($cachedModePolicy.cachedexchangemode) {
-        $props.SyncMode = [Win32.Mapi.CacheSyncMode]([int]::Parse($cachedModePolicy.cachedexchangemode))
+    if ($cachedModePolicy.CachedExchangeMode) {
+        $props.SyncMode = [Win32.Mapi.CacheSyncMode]([int]::Parse($cachedModePolicy.CachedExchangeMode))
     }
 
-    $props.SyncWindow = Get-SyncWindow -Days $cachedModePolicy.syncwindowsettingdays -Months $cachedModePolicy.syncwindowsetting
+    if ($syncWindow = Get-SyncWindow -Days $cachedModePolicy.SyncWindowSettingDays -Months $cachedModePolicy.SyncWindowSetting) {
+        $props.SyncWindow = $syncWindow
+    }
+
+    # Dump other values as-is
+    & {
+        'CacheOthersMail'
+        'NoManualOnlineSync'
+        'NoFullItems'
+        'NoDrizzle'
+        'NoHeaders'
+        'NoSlowHeaders'
+        'ANR Include Online GAL'
+        'SpecifyOfflineAddressBookPath'
+    } | & {
+        process {
+            if ($null -ne $cachedModePolicy.$_) {
+                $props.$_ = $cachedModePolicy.$_
+            }
+        }
+    }
 
     [PSCustomObject]$props
 }
@@ -4255,6 +4275,14 @@ function Merge-CachedModePolicy {
 
     process {
         if ($Account.AccountType -ne 'MAPI') {
+            return
+        }
+
+        # If CachedModePolicy is not empty, save it as is; otherwise bail
+        if ($CachedModePolicy | Get-Member -MemberType Properties) {
+            $Account | Add-Member -NotePropertyName 'CachedModePolicy' -NotePropertyValue $CachedModePolicy
+        }
+        else {
             return
         }
 
@@ -4680,14 +4708,14 @@ function Convert-MVUnicode {
         $count = $reader.ReadInt32()
 
         # Next 4 or 8 bytes are offset to the start of each string (4 bytes for 32 bit Outlook, 8 bytes 64 bit Outlook)
-        # Note: For unknown reason, sometimes there are mix of both 4 bytes and 8 bytes in different accounts. So, can't just rely on the Office bitness.
-        # Because these offsets must be less than 32-bit int max, first read 8 bytes then if it's greater than 0xffffffff, assume 4 byte offsets.
+        # Note: For some unknown reason, sometimes there are mix of both 4 bytes and 8 bytes in different accounts. So, can't just rely on the Office bitness.
+        # Because these offsets must be less than 32-bit int max, read 8 bytes first, then if it's greater than 0xffffffff, assume 4 byte offsets.
         $offsets = @(
             for ($i = 0; $i -lt $count; ++$i) {
                 $offset64 = $reader.ReadInt64()
 
-                # suffix "l" is for long date type
-                if ($offset64 -le 0xffffffffl) {
+                # suffix "L" is for long date type
+                if ($offset64 -le 0xffffffffL) {
                     $offset64
                 }
                 else {
@@ -8678,7 +8706,7 @@ function Get-CombinedHash {
 
     [UInt32]$hash = 0
 
-    # The Golden Ratio (i.e. ([Math]::sqrt(5) - 1) / 2) * [Math]::Pow(2, 32)).
+    # The Golden Ratio (i.e. ([Math]::sqrt(5) - 1) / 2 * [Math]::Pow(2, 32)).
     # Suffix "L" for long. Avoid conversion to Double.
     [UInt64]$random = 0x9e3779b9L
 
@@ -11994,4 +12022,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-NetFrameworkVersion, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-NetFrameworkVersion, Collect-OutlookInfo, Get-CachedModePolicy
