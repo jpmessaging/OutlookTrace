@@ -10677,7 +10677,8 @@ function Get-StructuredQuerySchema {
         $User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     )
 
-    $userRegRoot = Get-UserRegistryRoot
+    $resolvedUser = Resolve-User $User
+    $userRegRoot = Get-UserRegistryRoot -User $User
 
     if (-not $userRegRoot) {
         return
@@ -10737,7 +10738,7 @@ function Get-StructuredQuerySchema {
     }
 
     [PSCustomObject]@{
-        User                  = $User
+        User                  = $resolvedUser
         WindowsUserUILanguage = $WinUILanguage
         SchemaChangedLast     = $schemaChangedLast
         Schemas               = $schemas
