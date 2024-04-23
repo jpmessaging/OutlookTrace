@@ -8876,7 +8876,7 @@ function Start-ProcessCapture {
                         }
                     }
 
-                    # For processes specified in NamePattern parameter, save its User & EnvironmentVariables
+                    # For processes specified in NamePattern parameter, save its User, Modules, and EnvironmentVariables
                     if ($win32Process.Name -match $NamePattern) {
                         Write-Log "Found a new instance of $($win32Process.Name) (PID:$($win32Process.ProcessId), Elevated:$($obj.Elevated))"
 
@@ -8887,6 +8887,9 @@ function Start-ProcessCapture {
 
                         if ($proc) {
                             $obj.EnvironmentVariables = $proc.StartInfo.EnvironmentVariables
+
+                            # To reduce the output size, include only necessary properties
+                            $obj.Modules = $proc.Modules | Select-Object ModuleName, FileName,  @{N='FileVersion'; E={$_.FileVersionInfo.FileVersion}}, @{N='Language';E={$_.FileVersionInfo.Language}}
                         }
                     }
 
