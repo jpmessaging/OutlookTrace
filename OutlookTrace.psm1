@@ -6541,6 +6541,8 @@ function Expand-TTDMsixBundle {
         return
     }
 
+    $MsixBundlePath = Resolve-Path $MsixBundlePath
+
     # Helper script block to rename & expand
     $expand = {
         param($Path, $Destination)
@@ -7550,7 +7552,7 @@ function Save-Dump {
         $dumpFileStream = [System.IO.File]::Create($dumpFile)
         $writeDumpSuccess = $false
 
-        $dumpType = [Win32.Dbghelp+MINIDUMP_TYPE]'MiniDumpWithTokenInformation, MiniDumpIgnoreInaccessibleMemory, MiniDumpWithThreadInfo, MiniDumpWithFullMemoryInfo, MiniDumpWithUnloadedModules, MiniDumpWithHandleData, MiniDumpWithFullMemory'
+        $dumpType = [Win32.Dbghelp+MINIDUMP_TYPE]'MiniDumpWithIptTrace, MiniDumpWithTokenInformation, MiniDumpIgnoreInaccessibleMemory, MiniDumpWithThreadInfo, MiniDumpWithFullMemoryInfo, MiniDumpWithUnloadedModules, MiniDumpWithHandleData, MiniDumpWithFullMemory'
 
         if ([Win32.DbgHelp]::MiniDumpWriteDump($process.SafeHandle, $ProcessId, $dumpFileStream.SafeFileHandle, $dumpType, [IntPtr]::Zero, [IntPtr]::Zero, [IntPtr]::Zero)) {
             [PSCustomObject]@{
@@ -10667,14 +10669,35 @@ function Get-AppContainerRegistryAcl {
 
 <#
 .SYNOPSIS
-    Look for StructuredQuerySchema.bin under %LOCALAPPDATA%\Microsoft\Windows.
-    e.g. "C:\Users\admin\AppData\Local\Microsoft\Windows\1041\StructuredQuerySchema.bin"
+    Get StructuredQuery schema related information
 #>
 function Get-StructuredQuerySchema {
     [CmdletBinding(PositionalBinding = $false)]
     param(
         $User = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     )
+
+    $userRegRoot = Get-UserRegistryRoot
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    # Get User's Default UI Language (I'm not using Win32 GetUserDefaultUILanguage() or PowerShell's Get-WinUserLanguageList) because the user running the command maybe different from the target user
+    $WinUILanguage = $userRegRoot | Join-Path -ChildPath 'Control Panel\Desktop' `
+    | Get-ItemProperty -Name 'PreferredUILanguages' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'PreferredUILanguages' | Select-Object -First 1
+
+    if (-not $WinUILanguage) {
+        Write-Log "Cannot find Windows User PreferredUILanguage"
+    }
+
+    # See if QWORD registry value "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\StructuredQuer\SchemaChangedLast" exists.
+    $schemaChangedLast = Get-ItemProperty 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\StructuredQuery' -Name 'SchemaChangedLast' -ErrorAction SilentlyContinue `
+    | & {
+        process {
+            [DateTime]::FromFileTime($_.SchemaChangedLast)
+        }
+    }
 
     # Look for StructuredQuerySchema.bin under %LOCALAPPDATA%
     # e.g. "C:\Users\admin\AppData\Local\Microsoft\Windows\1041\StructuredQuerySchema.bin"
@@ -10684,7 +10707,7 @@ function Get-StructuredQuerySchema {
         return
     }
 
-    Join-Path $localAppdata 'Microsoft\Windows' `
+    $schemas = Join-Path $localAppdata 'Microsoft\Windows' `
     | Get-ChildItem -Filter 'StructuredQuerySchema.bin' -Recurse -ErrorAction SilentlyContinue `
     | & {
         param(
@@ -10700,16 +10723,24 @@ function Get-StructuredQuerySchema {
                 $culture = New-Object System.Globalization.CultureInfo -ArgumentList $lcid
 
                 [PSCustomObject]@{
-                    User       = $User
-                    LocaleName = $culture.Name
-                    LocaleId   = $lcid
-                    Path       = $fileInfo.FullName
+                    LocaleName                   = $culture.Name
+                    LocaleId                     = $lcid
+                    Path                         = $fileInfo.FullName
+                    LastWriteTime                = $fileInfo.LastWriteTime
+                    IsNewerThanSchemaChangedLast = $schemaChangedLast -lt $fileInfo.LastWriteTime
                 }
             }
             else {
                 Write-Error "Failed to extract LCID from '$($fileInfo.FullName)'"
             }
         }
+    }
+
+    [PSCustomObject]@{
+        User                  = $User
+        WindowsUserUILanguage = $WinUILanguage
+        SchemaChangedLast     = $schemaChangedLast
+        Schemas               = $schemas
     }
 }
 
@@ -12022,4 +12053,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-NetFrameworkVersion, Collect-OutlookInfo, Get-CachedModePolicy
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Collect-OutlookInfo
