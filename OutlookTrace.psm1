@@ -10687,12 +10687,20 @@ function Get-StructuredQuerySchema {
         return
     }
 
-    # Get User's Default UI Language (I'm not using Win32 GetUserDefaultUILanguage() or PowerShell's Get-WinUserLanguageList) because the user running the command maybe different from the target user
+    # Get user's Default UI Language (I'm not using Win32 GetUserDefaultUILanguage() or PowerShell's Get-WinUserLanguageList because the user running the command may be different from the target user
+    # First, look for HKEY_CURRENT_USER\Control Panel\Desktop\PreferredUILanguages.
+    # Note: To be more complete, the policy key (HKCU\Software\Policies\Microsoft\Control Panel\Desktop) should also be inspected, but skipping for now.
     $WinUILanguage = $userRegRoot | Join-Path -ChildPath 'Control Panel\Desktop' `
     | Get-ItemProperty -Name 'PreferredUILanguages' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'PreferredUILanguages' | Select-Object -First 1
 
     if (-not $WinUILanguage) {
-        Write-Log "Cannot find Windows User PreferredUILanguage"
+        # Look for HKEY_CURRENT_USER\Control Panel\Desktop\MuiCached\MachinePreferredUILanguages
+        $WinUILanguage =$userRegRoot | Join-Path -ChildPath 'Control Panel\Desktop\MuiCached' `
+        | Get-ItemProperty -Name 'MachinePreferredUILanguages' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'MachinePreferredUILanguages' | Select-Object -First 1
+
+        if (-not $WinUILanguage) {
+            Write-Log "Cannot find Windows User PreferredUILanguage or MachinePreferredUILanguages"
+        }
     }
 
     # See if QWORD registry value "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\StructuredQuer\SchemaChangedLast" exists.
@@ -10704,7 +10712,7 @@ function Get-StructuredQuerySchema {
     }
 
     # Look for StructuredQuerySchema.bin under %LOCALAPPDATA%
-    # e.g. "C:\Users\admin\AppData\Local\Microsoft\Windows\1041\StructuredQuerySchema.bin"
+    # e.g. "C:\Users\<user>\AppData\Local\Microsoft\Windows\1041\StructuredQuerySchema.bin"
     $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
 
     if (-not $localAppdata) {
