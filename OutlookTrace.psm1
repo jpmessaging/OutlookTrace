@@ -4754,6 +4754,54 @@ function Convert-MVUnicode {
 
 <#
 .SYNOPSIS
+    Get corrupt file information stored at 'HKCU\Software\Microsoft\Office\16.0\MAPI\Stores\CorruptFiles'
+#>
+function Get-MapiCorruptFiles {
+    [CmdletBinding()]
+    param(
+        $User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    # https://github.com/MicrosoftDocs/OfficeDocs-DeployOffice/blob/public/DeployOffice/privacy/required-diagnostic-data.md
+    $NdbType = @(
+        'NdbUndefined' # 0
+        'NdbSmall'     # 1
+        'NdbLarge'     # 2
+        'NdbTardis'    # 3
+    )
+
+    $corruptFiles = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\MAPI\Stores\CorruptFiles' | Get-ItemProperty -ErrorAction SilentlyContinue | Select-Object -Property * -ExcludeProperty 'PS*'
+
+    if ($corruptFiles) {
+        # Enumerate properties.
+        # Reg value is Binary type (e.g. "2024-02-16-06:29::59.0609"=hex:03,00,....)
+        foreach ($prop in ($corruptFiles | Get-Member -MemberType Properties)) {
+            # Registry name is timestamp. But this string is not formatted in such a way that [DateTime] can parse. So just leave it as is.
+            $time = $prop.Name
+            $dataBin = $corruptFiles.$time
+            $corruptState = [System.BitConverter]::ToUInt32($dataBin, 0)
+            $corruptAction = $corruptState -shr 16
+            $corruptType = $corruptState -band 0xffff
+            $fileName = [System.Text.Encoding]::Unicode.GetString($dataBin[4..($dataBin.Length - 1)])
+
+            [PSCustomObject]@{
+                CorruptAction = $corruptAction
+                CorruptType   = $NdbType[$corruptType]
+                FileName      = $fileName
+                TimeStamp     = $time
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
     Insert "Policies" after "Software" in the given registry path.
     e.g., 'HKCU:\Software\Microsoft\Office\' --> 'HKCU:\Software\Policies\Microsoft\Office\'
 
@@ -8889,7 +8937,7 @@ function Start-ProcessCapture {
                             $obj.EnvironmentVariables = $proc.StartInfo.EnvironmentVariables
 
                             # To reduce the output size, include only necessary properties
-                            $obj.Modules = $proc.Modules | Select-Object ModuleName, FileName,  @{N='FileVersion'; E={$_.FileVersionInfo.FileVersion}}, @{N='Language';E={$_.FileVersionInfo.Language}}
+                            $obj.Modules = $proc.Modules | Select-Object ModuleName, FileName, @{N = 'FileVersion'; E = { $_.FileVersionInfo.FileVersion } }, @{N = 'Language'; E = { $_.FileVersionInfo.Language } }
                         }
                     }
 
@@ -10695,7 +10743,7 @@ function Get-StructuredQuerySchema {
 
     if (-not $WinUILanguage) {
         # Look for HKEY_CURRENT_USER\Control Panel\Desktop\MuiCached\MachinePreferredUILanguages
-        $WinUILanguage =$userRegRoot | Join-Path -ChildPath 'Control Panel\Desktop\MuiCached' `
+        $WinUILanguage = $userRegRoot | Join-Path -ChildPath 'Control Panel\Desktop\MuiCached' `
         | Get-ItemProperty -Name 'MachinePreferredUILanguages' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'MachinePreferredUILanguages' | Select-Object -First 1
 
         if (-not $WinUILanguage) {
@@ -11479,6 +11527,7 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($User) Get-OfficeIdentityConfig @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-OfficeIdentity @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-PrivacyPolicy @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-MapiCorruptFiles @PSBoundParameters }
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:ArgumentList')
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:Path')
 
@@ -12065,4 +12114,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Collect-OutlookInfo
