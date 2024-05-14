@@ -4450,7 +4450,13 @@ function Get-GlobalSection {
 
     if ($globalSection) {
         if ($offlineStateBin = $globalSection.$($PropTags.PR_LAST_OFFLINESTATE_OFFLINE)) {
-            [Win32.Mapi.OfflineState]$offlineState = [BitConverter]::ToInt32($offlineStateBin, 0) -band [Win32.Mapi.OfflineState]::Mask
+            # In rare circumstances, offlineStateBin can be 0. In this case, casting to Win32.Mapi.OfflineState fails.
+            try {
+                [Win32.Mapi.OfflineState]$offlineState = [BitConverter]::ToInt32($offlineStateBin, 0) -band [Win32.Mapi.OfflineState]::Mask
+            }
+            catch {
+                # ignore
+            }
         }
 
         if ($syncModeBin = $globalSection.$($PropTags.PR_CACHE_SYNC_MODE)) {
@@ -10742,6 +10748,8 @@ function Get-StructuredQuerySchema {
     | Get-ItemProperty -Name 'PreferredUILanguages' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'PreferredUILanguages' | Select-Object -First 1
 
     if (-not $WinUILanguage) {
+        Write-Log "PreferredUILanguages is missing. Looking for MachinePreferredUILanguages"
+
         # Look for HKEY_CURRENT_USER\Control Panel\Desktop\MuiCached\MachinePreferredUILanguages
         $WinUILanguage = $userRegRoot | Join-Path -ChildPath 'Control Panel\Desktop\MuiCached' `
         | Get-ItemProperty -Name 'MachinePreferredUILanguages' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'MachinePreferredUILanguages' | Select-Object -First 1
