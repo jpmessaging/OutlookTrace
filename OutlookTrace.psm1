@@ -7246,6 +7246,9 @@ function Add-WerDumpKey {
 
         Write-Log "Temporarily disabling dwwin"
         Disable-DWWin 2>&1 | Write-Log
+
+        Write-Log "Temporarily disabling AeDebug Debugger if any"
+        Disable-AeDebugDebugger 2>&1 | Write-Log
     }
 }
 
@@ -7313,6 +7316,9 @@ function Remove-WerDumpKey {
 
         Write-Log "Re-enabling dwwin"
         Enable-DWWin 2>&1 | Write-Log
+
+        Write-Log "Re-enabling AeDebug Debugger if it was disabled previously"
+        Enable-AeDebugDebugger 2>&1 | Write-Log
     }
 }
 
@@ -7345,6 +7351,41 @@ function Enable-DWWin {
 
     if (Test-Path $imageKeyPath) {
         Remove-Item $imageKeyPath
+    }
+}
+
+function Disable-AeDebugDebugger {
+    [CmdletBinding()]
+    param()
+
+    $AeDebug = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug'
+    $Debugger = 'Debugger'
+    $AeDebugDebuggerTempName = '39f3719a-b064-465c-87c7-ccd09ba007df'
+
+    $value = Get-ItemProperty $AeDebug -Name $Debugger -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $Debugger
+
+    if (-not $value) {
+        Write-Log "AeDebug Debugger is not set"
+        return
+    }
+
+    Write-Log "AeDebug Debugger is found (value:$value). Renaming Debugger to $AeDebugDebuggerTempName"
+    Rename-ItemProperty $AeDebug -Name $Debugger -NewName $AeDebugDebuggerTempName
+}
+
+function Enable-AeDebugDebugger {
+    [CmdletBinding()]
+    param()
+
+    $AeDebug = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug'
+    $Debugger = 'Debugger'
+    $AeDebugDebuggerTempName = '39f3719a-b064-465c-87c7-ccd09ba007df'
+
+    if (Get-ItemProperty $AeDebug -Name $AeDebugDebuggerTempName -ErrorAction SilentlyContinue) {
+        Rename-ItemProperty $AeDebug -Name $AeDebugDebuggerTempName -NewName $Debugger
+    }
+    else {
+        Write-Log "Registry value with name '$AeDebugDebuggerTempName' is not found"
     }
 }
 
