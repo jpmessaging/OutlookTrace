@@ -7359,18 +7359,20 @@ function Disable-AeDebugDebugger {
     param()
 
     $AeDebug = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug'
+    $AeDebugWow64 = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug'
     $Debugger = 'Debugger'
-    $AeDebugDebuggerTempName = '39f3719a-b064-465c-87c7-ccd09ba007df'
+    $DebuggerTempName = '39f3719a-b064-465c-87c7-ccd09ba007df'
 
-    $value = Get-ItemProperty $AeDebug -Name $Debugger -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $Debugger
+    @($AeDebug, $AeDebugWow64) | & {
+        process {
+            $value = Get-ItemProperty $_ -Name $Debugger -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $Debugger
 
-    if (-not $value) {
-        Write-Log "AeDebug Debugger is not set"
-        return
+            if ($value) {
+                Write-Log "AeDebug Debugger is found at $_ (value:$value). Renaming Debugger to $DebuggerTempName"
+                Rename-ItemProperty $_ -Name $Debugger -NewName $DebuggerTempName
+            }
+        }
     }
-
-    Write-Log "AeDebug Debugger is found (value:$value). Renaming Debugger to $AeDebugDebuggerTempName"
-    Rename-ItemProperty $AeDebug -Name $Debugger -NewName $AeDebugDebuggerTempName
 }
 
 function Enable-AeDebugDebugger {
@@ -7378,14 +7380,17 @@ function Enable-AeDebugDebugger {
     param()
 
     $AeDebug = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug'
+    $AeDebugWow64 = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug'
     $Debugger = 'Debugger'
-    $AeDebugDebuggerTempName = '39f3719a-b064-465c-87c7-ccd09ba007df'
+    $DebuggerTempName = '39f3719a-b064-465c-87c7-ccd09ba007df'
 
-    if (Get-ItemProperty $AeDebug -Name $AeDebugDebuggerTempName -ErrorAction SilentlyContinue) {
-        Rename-ItemProperty $AeDebug -Name $AeDebugDebuggerTempName -NewName $Debugger
-    }
-    else {
-        Write-Log "Registry value with name '$AeDebugDebuggerTempName' is not found"
+    @($AeDebug, $AeDebugWow64) | & {
+        process {
+            if (Get-ItemProperty $_ -Name $DebuggerTempName -ErrorAction SilentlyContinue) {
+                Write-Log "Placeholder is found at $_. Renaming to Debugger"
+                Rename-ItemProperty $_ -Name $DebuggerTempName -NewName $Debugger
+            }
+        }
     }
 }
 
