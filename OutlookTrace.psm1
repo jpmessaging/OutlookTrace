@@ -7185,6 +7185,16 @@ function Add-WerDumpKey {
         }
 
         $localDumpsKey = Join-Path $werKey 'LocalDumps'
+
+        # Remove global DumpCount if exits (If this is set to 0, no dumps generated)
+        $DumpCount = 'DumpCount'
+        $globalDumpCount = Get-ItemProperty $localDumpsKey -Name $DumpCount -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $DumpCount
+
+        if ($null -ne $globalDumpCount) {
+            Write-Log "Removing global $DumpCount registry value (Value:$globalDumpCount)"
+            Remove-ItemProperty $localDumpsKey -Name $DumpCount -ErrorAction SilentlyContinue
+        }
+
         $beginBlockComplete = $true
     }
 
