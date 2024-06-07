@@ -149,7 +149,8 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 | TTD           | Time Travel Debugging trace (OS must be Windows 10 or above)                                                   |
 | Recording     | Screen recording by [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)                               |
 
-💡 `Collect-OutlookInfo` tries to download FiddlerCap, Procmon, and ZoomIt when `Component` parameter includes `Fiddler`, `Procmon`, and `Recording` respectively. If Internet access is not available, please download [FiddlerCap](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe), [Procmon](https://download.sysinternals.com/files/ProcessMonitor.zip), [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip) and place them in `Path` folder before running the command.
+>[!IMPORTANT]
+>`Collect-OutlookInfo` tries to download FiddlerCap, Procmon, and ZoomIt when `Component` parameter includes `Fiddler`, `Procmon`, and `Recording` respectively. If Internet access is not available, please download [FiddlerCap](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe), [Procmon](https://download.sysinternals.com/files/ProcessMonitor.zip), [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip) and place them in `Path` folder before running the command.
 
 ### Optional parameters
 
