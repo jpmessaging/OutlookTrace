@@ -11015,6 +11015,10 @@ function Get-Net45Version {
     }
 }
 
+<#
+.SYNOPSIS
+    Save Monarch related logs
+#>
 function Save-MonarchLog {
     [CmdletBinding()]
     param(
@@ -11030,7 +11034,7 @@ function Save-MonarchLog {
 
     $Path = Resolve-Path $Path
 
-    # Collect data at %LOCALAPPDAT%\Microsoft\Olk
+    # Collect data in %LOCALAPPDAT%\Microsoft\Olk
     $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
     $olk = Join-Path $localAppdata -ChildPath 'Microsoft\Olk'
 
@@ -11063,6 +11067,30 @@ function Save-MonarchLog {
     }
 }
 
+<#
+.SYNOPSIS
+    Enable DevTools for Monarch. This takes effect for subsequent launches of Monarch.
+
+.NOTES
+    There are several ways to enable DevTools for Monarch:
+
+    1. Environment Variable, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS with "--auto-open-devtools-for-tabs"
+
+    2. Registry Key, HKLM|HKCU\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments with name "olk.exe" with "--auto-open-devtools-for-tabs"
+
+    Both options apply to any WebView2 apps as explained below:
+
+    Globals
+    https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/webview2-idl?view=webview2-1.0.2535.41#createcorewebview2environmentwithoptions
+
+    WebView2 browser flags
+    https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/webview-features-flags?tabs=dotnetcsharp
+
+    3. config.json in %LOCALAPPDATA%\Microsoft\Olk
+       This is Monarch only.
+
+    For now, this command uses the 3rd method, but it might change in future.
+#>
 function Enable-MonarchDevTools {
     [CmdletBinding()]
     param(
@@ -11105,14 +11133,14 @@ function Enable-MonarchDevTools {
         }
     }
 
-    $err = $($configFile = New-Item -Path $olk -Name $configJson -ItemType File) 2>&1
+    $err = $($null = New-Item -Path $olk -Name $configJson -ItemType File) 2>&1
 
     if ($err) {
         Write-Error "Failed to create $config. $err"
         return
     }
 
-    # Note: This file content must be written without BOM
+    # Note: This file content must be written without BOM (thus "-Encoding Ascii")
     $err = $(Set-Content -Path $config -Value $content -Encoding Ascii) 2>&1
 
     if ($err) {
@@ -11120,6 +11148,10 @@ function Enable-MonarchDevTools {
     }
 }
 
+<#
+.SYNOPSIS
+    Disable DevTools for Monarch
+#>
 function Disable-MonarchDevTools {
     [CmdletBinding()]
     param(
