@@ -11015,6 +11015,148 @@ function Get-Net45Version {
     }
 }
 
+function Save-MonarchLog {
+    [CmdletBinding()]
+    param(
+        # Destination folder path
+        [Parameter(Mandatory)]
+        [string]$Path,
+        $User
+    )
+
+    if (-not (Test-Path $Path)) {
+        $null = New-Item -Path $Path -ItemType Directory -ErrorAction Stop
+    }
+
+    $Path = Resolve-Path $Path
+
+    # Collect data at %LOCALAPPDAT%\Microsoft\Olk
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+    $olk = Join-Path $localAppdata -ChildPath 'Microsoft\Olk'
+
+    if (-not (Test-Path $olk)) {
+        Write-Log "Cannot find '$olk'"
+        return
+    }
+
+    # For now, explicitly select the items to be copied.
+    & {
+        'logs'
+        'config.json'
+        'UserSettings.json'
+        'xpdApi.log'
+    } | & {
+        process {
+            $src = Join-Path $olk -ChildPath $_
+
+            if (-not (Test-Path $src)) {
+                return
+            }
+
+            try {
+                Copy-Item -Path $src -Destination $Path -Recurse -Force
+            }
+            catch {
+                Write-Error -Message "Failed to copy $src. $_" -Exception $_.Exception
+            }
+        }
+    }
+}
+
+function Enable-MonarchDevTools {
+    [CmdletBinding()]
+    param(
+        $User
+    )
+
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+    $olk = Join-Path $localAppdata -ChildPath 'Microsoft\Olk'
+    $configJson = 'config.json'
+    $config = Join-Path $olk -ChildPath $configJson
+
+    $tempName = '39f3719a-b064-465c-87c7-ccd09ba007df'
+    $tempFile = Join-Path $olk -ChildPath $tempName
+
+    $content = '{ "edgeDevTools" : "autoopen" }'
+
+    # SHA-1 hash for the config.json that we create (Make sure to update this value when the content is changed)
+    $hash = 'D80733D2CAAE95D4748799192F0C10C92B123513'
+
+    # If config.json exists, temporarily rename it and create a new one.
+    if (Test-Path $config) {
+        # If the content is same as the one we are going to write, skip.
+        $fileHash = Get-FileHash -Path $config -Algorithm SHA1
+
+        if ($fileHash.Hash -eq $hash) {
+            Write-Log "config.json already exists with the expected content"
+            return
+        }
+
+        # If the temp file already exists for some reason, remove it.
+        if (Test-Path $tempFile) {
+            Remove-Item $tempFile -Force
+        }
+
+        $err = $(Rename-Item -Path $config -NewName $tempName) 2>&1
+
+        if ($err) {
+            Write-Error "Failed to rename $config. $err"
+            return
+        }
+    }
+
+    $err = $($configFile = New-Item -Path $olk -Name $configJson -ItemType File) 2>&1
+
+    if ($err) {
+        Write-Error "Failed to create $config. $err"
+        return
+    }
+
+    # Note: This file content must be written without BOM
+    $err = $(Set-Content -Path $config -Value $content -Encoding Ascii) 2>&1
+
+    if ($err) {
+        Write-Error "Failed to write to $config. $err"
+    }
+}
+
+function Disable-MonarchDevTools {
+    [CmdletBinding()]
+    param(
+        $User
+    )
+
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+    $olk = Join-Path $localAppdata -ChildPath 'Microsoft\Olk'
+    $configJson = 'config.json'
+    $config = Join-Path $olk -ChildPath $configJson
+
+    $tempName = '39f3719a-b064-465c-87c7-ccd09ba007df'
+
+    # Remove the current config.json and restore temp file if exists.
+    if (-not (Test-Path $config)) {
+        Write-Error "Cannot find $config"
+        return
+    }
+
+    $err = $(Remove-Item -Path $config -Force) 2>&1
+
+    if ($err) {
+        Write-Error "Failed to remove $config. $err"
+        return
+    }
+
+    $tempFile = Join-Path $olk -ChildPath $tempName
+
+    if (Test-Path $tempFile) {
+        $err = $(Rename-Item -Path $tempFile -NewName $configJson) 2>&1
+
+        if ($err) {
+            Write-Error "Failed to rename $tempFile to $configJson. $err"
+        }
+    }
+}
+
 <#
 .SYNOPSIS
 Check if this sript is too old.
@@ -11254,7 +11396,7 @@ function Collect-OutlookInfo {
         $Path,
         # What to collect
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'HungDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance', 'WPR', 'Recording')]
+        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'HungDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance', 'WPR', 'Recording', 'NewOutlook')]
         [array]$Component,
         # This controls the level of netsh trace report
         [ValidateSet('None', 'Mini', 'Full')]
@@ -11662,6 +11804,11 @@ function Collect-OutlookInfo {
             $outlookTraceStarted = $true
         }
 
+        if ($Component -contains 'NewOutlook') {
+            Enable-MonarchDevTools -User $targetUser
+            $newOutlookTraceStarted = $true
+        }
+
         if ($Component -contains 'PSR') {
             Write-Progress -Status 'Starting PSR'
 
@@ -11859,7 +12006,7 @@ function Collect-OutlookInfo {
         Write-Progress -Completed
         $waitStart = Get-Timestamp
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted) {
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted -or $newOutlookTraceStarted) {
             Write-Log "Waiting for the user to stop"
             $ScriptInfo.WaitStart = Get-Date
 
@@ -11926,6 +12073,11 @@ function Collect-OutlookInfo {
         if ($outlookTraceStarted) {
             Write-Progress -Status 'Stopping Outlook trace'
             Stop-OutlookTrace 2>&1 | Write-Log -Category Error -PassThru
+        }
+
+        if ($newOutlookTraceStarted) {
+            Disable-MonarchDevTools -User $targetUser 2>&1 | Write-Log -Category Error -PassThru
+            Save-MonarchLog -User $targetUser -Path (Join-Path $tempPath 'Monarch')  2>&1 | Write-Log -Category Error -PassThru
         }
 
         if ($ldapTraceStarted) {
@@ -12180,4 +12332,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Enable-MonarchDevTools, Disable-MonarchDevTools, Collect-OutlookInfo
