@@ -11049,6 +11049,7 @@ function Save-MonarchLog {
         'config.json'
         'UserSettings.json'
         'xpdApi.log'
+        'EBWebView\Crashpad'
     } | & {
         process {
             $src = Join-Path $olk -ChildPath $_
@@ -11057,8 +11058,19 @@ function Save-MonarchLog {
                 return
             }
 
+            $dest = $Path
+            $parent = Split-Path $_
+
+            if ($parent) {
+                $dest = Join-Path $Path -ChildPath $parent
+
+                if (-not (Test-Path $dest)) {
+                    $null = New-Item -Path $dest -ItemType Directory -ErrorAction Stop
+                }
+            }
+
             try {
-                Copy-Item -Path $src -Destination $Path -Recurse -Force
+                Copy-Item -Path $src -Destination $dest -Recurse -Force
             }
             catch {
                 Write-Error -Message "Failed to copy $src. $_" -Exception $_.Exception
