@@ -2824,7 +2824,7 @@ function Save-EventLog {
     $logs = @(
         'Application'
         'System'
-        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client|WebAuth|CAPI2|AppLocker"
+        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client|WebAuth|CAPI2|AppLocker|AppxPackaging|AppXDeployment/"
     )
 
     $tasks = @(
@@ -11045,10 +11045,10 @@ function Save-MonarchLog {
 
     # For now, explicitly select the items to be copied.
     & {
+        '*.log'
+        '*.json'
+        '*.txt'
         'logs'
-        'config.json'
-        'UserSettings.json'
-        'xpdApi.log'
         'EBWebView\Crashpad'
     } | & {
         process {
