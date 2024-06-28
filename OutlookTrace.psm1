@@ -6784,9 +6784,10 @@ function Start-TTDMonitor {
     }
 
     Write-Log "TTD.exe (PID:$($process.Id)) has successfully started"
+    $null = $process.Handle
 
     [PSCustomObject]@{
-        TTDPath       = $TTDPath
+        TTDPath       = $TTDPath # Need to remember this for Stop-TTDMonitor because if the process dies, System.Diagnostics.Process loses the path
         TTDProcess    = $process
         StandardError = $stderr
     }
@@ -6800,47 +6801,47 @@ function Stop-TTDMonitor {
         $InputObject
     )
 
-    # If InputObject is not given, find TTD.exe -monitor instance
-    if (-not $InputObject) {
-        $InputObject = Get-CimInstance 'Win32_Process' -Filter 'Name = "TTD.exe"' | & {
+    if ($InputObject) {
+        $ttdPath = $InputObject.TTDPath
+        $ttdProcess = $InputObject.TTDProcess
+    }
+    else {
+        # If InputObject is not given, find "TTD.exe -monitor" instance
+        $ttdProcess = Get-CimInstance 'Win32_Process' -Filter 'Name = "TTD.exe"' | & {
             process {
                 if ($_.CommandLine -match '-monitor') {
-                    Write-Log "Found TTD.exe with -monitor. PID:$($_.ProcessId); Path:$($_.Path)"
-
-                    [PSCustomObject]@{
-                        TTDPath    = $_.Path
-                        TTDProcess = Get-Process -Id $_.ProcessId
-                    }
+                    Get-Process -Id $_.ProcessId
                 }
 
                 $_.Dispose()
             }
         } | Select-Object -First 1
 
-        if (-not $InputObject) {
-            Write-Error "Cannot find TTD.exe -montor instance"
+        if ($ttdProcess) {
+            $ttdPath = $ttdProcess.Path
+        }
+        else {
+            # Without an instance of ttd.exe, "ttd.exe -stop all" fails with timeout anyway. So there's nothing I can do here.
+            Write-Error "Cannot find TTD.exe -monitor instance"
             return
         }
     }
 
-    $ttdPath = $InputObject.TTDPath
-    $ttdProcess = $InputObject.TTDProcess
-
-    # Sanity check if the target process is ttd
-    if ($ttdProcess.Name -ne 'TTD') {
-        Write-Error "Given process is not TTD"
-        return
-    }
-
-    # Stop current tracing, if any
-    Write-Log "Invoking 'TTD.exe -stop all'"
-    $null = & $ttdPath -stop all
-
     # Stop monitoring
-    Write-Log "Stopping TTD.exe (PID:$($ttdProcess.Id))"
-    Stop-Process -InputObject $ttdProcess -ErrorAction Stop
-    $ttdProcess.WaitForExit()
-    $ttdProcess.Dispose()
+    # It's possible that this instance has died already.
+    if ($ttdProcess -and -not $ttdProcess.HasExited) {
+        # Stop current tracing, if any
+        Write-Log "Invoking 'TTD.exe -stop all'"
+        $null = & $ttdPath -stop all
+        Write-Log "Stopping TTD.exe (PID:$($ttdProcess.Id))"
+
+        Stop-Process -InputObject $ttdProcess -ErrorAction Stop
+        $ttdProcess.WaitForExit()
+        $ttdProcess.Dispose()
+    }
+    else {
+        Write-Error "TTD -monitor instance (PID:$($ttdProcess.Id)) has already died (ExitTime:$($ttdProcess.ExitTime), ExitCode:$($ttdProcess.ExitCode))"
+    }
 
     # If StandardError file exists but it's empty, remove it.
     if ($InputObject.StandardError -and (Test-Path $InputObject.StandardError) -and -not (Get-Content $InputObject.StandardError)) {
@@ -12157,10 +12158,26 @@ function Collect-OutlookInfo {
             Write-Progress -Status 'Stopping TTD trace'
 
             if ($ttdProcess.IsAttached) {
-                $ttdProcess | Detach-TTD 2>&1 | Write-Log -Category Error -PassThru
+                $err = $($ttdProcess | Detach-TTD) 2>&1 | Write-Log -Category Error -PassThru
             }
             else {
-                $ttdProcess | Stop-TTDMonitor 2>&1 | Write-Log -Category Error -PassThru
+                $err = $($ttdProcess | Stop-TTDMonitor) 2>&1 | Write-Log -Category Error -PassThru
+            }
+
+            # Stopping or Detaching TTD might fail if TTD.exe died during tracing. In this case, ask the user to shutdown Outlook manually so that trace file is fully written.
+            if ($err) {
+                $outlookProcess = @(Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue | `
+                    Where-Object { $_.Modules | Where-Object { $_.ModuleName -match 'TTDRecordCPU' } })
+
+                if ($outlookProcess.Count) {
+                    Write-Host "Please shutdown Outlook (PID:$($outlookProcess.Id -join ','))" -ForegroundColor Yellow
+
+                    foreach ($proc in $outlookProcess) {
+                        Write-Host "Waiting for Outlook (PID:$($proc.Id)) to shutdown ..." -ForegroundColor Yellow
+                        $proc.WaitForExit()
+                        $proc.Dispose()
+                    }
+                }
             }
 
             $ttdProcess | Cleanup-TTD
