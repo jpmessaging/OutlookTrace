@@ -3432,7 +3432,7 @@ function Invoke-ScriptBlock {
     # If Path is given, save the result.
     if (-not $FileName) {
         # Decide the file name.
-        # 1. It the ScriptBlock has FunctionDefinitionAst, use its Name (that is, the function name)
+        # 1. If the ScriptBlock has FunctionDefinitionAst, use its Name (that is, the function name)
         # 2. Otherwise, search the first statement from ProcessBlock -> EndBlock -> BeginBlock
         # Note that a simple script block such as '{ Get-Foo }' has only EndBlock.
         # When the command type is Application (e.g, netsh), use the entire statement as the file name (so that command with different args are saved as indivisual files)
