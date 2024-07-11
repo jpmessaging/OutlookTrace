@@ -3164,6 +3164,8 @@ function Save-OfficeRegistry {
         # HKLM
         'HKLM\SOFTWARE\Microsoft\Office'
         'HKLM\SOFTWARE\WOW6432Node\Microsoft\Office'
+        'HKLM\SOFTWARE\IM Providers'
+        'HKLM\SOFTWARE\Wow6432Node\IM Providers'
         'HKLM\SOFTWARE\Microsoft\MSIPC'
         'HKLM\SOFTWARE\WOW6432Node\Microsoft\MSIPC'
         'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp'
