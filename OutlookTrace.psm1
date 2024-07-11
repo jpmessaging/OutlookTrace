@@ -3267,7 +3267,6 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-ImageFileExecutionOptions } }
         @{ScriptBlock = { Get-SessionManager } }
         @{ScriptBlock = { Get-WinSystemLocale } }
-        @{ScriptBlock = { Get-AppxPackage } }
         @{ScriptBlock = { Get-Service } }
         @{ScriptBlock = { Get-SmbMapping } }
         @{ScriptBlock = { Get-AnsiCodePage } }
@@ -3281,6 +3280,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { param($User) Get-ProxyAutoConfig @PSBoundParameters }; ArgumentList = $userArg }
         @{ScriptBlock = { param($User) Get-AppContainerRegistryAcl @PSBoundParameters }; ArgumentList = $userArg }
         @{ScriptBlock = { param($User) Get-StructuredQuerySchema @PSBoundParameters }; ArgumentList = $userArg }
+        @{ScriptBlock = { param($User) Get-AppxPackage @PSBoundParameters }; ArgumentList = $userArg }
 
         # These are just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
@@ -12169,7 +12169,7 @@ function Collect-OutlookInfo {
             # Stopping or Detaching TTD might fail if TTD.exe died during tracing. In this case, ask the user to shutdown Outlook manually so that trace file is fully written.
             if ($err) {
                 $outlookProcess = @(Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue | `
-                    Where-Object { $_.Modules | Where-Object { $_.ModuleName -match 'TTDRecordCPU' } })
+                        Where-Object { $_.Modules | Where-Object { $_.ModuleName -match 'TTDRecordCPU' } })
 
                 if ($outlookProcess.Count) {
                     Write-Host "Please shutdown Outlook (PID:$($outlookProcess.Id -join ','))" -ForegroundColor Yellow
