@@ -6835,9 +6835,10 @@ function Stop-TTDMonitor {
         # Stop current tracing, if any
         Write-Log "Invoking 'TTD.exe -stop all'"
         $null = & $ttdPath -stop all
-        Write-Log "Stopping TTD.exe (PID:$($ttdProcess.Id))"
 
+        Write-Log "Stopping TTD.exe (PID:$($ttdProcess.Id))"
         Stop-Process -InputObject $ttdProcess -ErrorAction Stop
+
         $ttdProcess.WaitForExit()
         $ttdProcess.Dispose()
     }
