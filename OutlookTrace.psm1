@@ -5425,7 +5425,8 @@ function Start-LdapTrace {
         [Parameter(Mandatory = $true, Position = 0, HelpMessage = "Directory for output file")]
         [string]$Path,
         [Parameter(Mandatory = $true, HelpMessage = "Process name to trace. e.g. Outlook.exe")]
-        [string]$TargetProcess,
+        [Alias('TargetProcess')]
+        [string]$TargetExecutable,
         [string]$FileName = 'ldap.etl',
         [string]$SessionName = 'LdapTrace',
         [ValidateSet('NewFile', 'Circular')]
@@ -5441,21 +5442,28 @@ function Start-LdapTrace {
     $Path = Resolve-Path $Path
 
     # Process name must contain the extension such as "Outlook.exe", instead of "Outlook"
-    if ([IO.Path]::GetExtension($TargetProcess) -ne 'exe') {
-        $TargetProcess = [IO.Path]::GetFileNameWithoutExtension($TargetProcess) + ".exe"
+    if ([IO.Path]::GetExtension($TargetExecutable) -ne 'exe') {
+        $TargetExecutable = [IO.Path]::GetFileNameWithoutExtension($TargetExecutable) + ".exe"
     }
 
     # Create a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing
-    $keypath = "HKLM:\SYSTEM\CurrentControlSet\Services\ldap\tracing"
+    $keypath = "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\ldap\tracing"
+
     if (-not (Test-Path $keypath)) {
-        $null = New-Item (Split-Path $keypath) -Name 'tracing' -ErrorAction SilentlyContinue
+        # Create "tracing" key
+        $err = $($null = New-Item (Split-Path $keypath) -Name 'tracing') 2>&1
+
+        if ($err) {
+            Write-Error "Failed to create $keypath. Make sure to run as an administrator"
+            return
+        }
     }
 
-    $null = New-Item $keypath -Name $TargetProcess -ErrorAction SilentlyContinue
-    $key = Get-Item (Join-Path $keypath -ChildPath $TargetProcess)
+    # Create a key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing
+    $err = $($null = New-Item $keypath -Name $TargetExecutable) 2>&1
 
-    if (!$key) {
-        Write-Error "Failed to create the key under $keypath. Make sure to run as an administrator"
+    if ($err) {
+        Write-Error "Failed to create a key under $keypath. Make sure to run as an administrator"
         return
     }
 
@@ -5500,22 +5508,47 @@ function Stop-LdapTrace {
     [CmdletBinding()]
     param(
         $SessionName = 'LdapTrace',
-        [Parameter(Mandatory = $true)]
-        $TargetProcess
+        [Alias('TargetProcess')]
+        $TargetExecutable
     )
 
-    Write-Log "Stopping $SessionName"
-    $null = Stop-EtwSession $SessionName
+    $session = Get-EtwSession | Where-Object { $_.SessionName -eq $SessionName }
 
-    # Remove a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing (ignore any errors)
-
-    # Process name must contain the extension such as "Outlook.exe", instead of "Outlook"
-    if ([IO.Path]::GetExtension($TargetProcess) -ne 'exe') {
-        $TargetProcess = [IO.Path]::GetFileNameWithoutExtension($TargetProcess) + ".exe"
+    if ($session) {
+        Write-Log "Stopping $SessionName"
+        $null = Stop-EtwSession $SessionName
+    }
+    else {
+        Write-Error "Cannot find an ETW session named `"$SessionName`""
     }
 
-    $keypath = "HKLM:\SYSTEM\CurrentControlSet\Services\ldap\tracing\$TargetProcess"
-    $null = Remove-Item $keypath -ErrorAction SilentlyContinue
+    $tracingKey = "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\ldap\tracing\"
+
+    if ($TargetExecutable) {
+        # Process name must contain the extension such as "outlook.exe", instead of "outlook"
+        if ([IO.Path]::GetExtension($TargetExecutable) -ne 'exe') {
+            $TargetExecutable = [IO.Path]::GetFileNameWithoutExtension($TargetExecutable) + ".exe"
+        }
+
+        $targetPath = Join-Path $tracingKey -ChildPath $TargetExecutable
+    }
+    else {
+        $tracedApps = @(Get-ChildItem $tracingKey -ErrorAction SilentlyContinue)
+
+        if ($tracedApps.Count -eq 0) {
+            return
+        }
+        elseif ($tracedApps.Count -gt 1) {
+            Write-Error "Multiple keys are found under $tracingKey. Please specify the target executable with TargetExecutable parameter."
+            return
+        }
+
+        $targetPath = $tracedApps[0].PSPath
+    }
+
+    # Remove a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing (ignore any errors)
+    Write-Log "Removing $targetPath"
+    $null = Remove-Item $targetPath -ErrorAction SilentlyContinue
 }
 
 function Get-OfficeModuleInfo {
@@ -11943,7 +11976,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'LDAP') {
-            Start-LDAPTrace -Path (Join-Path $tempPath 'LDAP') -TargetProcess 'Outlook.exe'
+            Start-LDAPTrace -Path (Join-Path $tempPath 'LDAP') -TargetExecutable 'Outlook.exe'
             $ldapTraceStarted = $true
         }
 
@@ -12203,7 +12236,7 @@ function Collect-OutlookInfo {
 
         if ($ldapTraceStarted) {
             Write-Progress -Status 'Stopping LDAP trace'
-            Stop-LDAPTrace -TargetProcess 'Outlook.exe'
+            Stop-LDAPTrace -TargetExecutable 'Outlook.exe' 2>&1 | Write-Log -Category Error -PassThru
         }
 
         if ($capiTraceStarted) {
