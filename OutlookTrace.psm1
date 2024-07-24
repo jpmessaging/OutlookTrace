@@ -2696,7 +2696,7 @@ function Start-PSR {
     $err = $($process = Start-Process 'psr' -ArgumentList $psrArgs -PassThru) 2>&1
 
     if (-not $process -or $process.HasExited) {
-        Write-Error "PSR failed to start. $err" -Exception $err.Exception
+        Write-Error -Message "PSR failed to start. $err" -Exception $err.Exception
         return
     }
 
@@ -2759,7 +2759,7 @@ function Stop-PSR {
     $err = $($stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru)
 
     if (-not $stopInstance) {
-        Write-Error "Failed to run psr.exe /stop. $err" -Exception $err.Exception
+        Write-Error -Message "Failed to run psr.exe /stop. $err" -Exception $err.Exception
         return
     }
 
@@ -3134,6 +3134,26 @@ function Get-UserShellFolder {
     # Folder path is like "%USERPROFILE%\AppData\Local". Replace USERPROFILE.
     $userProfile = Get-UserProfilePath $User
     $folderPath.Replace('%USERPROFILE%', $userProfile)
+}
+
+<#
+.SYNOPSIS
+Get a given user's TEMP folder path
+#>
+function Get-UserTempFolder {
+    [CmdletBinding()]
+    param(
+        $User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    $tempPath = Join-Path $userRegRoot 'Environment' | Get-ItemProperty -Name 'TEMP' | Select-Object -ExpandProperty 'TEMP'
+    $tempPath
 }
 
 function Save-OfficeRegistry {
@@ -3589,7 +3609,7 @@ function Get-WinInetProxy {
             $raw = Get-ItemProperty $connectionsKey -Name $connection -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $connection
         }
         catch {
-            Write-Error "Get-ItemProperty failed for a connection, $connection. $_" -Exception $_.Exception
+            Write-Error -Message "Get-ItemProperty failed for a connection, $connection. $_" -Exception $_.Exception
         }
 
         if (-not $raw) {
@@ -4013,7 +4033,7 @@ function Get-JoinInformation {
     $sc = [Win32.Netapi32]::NetGetJoinInformation([NullString]::Value, [ref]$pName, [ref]$status)
 
     if ($sc -ne 0) {
-        Write-Error "NetGetJoinInformation failed with $sc" -Exception (New-Object ComponentModel.Win32Exception($sc))
+        Write-Error -Message "NetGetJoinInformation failed with $sc" -Exception (New-Object ComponentModel.Win32Exception($sc))
         return
     }
 
@@ -4021,7 +4041,7 @@ function Get-JoinInformation {
     $sc = [Win32.Netapi32]::NetApiBufferFree($pName)
 
     if ($sc -ne 0) {
-        Write-Error "NetApiBufferFree failed with $sc" -Exception (New-Object ComponentModel.Win32Exception($sc))
+        Write-Error -Message "NetApiBufferFree failed with $sc" -Exception (New-Object ComponentModel.Win32Exception($sc))
         return
     }
 
@@ -11116,6 +11136,56 @@ function Save-MonarchLog {
     }
 }
 
+function Save-MonarchSetupLog {
+    [CmdletBinding()]
+    param(
+        # Destination folder path
+        [Parameter(Mandatory)]
+        [string]$Path,
+        $User
+    )
+
+    if (-not (Test-Path $Path)) {
+        $null = New-Item -Path $Path -ItemType Directory -ErrorAction Stop
+    }
+
+    $Path = Resolve-Path $Path
+
+    # NewOutlookInstaller.exe writes "NewOutlookInstaller_***.log" in %TEMP%
+    # setup.exe writes to Setup_***.log in %TEMP%
+    # This may change in future, but for now we need to collect both.
+    $temp = Get-UserTempFolder -User $User
+
+    if (-not $temp) {
+        Write-Error "Failed to find TEMP folder for $User"
+        return
+    }
+
+    & {
+        'setup_*.log'
+        'NewOutlookInstaller_*.log'
+    } `
+    | Join-Path $temp -ChildPath { $_ } `
+    | & {
+        process {
+            $src = $_
+
+            try {
+                Copy-Item -Path $src -Destination $Path -Force
+            }
+            catch {
+                Write-Error -Message "Failed to copy $src. $_" -Exception $_.Exception
+            }
+        }
+    }
+
+    # Remove the destination folder if no files are saved.
+    if (-not (Get-ChildItem -Path $Path | Select-Object -First 1 )) {
+        Write-Log "No files are saved. Removing $Path"
+        Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue
+    }
+}
+
 <#
 .SYNOPSIS
     Enable DevTools for Monarch. This takes effect for subsequent launches of Monarch.
@@ -12232,6 +12302,7 @@ function Collect-OutlookInfo {
         if ($newOutlookTraceStarted) {
             Disable-MonarchDevTools -User $targetUser 2>&1 | Write-Log -Category Error -PassThru
             Save-MonarchLog -User $targetUser -Path (Join-Path $tempPath 'Monarch')  2>&1 | Write-Log -Category Error -PassThru
+            Save-MonarchSetupLog -User $targetUser -Path (Join-Path $tempPath 'MonarchSetup')  2>&1 | Write-Log -Category Error -PassThru
         }
 
         if ($ldapTraceStarted) {
@@ -12486,4 +12557,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Enable-MonarchDevTools, Disable-MonarchDevTools, Get-FileExtEditFlags, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-MonarchDevTools, Disable-MonarchDevTools, Get-FileExtEditFlags, Collect-OutlookInfo
