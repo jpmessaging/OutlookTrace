@@ -11074,6 +11074,55 @@ function Get-Net45Version {
 
 <#
 .SYNOPSIS
+    Save files
+.NOTES
+    When Copy-Item fails on a single file, it fails the entire operation. This function will continue to copy other files.
+#>
+function Save-Item {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        # Folder path to save files (Forwarded to Get-ChildItem)
+        [string]$Path,
+        # Destination folder path
+        [Parameter(Mandatory)]
+        [string]$Destination,
+        # Root path. If files are found in a subfolder of the root, the subfolder structure will be preserved.
+        [string]$Root,
+        # Filter (Forwarded to Get-ChildItem)
+        [string]$Filter,
+        # Recurse (Forwarded to Get-ChildItem)
+        [switch]$Recurse
+    )
+
+    Get-ChildItem -Path $Path -Filter $Filter -Recurse:$Recurse -File | & {
+        param(
+            [Parameter(ValueFromPipeline)]
+            [System.IO.FileInfo]$file
+        )
+        process {
+            $dest = $Destination
+
+            if ($Root) {
+                $dest = Join-Path $Destination $file.DirectoryName.Substring($Root.Length)
+            }
+
+            if (-not (Test-Path $dest)) {
+                $null = New-Item -ItemType Directory -Path $dest -ErrorAction Stop
+            }
+
+            try {
+                $_ | Copy-Item -Destination $dest
+            }
+            catch {
+                Write-Error -Message "Failed to copy $($_.FullName). $_" -Exception $_.Exception
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
     Save Monarch related logs
 #>
 function Save-MonarchLog {
@@ -11102,37 +11151,21 @@ function Save-MonarchLog {
 
     # For now, explicitly select the items to be copied.
     & {
-        '*.log'
-        '*.json'
-        '*.txt'
-        'logs'
-        'EBWebView\Crashpad'
+        @{ Path = $olk; Filter = '*.log' }
+        @{ Path = $olk; Filter = '*.json' }
+        @{ Path = $olk; Filter = '*.txt' }
+        @{ Path = "$olk\logs"; Root = $olk; Recurse = $true }
+        @{ Path = "$olk\EBWebView\Crashpad"; Root = $olk; Recurse = $true }
     } | & {
         process {
-            $src = Join-Path $olk -ChildPath $_
-
-            if (-not (Test-Path $src)) {
-                return
-            }
-
-            $dest = $Path
-            $parent = Split-Path $_
-
-            if ($parent) {
-                $dest = Join-Path $Path -ChildPath $parent
-
-                if (-not (Test-Path $dest)) {
-                    $null = New-Item -Path $dest -ItemType Directory -ErrorAction Stop
-                }
-            }
-
-            try {
-                Copy-Item -Path $src -Destination $dest -Recurse -Force
-            }
-            catch {
-                Write-Error -Message "Failed to copy $src. $_" -Exception $_.Exception
-            }
+            Save-Item @_ -Destination $Path
         }
+    }
+
+    # Remove the destination folder if no files are saved.
+    if (-not (Get-ChildItem $Path | Select-Object -First 1 )) {
+        Write-Log "No files are saved. Removing $Path"
+        Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -11162,25 +11195,16 @@ function Save-MonarchSetupLog {
     }
 
     & {
-        'setup_*.log'
-        'NewOutlookInstaller_*.log'
-    } `
-    | Join-Path $temp -ChildPath { $_ } `
-    | & {
+        @{ Path = $temp; Filter = 'setup_*.log' }
+        @{ Path = $temp; Filter = 'NewOutlookInstaller_*.log' }
+    } | & {
         process {
-            $src = $_
-
-            try {
-                Copy-Item -Path $src -Destination $Path -Force
-            }
-            catch {
-                Write-Error -Message "Failed to copy $src. $_" -Exception $_.Exception
-            }
+            Save-Item @_ -Destination $Path
         }
     }
 
     # Remove the destination folder if no files are saved.
-    if (-not (Get-ChildItem -Path $Path | Select-Object -First 1 )) {
+    if (-not (Get-ChildItem $Path | Select-Object -First 1 )) {
         Write-Log "No files are saved. Removing $Path"
         Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue
     }
