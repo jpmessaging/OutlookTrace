@@ -11087,8 +11087,8 @@ function Save-Item {
         # Destination folder path
         [Parameter(Mandatory)]
         [string]$Destination,
-        # Root path. If files are found in a subfolder of the root, the subfolder structure will be preserved.
-        [string]$Root,
+        # Destination child path (e.g. If "FolderA\FolderB", files will be saved under "$Destination\FolderA\FolderB")
+        [string]$ChildPath,
         # Filter (Forwarded to Get-ChildItem)
         [string]$Filter,
         # Recurse (Forwarded to Get-ChildItem)
@@ -11103,8 +11103,8 @@ function Save-Item {
         process {
             $dest = $Destination
 
-            if ($Root) {
-                $dest = Join-Path $Destination $file.DirectoryName.Substring($Root.Length)
+            if ($ChildPath) {
+                $dest = Join-Path $Destination -ChildPath $ChildPath
             }
 
             if (-not (Test-Path $dest)) {
@@ -11112,10 +11112,10 @@ function Save-Item {
             }
 
             try {
-                $_ | Copy-Item -Destination $dest
+                Copy-Item -LiteralPath $file.FullName -Destination $dest
             }
             catch {
-                Write-Error -Message "Failed to copy $($_.FullName). $_" -Exception $_.Exception
+                Write-Error -Message "Failed to copy $($file.FullName). $_" -Exception $_.Exception
             }
         }
     }
@@ -11134,12 +11134,6 @@ function Save-MonarchLog {
         $User
     )
 
-    if (-not (Test-Path $Path)) {
-        $null = New-Item -Path $Path -ItemType Directory -ErrorAction Stop
-    }
-
-    $Path = Resolve-Path $Path
-
     # Collect data in %LOCALAPPDAT%\Microsoft\Olk
     $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
     $olk = Join-Path $localAppdata -ChildPath 'Microsoft\Olk'
@@ -11154,18 +11148,12 @@ function Save-MonarchLog {
         @{ Path = $olk; Filter = '*.log' }
         @{ Path = $olk; Filter = '*.json' }
         @{ Path = $olk; Filter = '*.txt' }
-        @{ Path = "$olk\logs"; Root = $olk; Recurse = $true }
-        @{ Path = "$olk\EBWebView\Crashpad"; Root = $olk; Recurse = $true }
+        @{ Path = "$olk\logs"; ChildPath = 'logs'; Recurse = $true }
+        @{ Path = "$olk\EBWebView\Crashpad"; ChildPath = 'EBWebView\Crashpad'; Recurse = $true }
     } | & {
         process {
             Save-Item @_ -Destination $Path
         }
-    }
-
-    # Remove the destination folder if no files are saved.
-    if (-not (Get-ChildItem $Path | Select-Object -First 1 )) {
-        Write-Log "No files are saved. Removing $Path"
-        Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -11177,12 +11165,6 @@ function Save-MonarchSetupLog {
         [string]$Path,
         $User
     )
-
-    if (-not (Test-Path $Path)) {
-        $null = New-Item -Path $Path -ItemType Directory -ErrorAction Stop
-    }
-
-    $Path = Resolve-Path $Path
 
     # NewOutlookInstaller.exe writes "NewOutlookInstaller_***.log" in %TEMP%
     # setup.exe writes to Setup_***.log in %TEMP%
@@ -11201,12 +11183,6 @@ function Save-MonarchSetupLog {
         process {
             Save-Item @_ -Destination $Path
         }
-    }
-
-    # Remove the destination folder if no files are saved.
-    if (-not (Get-ChildItem $Path | Select-Object -First 1 )) {
-        Write-Log "No files are saved. Removing $Path"
-        Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue
     }
 }
 
