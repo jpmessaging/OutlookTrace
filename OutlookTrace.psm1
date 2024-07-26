@@ -1710,7 +1710,7 @@ function Compress-Folder {
         )
 
         if (Test-Path $Path) {
-            $Path = Resolve-Path -LiteralPath $Path
+            $Path = Convert-Path -LiteralPath $Path
         }
         else {
             Write-Error "$Path is not found"
@@ -1732,7 +1732,7 @@ function Compress-Folder {
         }
 
         if (Test-Path $Destination) {
-            $Destination = Resolve-Path -LiteralPath $Destination
+            $Destination = Convert-Path -LiteralPath $Destination
         }
         else {
             $Destination = New-Item $Destination -ItemType Directory -ErrorAction Stop | Select-Object -ExpandProperty FullName
@@ -1863,7 +1863,7 @@ function Compress-Folder {
         )
 
         if (Test-Path $Path) {
-            $Path = Resolve-Path -LiteralPath $Path
+            $Path = Convert-Path -LiteralPath $Path
         }
         else {
             Write-Error "$Path is not found"
@@ -1876,7 +1876,7 @@ function Compress-Folder {
         }
 
         if (Test-Path $Destination) {
-            $Destination = Resolve-Path -LiteralPath $Destination
+            $Destination = Convert-Path -LiteralPath $Destination
         }
         else {
             $Destination = New-Item $Destination -ItemType Directory -ErrorAction Stop | Select-Object -ExpandProperty FullName
@@ -2017,7 +2017,7 @@ function Compress-Folder {
         )
 
         if (Test-Path -LiteralPath $Path) {
-            $Path = Resolve-Path $Path
+            $Path = Convert-Path -LiteralPath $Path
         }
         else {
             Write-Error "Failed to find $Path"
@@ -2030,7 +2030,7 @@ function Compress-Folder {
         }
 
         if (Test-Path $Destination) {
-            $Destination = Resolve-Path -LiteralPath $Destination
+            $Destination = Convert-Path -LiteralPath $Destination
         }
         else {
             $Destination = New-Item $Destination -ItemType Directory -ErrorAction Stop | Select-Object -ExpandProperty FullName
@@ -2325,7 +2325,8 @@ function Start-WamTrace {
     if (-not (Test-Path $Path)) {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
-    $Path = Resolve-Path $Path
+
+    $Path = Convert-Path -LiteralPath $Path
 
     # Create a provider listing
     $providerFile = Join-Path $Path -ChildPath 'wam.prov'
@@ -2393,7 +2394,7 @@ function Start-OutlookTrace {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -Literal $Path
     $providerFile = Join-Path $Path -ChildPath 'Office.prov'
     $officeInfo = Get-OfficeInfo -ErrorAction Stop
     $major = $officeInfo.Version.Split('.')[0] -as [int]
@@ -2470,7 +2471,8 @@ function Start-NetshTrace {
     if (-not (Test-Path $Path)) {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
-    $Path = Resolve-Path $Path
+
+    $Path = Convert-Path -LiteralPath $Path
 
     # Use "InternetClient_dbg" for Win10
     $win32OS = Get-CimInstance Win32_OperatingSystem
@@ -2660,7 +2662,7 @@ function Start-PSR {
         $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -Literal $Path
 
     # File name must be ***.mht
     if ([IO.Path]::GetExtension($FileName) -ne ".mht") {
@@ -2819,7 +2821,7 @@ function Save-EventLog {
     if (-not (Test-Path $Path -ErrorAction Stop)) {
         $null = New-Item -ItemType directory $Path
     }
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     $logs = @(
         'Application'
@@ -4886,35 +4888,6 @@ function Test-PolicyPath {
     }
 }
 
-<#
-.SYNOPSIS
-    Convert a PSPath to a path without prefix (sucn as "Microsoft.PowerShell.Core\FileSystem::", Microsoft.PowerShell.Core\Registry::)
-#>
-function ConvertFrom-PSPath {
-    [CmdletBinding()]
-    [OutputType([string])]
-    param(
-        [Parameter(Mandatory, ValueFromPipeline)]
-        [string]$Path,
-        # Keep provider name such as "FileSystem::" or "Registry::"
-        [switch]$KeepProvider
-    )
-
-    process {
-        if ($Path -match '(?<Prefix>^.*::)(?<Rest>.*)') {
-            if ($KeepProvider) {
-                $pathWithoutPrefix = $Matches['Rest']
-                if ($Matches['Prefix'] -match '(?<Provider>\w+::)') {
-                    "$($Matches['Provider'])$pathWithoutPrefix"
-                }
-            }
-            else {
-                $Matches['Rest']
-            }
-        }
-    }
-}
-
 function Get-OutlookOption {
     [CmdletBinding()]
     param (
@@ -4961,7 +4934,7 @@ function Get-OutlookOption {
         if ($null -ne $regValue) {
             $option = $Options | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
             $option.Value = & $Converter $regValue $Name
-            $option.Path = $Property.PSPath | ConvertFrom-PSPath
+            $option.Path = $Property | Convert-Path
 
             if (Test-PolicyPath $option.Path) {
                 $option.IsPolicy = $true
@@ -5319,7 +5292,7 @@ function Save-CachedOutlookConfig {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     # Get OutlookConfig & OPX json files and copy them to Path
     try {
@@ -5459,7 +5432,7 @@ function Start-LdapTrace {
         $null = New-Item $Path -ItemType directory -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     # Process name must contain the extension such as "Outlook.exe", instead of "Outlook"
     if ([IO.Path]::GetExtension($TargetExecutable) -ne 'exe') {
@@ -5692,7 +5665,7 @@ function Start-SavingOfficeModuleInfo_PSJob {
         $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     # If MS Office is not installed, bail.
     $officeInfo = Get-OfficeInfo -ErrorAction SilentlyContinue
@@ -5851,7 +5824,7 @@ function Start-CapiTrace {
     if (-not (Test-Path $Path)) {
         $null = New-Item $Path -ItemType directory -ErrorAction Stop
     }
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     switch ($LogFileMode) {
         'NewFile' {
@@ -5913,7 +5886,7 @@ function Start-FiddlerCap {
         $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
     $fiddlerPath = Join-Path $Path -ChildPath 'FiddlerCap'
     $fiddlerExe = Join-Path $fiddlerPath -ChildPath 'FiddlerCap.exe'
 
@@ -6035,7 +6008,7 @@ function Start-Procmon {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
     $procmonFile = $null
 
     # Search procmon.exe or procmon64.exe under $ProcmonSearchPath (including subfolders).
@@ -6263,7 +6236,7 @@ function Stop-TcoTrace {
     if (-not (Test-Path $Path)) {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     $officeInfo = Get-OfficeInfo -ErrorAction Stop
     $majorVersion = $officeInfo.Version.Split('.')[0]
@@ -6559,7 +6532,7 @@ function Download-TTD {
         $null = New-Item -Path $Path -ItemType Directory -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     if (-not $SkipCache) {
         # See if TTD.msixbundle exists locally.
@@ -6652,7 +6625,7 @@ function Expand-TTDMsixBundle {
         return
     }
 
-    $MsixBundlePath = Resolve-Path $MsixBundlePath
+    $MsixBundlePath = Convert-Path -LiteralPath $MsixBundlePath
 
     # Helper script block to rename & expand
     $expand = {
@@ -6783,7 +6756,7 @@ function Start-TTDMonitor {
         $null = New-Item -Path $Path -ItemType Directory -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     # Make sure extension is ".exe"
     if (-not ([System.IO.Path]::GetExtension($ExecutableName))) {
@@ -6963,7 +6936,7 @@ function Attach-TTD {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path | Select-Object -ExpandProperty Path
+    $Path = Convert-Path -LiteralPath $Path | Select-Object -ExpandProperty Path
 
     # If Path contains spaces, surround by double-quotes
     $outPath = $Path
@@ -7233,7 +7206,7 @@ function Add-WerDumpKey {
             $null = New-Item $Path -ItemType Directory -ErrorAction Stop
         }
 
-        $Path = (Resolve-Path $Path -ErrorAction Stop).Path
+        $Path = (Convert-Path -LiteralPath $Path -ErrorAction Stop).Path
 
         # Create a key 'LocalDumps' under HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps, if it doesn't exist
         $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
@@ -7557,7 +7530,7 @@ function Start-WfpTrace {
         $null = New-Item -ItemType directory $Path -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     if ($env:PROCESSOR_ARCHITEW6432) {
         $netshexe = Join-Path $env:SystemRoot 'SysNative\netsh.exe'
@@ -7673,7 +7646,7 @@ function Save-Dump {
     if (-not (Test-Path $Path)) {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     $wow64 = $false
     if (-not $SkipWow64Check) {
@@ -8440,7 +8413,7 @@ function ConvertTo-CLSID {
 
             if ($clsidProp) {
                 $CLSID = $clsidProp.'(default)'
-                $path = ConvertFrom-PSPath $clsidProp.PsPath
+                $path = $clsidProp | Convert-Path
                 break
             }
         }
@@ -8712,7 +8685,7 @@ function Start-PerfTrace {
     if (-not (Test-Path -LiteralPath $Path)) {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     $counters = @(
         '\LogicalDisk(*)\*'
@@ -9369,7 +9342,7 @@ function Start-Wpr {
             $null = New-Item $Path -ItemType Directory -ErrorAction Stop
         }
 
-        $Path = Resolve-Path $Path
+        $Path = Convert-Path -LiteralPath $Path
     }
 
     $wprArgs = @(
@@ -9421,7 +9394,7 @@ function Stop-Wpr {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
-    $Path = Resolve-Path $Path
+    $Path = Convert-Path -LiteralPath $Path
     $filePath = Join-Path $Path $FileName
 
     if ($filePath.IndexOf(' ') -gt 0) {
@@ -10170,7 +10143,7 @@ function Split-ItemProperty {
                 [PSCustomObject]@{
                     Name  = $memberDefinition.Name
                     Value = $Property."$($memberDefinition.Name)"
-                    Path  = $Property.PSPath | ConvertFrom-PSPath
+                    Path  = $Property | Convert-Path
                 }
             }
         }
@@ -11332,7 +11305,7 @@ function Get-FileExtEditFlags {
         $handler = Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\$handlerName" -Name 'EditFlags' -ErrorAction SilentlyContinue
 
         if ($handler) {
-            $obj.Path = ConvertFrom-PSPath $handler.PSPath
+            $obj.Path = $handler | Convert-Path
 
             # EditFlags can be DWORD or BINARY
             if ($handler.EditFlags -is [byte[]]) {
@@ -11352,7 +11325,7 @@ function Get-FileExtEditFlags {
     | Get-ItemProperty -Name 'EditFlags' -ErrorAction SilentlyContinue
 
     if ($fileExt) {
-        $obj.Path = ConvertFrom-PSPath $fileExt.PSPath
+        $obj.Path = $fileExt | Convert-Path
 
         if ($fileExt.EditFlags -is [byte[]]) {
             $obj.EditFlags = [System.BitConverter]::ToUInt32($fileExt.EditFlags, 0)
@@ -11776,7 +11749,7 @@ function Collect-OutlookInfo {
     }
 
     # Create a temporary folder to store data.
-    $Path = Resolve-Path -LiteralPath $Path
+    $Path = Convert-Path -LiteralPath $Path
     $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
     $null = New-Item $tempPath -ItemType directory -ErrorAction Stop
 
