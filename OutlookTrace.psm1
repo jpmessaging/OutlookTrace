@@ -3046,9 +3046,7 @@ function Get-UserRegistryRoot {
     [CmdletBinding()]
     param(
         # User name or SID
-        [string]$User,
-        # Skip "Registry::" prefix
-        [switch]$SkipRegistryPrefix
+        [string]$User
     )
 
     if ($User) {
@@ -3058,20 +3056,16 @@ function Get-UserRegistryRoot {
             return
         }
 
-        $userRegRoot = "HKEY_USERS\$($resolvedUser.Sid)"
+        $userRegRoot = "Registry::HKEY_USERS\$($resolvedUser.Sid)"
 
-        if (-not ($userRegRoot -and (Test-Path "Registry::$userRegRoot"))) {
+        if (-not (Test-Path $userRegRoot)) {
             Write-Error "Cannot find $userRegRoot"
             return
         }
     }
     else {
-        Write-Log "User is empty. Use HKCU"
-        $userRegRoot = 'HKCU'
-    }
-
-    if (-not $SkipRegistryPrefix) {
-        $userRegRoot = "Registry::$userRegRoot"
+        Write-Log "User is empty. Use Registry::HKCU"
+        $userRegRoot = 'Registry::HKCU'
     }
 
     $userRegRoot
@@ -3204,7 +3198,7 @@ function Save-OfficeRegistry {
         'HKLM\SOFTWARE\WOW6432Node\Policies'
     )
 
-    $userRegRoot = Get-UserRegistryRoot $User -SkipRegistryPrefix
+    $userRegRoot = Get-UserRegistryRoot $User | Convert-Path -ErrorAction SilentlyContinue
 
     if ($userRegRoot) {
         $registryKeys = $registryKeys | & { process { $_.Replace("HKCU", $userRegRoot).TrimEnd('\') } }
@@ -4934,7 +4928,7 @@ function Get-OutlookOption {
         if ($null -ne $regValue) {
             $option = $Options | Where-Object { $_.Name -eq $Name } | Select-Object -First 1
             $option.Value = & $Converter $regValue $Name
-            $option.Path = $Property | Convert-Path
+            $option.Path = $Property | Convert-Path -ErrorAction SilentlyContinue
 
             if (Test-PolicyPath $option.Path) {
                 $option.IsPolicy = $true
@@ -7206,7 +7200,7 @@ function Add-WerDumpKey {
             $null = New-Item $Path -ItemType Directory -ErrorAction Stop
         }
 
-        $Path = (Convert-Path -LiteralPath $Path -ErrorAction Stop).Path
+        $Path = Convert-Path -LiteralPath $Path -ErrorAction Stop
 
         # Create a key 'LocalDumps' under HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps, if it doesn't exist
         $werKey = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting'
@@ -7646,6 +7640,7 @@ function Save-Dump {
     if (-not (Test-Path $Path)) {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
+
     $Path = Convert-Path -LiteralPath $Path
 
     $wow64 = $false
@@ -8413,7 +8408,7 @@ function ConvertTo-CLSID {
 
             if ($clsidProp) {
                 $CLSID = $clsidProp.'(default)'
-                $path = $clsidProp | Convert-Path
+                $path = $clsidProp | Convert-Path -ErrorAction SilentlyContinue
                 break
             }
         }
@@ -10143,7 +10138,7 @@ function Split-ItemProperty {
                 [PSCustomObject]@{
                     Name  = $memberDefinition.Name
                     Value = $Property."$($memberDefinition.Name)"
-                    Path  = $Property | Convert-Path
+                    Path  = $Property | Convert-Path -ErrorAction SilentlyContinue
                 }
             }
         }
@@ -11305,7 +11300,7 @@ function Get-FileExtEditFlags {
         $handler = Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\$handlerName" -Name 'EditFlags' -ErrorAction SilentlyContinue
 
         if ($handler) {
-            $obj.Path = $handler | Convert-Path
+            $obj.Path = $handler | Convert-Path -ErrorAction SilentlyContinue
 
             # EditFlags can be DWORD or BINARY
             if ($handler.EditFlags -is [byte[]]) {
@@ -11325,7 +11320,7 @@ function Get-FileExtEditFlags {
     | Get-ItemProperty -Name 'EditFlags' -ErrorAction SilentlyContinue
 
     if ($fileExt) {
-        $obj.Path = $fileExt | Convert-Path
+        $obj.Path = $fileExt | Convert-Path -ErrorAction SilentlyContinue
 
         if ($fileExt.EditFlags -is [byte[]]) {
             $obj.EditFlags = [System.BitConverter]::ToUInt32($fileExt.EditFlags, 0)
