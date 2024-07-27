@@ -5277,7 +5277,7 @@ function Save-CachedOutlookConfig {
     )
 
     $LocalAppData = 'Local AppData'
-    $sourcePath = Get-UserShellFolder -User $User -ShellFolderName $LocalAppData | Join-Path -ChildPath 'Microsoft\Outlook\'
+    $sourcePath = Get-UserShellFolder -User $User -ShellFolderName $LocalAppData | Join-Path -ChildPath 'Microsoft\Outlook\16'
 
     if (-not $sourcePath) {
         Write-Error "Cannot find $LocalAppData for $User"
@@ -5290,16 +5290,7 @@ function Save-CachedOutlookConfig {
 
     $Path = Convert-Path -LiteralPath $Path
 
-    # Get OutlookConfig & OPX json files and copy them to Path
-    try {
-        Get-ChildItem $sourcePath -Filter '*Config*.json' -Force -Recurse -ErrorAction SilentlyContinue `
-        | Copy-Item -Destination $Path -PassThru `
-        | Remove-HiddenAttribute
-    }
-    catch {
-        # Just in case Copy-Item throws a terminating error.
-        Write-Error -ErrorRecord $_
-    }
+    Save-Item -Path $sourcePath -Filter '*Config*.json' -IncludeHidden -Destination $Path -PassThru | Remove-HiddenAttribute
 }
 
 function Remove-HiddenAttribute {
