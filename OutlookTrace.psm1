@@ -1671,6 +1671,63 @@ function Disable-DebugPrivilege {
     }
 }
 
+<#
+.SYNOPSIS
+    Save files
+.NOTES
+    When Copy-Item fails on a single file, it fails the entire operation. This function will continue to copy other files.
+#>
+function Save-Item {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        # Folder path to save files (Forwarded to Get-ChildItem)
+        [string]$Path,
+        # Destination folder path
+        [Parameter(Mandatory)]
+        [string]$Destination,
+        # Destination child path (e.g. If "FolderA\FolderB", files will be saved under "$Destination\FolderA\FolderB")
+        # [string]$ChildPath,
+        # Filter (Forwarded to Get-ChildItem)
+        [string]$Filter,
+        # Exclude (Forwarded to Get-ChildItem)
+        [string[]]$Exclude,
+        # Include hidden or system files(Add -Force to Get-ChildItem)
+        [switch]$IncludeHidden,
+        # Recurse (Forwarded to Get-ChildItem)
+        [switch]$Recurse,
+        [switch]$PassThru
+    )
+
+    # $dest = Join-Path $Destination -ChildPath $ChildPath
+    $dest = $Destination
+
+    Get-ChildItem -Path $Path -Filter $Filter -Exclude $Exclude -Force:$IncludeHidden -Recurse:$Recurse -File | & {
+        param(
+            [Parameter(ValueFromPipeline)]
+            [System.IO.FileInfo]$file
+        )
+        process {
+            $childPath = Split-Path $file.FullName.SubString($Path.Length)
+
+            if ($childPath) {
+                $dest = Join-Path $Destination -ChildPath $childPath
+            }
+
+            if (-not (Test-Path $dest)) {
+                $null = New-Item -ItemType Directory -Path $dest -ErrorAction Stop
+            }
+
+            try {
+                Copy-Item -LiteralPath $file.FullName -Destination $dest -PassThru:$PassThru
+            }
+            catch {
+                Write-Error -Message "Failed to copy '$($file.FullName)'. $_" -Exception $_.Exception
+            }
+        }
+    }
+}
+
 function Compress-Folder {
     [CmdletBinding()]
     param(
@@ -5223,16 +5280,15 @@ function Save-CachedAutodiscover {
 
         $saveArgs = @{
             Filter        = '*Autod*.xml'
-            Destination   = $Path
             IncludeHidden = $true
             PassThru      = $true
         }
 
         & {
-            Save-Item -Path $cachePath.Path @saveArgs
+            Save-Item -Path $cachePath.Path -Destination $Path @saveArgs
 
             if ($cachePath.Name -eq 'UnderLocalAppData') {
-                Save-Item -Path (Join-Path $cachePath.Path '16') -ChildPath '16' @saveArgs
+                Save-Item -Path "$($cachePath.Path)\16" -Destination "$Path\16" @saveArgs
             }
         } | Remove-HiddenAttribute
     }
@@ -7829,28 +7885,21 @@ function Save-MSIPC {
         return
     }
 
-    $copyArgs = @{
-        LiteralPath = "\\?\$msipcPath" # Need to use LiteralPath param for long path
-        Destination = "\\.\$Path"
-        Recurse     = $true
-        Force       = $true
+    $saveArgs = @{
+        Path          = $msipcPath
+        IncludeHidden = $true
+        Destination   = $Path
+        Recurse       = $true
     }
 
     if ($All) {
-        # Copy "MSIPC" folder and its subfolders, except ".lock" & "*.drm" files
-        $copyArgs.Exclude = '*.lock', '*.drm'
+        $saveArgs.Exclude = '*.lock', '*.drm'
     }
     else {
-        # Copy only *.ipclog files under Logs folder
-        $copyArgs.Filter = '*.ipclog'
+        $saveArgs.Filter = '*.ipclog'
     }
 
-    try {
-        Copy-Item @copyArgs
-    }
-    catch {
-        Write-Error -ErrorRecord $_
-    }
+    Save-Item @saveArgs
 }
 
 <#
@@ -11035,58 +11084,6 @@ function Get-Net45Version {
 
 <#
 .SYNOPSIS
-    Save files
-.NOTES
-    When Copy-Item fails on a single file, it fails the entire operation. This function will continue to copy other files.
-#>
-function Save-Item {
-    [CmdletBinding(PositionalBinding = $false)]
-    param(
-        [Parameter(Mandatory, Position = 0)]
-        # Folder path to save files (Forwarded to Get-ChildItem)
-        [string]$Path,
-        # Destination folder path
-        [Parameter(Mandatory)]
-        [string]$Destination,
-        # Destination child path (e.g. If "FolderA\FolderB", files will be saved under "$Destination\FolderA\FolderB")
-        [string]$ChildPath,
-        # Filter (Forwarded to Get-ChildItem)
-        [string]$Filter,
-        # Include hidden or system files(Add -Force to Get-ChildItem)
-        [switch]$IncludeHidden,
-        # Recurse (Forwarded to Get-ChildItem)
-        [switch]$Recurse,
-        [switch]$PassThru
-    )
-
-    Get-ChildItem -Path $Path -Filter $Filter -Recurse:$Recurse -Force:$IncludeHidden -File | & {
-        param(
-            [Parameter(ValueFromPipeline)]
-            [System.IO.FileInfo]$file
-        )
-        process {
-            $dest = $Destination
-
-            if ($ChildPath) {
-                $dest = Join-Path $Destination -ChildPath $ChildPath
-            }
-
-            if (-not (Test-Path $dest)) {
-                $null = New-Item -ItemType Directory -Path $dest -ErrorAction Stop
-            }
-
-            try {
-                Copy-Item -LiteralPath $file.FullName -Destination $dest -PassThru:$PassThru
-            }
-            catch {
-                Write-Error -Message "Failed to copy $($file.FullName). $_" -Exception $_.Exception
-            }
-        }
-    }
-}
-
-<#
-.SYNOPSIS
     Save Monarch related logs
 #>
 function Save-MonarchLog {
@@ -11109,14 +11106,14 @@ function Save-MonarchLog {
 
     # For now, explicitly select the items to be copied.
     & {
-        @{ Path = $olk; Filter = '*.log' }
-        @{ Path = $olk; Filter = '*.json' }
-        @{ Path = $olk; Filter = '*.txt' }
-        @{ Path = "$olk\logs"; ChildPath = 'logs'; Recurse = $true }
-        @{ Path = "$olk\EBWebView\Crashpad"; ChildPath = 'EBWebView\Crashpad'; Recurse = $true }
+        @{ Path = $olk; Destination = $Path; Filter = '*.log' }
+        @{ Path = $olk; Destination = $Path; Filter = '*.json' }
+        @{ Path = $olk; Destination = $Path; Filter = '*.txt' }
+        @{ Path = "$olk\logs"; Destination = "$Path\logs"; Recurse = $true }
+        @{ Path = "$olk\EBWebView\Crashpad"; Destination = "$Path\EBWebView\Crashpad"; Recurse = $true }
     } | & {
         process {
-            Save-Item @_ -Destination $Path
+            Save-Item @_
         }
     }
 }
