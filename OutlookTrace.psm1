@@ -5216,23 +5216,25 @@ function Save-CachedAutodiscover {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
-    Get-CachedAutodiscoverLocation -User $User | & {
-        # Copy Autodiscover XML files to Path
-        param ([Parameter(ValueFromPipeline)]$cachePath)
-        process {
-            Write-Log "Searching $($cachePath.Name) $($cachePath.Path)"
+    $cachePaths = Get-CachedAutodiscoverLocation -User $User
 
-            # Use recurse only for the path under LOCALAPPDATA.
-            try {
-                Get-ChildItem $cachePath.Path -Filter '*Autod*.xml' -Force -Recurse:$($cachePath.Name -eq 'UnderLocalAppData') -ErrorAction SilentlyContinue `
-                | Copy-Item -Destination $Path -PassThru `
-                | Remove-HiddenAttribute
-            }
-            catch {
-                # Just in case Copy-Item throws a terminating error.
-                Write-Error -ErrorRecord $_
-            }
+    foreach ($cachePath in $cachePaths) {
+        Write-Log "Searching $($cachePath.Name) $($cachePath.Path)"
+
+        $saveArgs = @{
+            Filter        = '*Autod*.xml'
+            Destination   = $Path
+            IncludeHidden = $true
+            PassThru      = $true
         }
+
+        & {
+            Save-Item -Path $cachePath.Path @saveArgs
+
+            if ($cachePath.Name -eq 'UnderLocalAppData') {
+                Save-Item -Path (Join-Path $cachePath.Path '16') -ChildPath '16' @saveArgs
+            }
+        } | Remove-HiddenAttribute
     }
 }
 
@@ -11047,9 +11049,9 @@ function Get-Net45Version {
     When Copy-Item fails on a single file, it fails the entire operation. This function will continue to copy other files.
 #>
 function Save-Item {
-    [CmdletBinding()]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
-        [Parameter(Mandatory)]
+        [Parameter(Mandatory, Position = 0)]
         # Folder path to save files (Forwarded to Get-ChildItem)
         [string]$Path,
         # Destination folder path
@@ -11059,11 +11061,14 @@ function Save-Item {
         [string]$ChildPath,
         # Filter (Forwarded to Get-ChildItem)
         [string]$Filter,
+        # Include hidden or system files(Add -Force to Get-ChildItem)
+        [switch]$IncludeHidden,
         # Recurse (Forwarded to Get-ChildItem)
-        [switch]$Recurse
+        [switch]$Recurse,
+        [switch]$PassThru
     )
 
-    Get-ChildItem -Path $Path -Filter $Filter -Recurse:$Recurse -File | & {
+    Get-ChildItem -Path $Path -Filter $Filter -Recurse:$Recurse -Force:$IncludeHidden -File | & {
         param(
             [Parameter(ValueFromPipeline)]
             [System.IO.FileInfo]$file
@@ -11080,7 +11085,7 @@ function Save-Item {
             }
 
             try {
-                Copy-Item -LiteralPath $file.FullName -Destination $dest
+                Copy-Item -LiteralPath $file.FullName -Destination $dest -PassThru:$PassThru
             }
             catch {
                 Write-Error -Message "Failed to copy $($file.FullName). $_" -Exception $_.Exception
