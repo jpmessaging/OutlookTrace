@@ -1686,10 +1686,10 @@ function Save-Item {
         # Destination folder path
         [Parameter(Mandatory)]
         [string]$Destination,
-        # Destination child path (e.g. If "FolderA\FolderB", files will be saved under "$Destination\FolderA\FolderB")
-        # [string]$ChildPath,
         # Filter (Forwarded to Get-ChildItem)
         [string]$Filter,
+        # Include (Forwarded to Get-ChildItem)
+        [string[]]$Include,
         # Exclude (Forwarded to Get-ChildItem)
         [string[]]$Exclude,
         # Include hidden or system files(Add -Force to Get-ChildItem)
@@ -1699,16 +1699,31 @@ function Save-Item {
         [switch]$PassThru
     )
 
-    # $dest = Join-Path $Destination -ChildPath $ChildPath
+    if (-not (Test-Path $Path)) {
+        Write-Error "$Path is not found"
+        return
+    }
+
+    $Path = Convert-Path $Path
+
+    # Without Recurse, Path needs a trailing * in order to use Include or Exclude
+    if (-not $Recurse -and ($Include -or $Exclude)) {
+        $leaf = Split-Path $Path -Leaf
+
+        if ($leaf.IndexOf('*') -eq -1) {
+            $Path = Join-Path $Path -ChildPath '*'
+        }
+    }
+
     $dest = $Destination
 
-    Get-ChildItem -Path $Path -Filter $Filter -Exclude $Exclude -Force:$IncludeHidden -Recurse:$Recurse -File | & {
+    Get-ChildItem -Path $Path -Filter $Filter -Include $Include -Exclude $Exclude -Force:$IncludeHidden -Recurse:$Recurse -File | & {
         param(
             [Parameter(ValueFromPipeline)]
             [System.IO.FileInfo]$file
         )
         process {
-            $childPath = Split-Path $file.FullName.SubString($Path.Length)
+            $childPath = $file.DirectoryName.SubString($Path.Length)
 
             if ($childPath) {
                 $dest = Join-Path $Destination -ChildPath $childPath
@@ -6276,11 +6291,6 @@ function Stop-TcoTrace {
         [string]$User
     )
 
-    if (-not (Test-Path $Path)) {
-        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
-    }
-    $Path = Convert-Path -LiteralPath $Path
-
     $officeInfo = Get-OfficeInfo -ErrorAction Stop
     $majorVersion = $officeInfo.Version.Split('.')[0]
 
@@ -6298,14 +6308,7 @@ function Stop-TcoTrace {
     $null = Remove-ItemProperty $keypath -Name 'MsoHttpVerbose' -ErrorAction SilentlyContinue
 
     # TCO Trace logs are in %TEMP%
-    foreach ($item in @(Get-ChildItem -Path "$env:TEMP\*" -Include "office.log", "*.exe.log")) {
-        try {
-            Copy-Item $item -Destination $Path
-        }
-        catch {
-            Write-Error -ErrorRecord $_
-        }
-    }
+    Save-Item -Path $env:TEMP -Include "office.log", "*.exe.log" -Destination $Path
 }
 
 <#
@@ -7923,24 +7926,10 @@ function Save-PolicyNudge {
         return
     }
 
-    $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook\*'
+    $sourcePath = Join-Path $localAppdata -ChildPath 'Microsoft\Outlook\'
     $fileNameFilter = 'PolicyNudge*'
 
-    if (-not (Test-Path $sourcePath -Filter $fileNameFilter)) {
-        Write-Log "There are no files matching '$fileNameFilter' in $(Split-Path $sourcePath)"
-        return
-    }
-
-    if (-not (Test-Path $Path)) {
-        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
-    }
-
-    try {
-        Copy-Item -Path $sourcePath -Filter $fileNameFilter -Destination $Path
-    }
-    catch {
-        Write-Error -ErrorRecord $_
-    }
+    Save-Item -Path $sourcePath -Destination $Path -Filter $fileNameFilter
 }
 
 
@@ -7971,12 +7960,7 @@ function Save-CLP {
         return
     }
 
-    try {
-        Copy-Item $sourcePath -Destination $Path -Recurse
-    }
-    catch {
-        Write-Error -ErrorRecord $_
-    }
+    Save-Item -Path $sourcePath -Destination $Path -Recurse
 }
 
 function Save-DLP {
@@ -8002,12 +7986,7 @@ function Save-DLP {
         return
     }
 
-    try {
-        Copy-Item $sourcePath -Destination $Path -Recurse
-    }
-    catch {
-        Write-Error -ErrorRecord $_
-    }
+    Save-Item -Path $sourcePath -Destination $Path -Recurse
 }
 
 <#
@@ -9947,21 +9926,8 @@ function Save-OneAuthAccount {
         return
     }
 
-    if (-not (Test-Path $Path)) {
-        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
-    }
-
-    Join-Path $localAppdata 'Microsoft\OneAuth\accounts' `
-    | Get-ChildItem -ErrorAction SilentlyContinue | & {
-        process {
-            try {
-                Copy-Item -LiteralPath $_.FullName -Destination $Path
-            }
-            catch {
-                Write-Error -Message "Failed to copy $($_.FullName)" -Exception $_.Exception
-            }
-        }
-    }
+    $src = Join-Path $localAppdata 'Microsoft\OneAuth\accounts'
+    Save-Item -Path $src -Destination $Path
 }
 
 function Remove-OneAuthAccount {
