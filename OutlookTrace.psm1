@@ -5035,6 +5035,7 @@ function Get-OutlookOption {
         New-Option -Name 'HideNewOutlookToggle' -Description 'Hide the "Try the new Outlook" toggle in Outlook Desktop' -Category General -Value $false
         New-Option -Name 'ShowLegacySharingUX' -Description 'Turn off Calendar Sharing REST API and use Legacy UI' -Category Calendar -Value $false
         New-Option -Name 'EnableMeetingCopy' -Description 'Re-enable copying meetings:' -Category Calendar -Value $false
+        New-Option -Name 'ShowLegacyRoomFinder' -Description 'Show legacy room finder' -Category Calendar -Value $false
         New-Option -Name 'CalendarEditorPreference' -Description "Specifies editor to use for calendar items" -Category Calendar -Value $null
         New-Option -Name 'OpenTasksWithToDoApp' -Description 'When opening from a reminder, open tasks with ToDo App' -Category Tasks -Value $false
         New-Option -Name 'Autodetect_CodePageOut' -Description 'Automatically select encoding for outgoing messages' -Category Advanced -Value $true
@@ -5070,6 +5071,7 @@ function Get-OutlookOption {
             $PSDefaultParameterValues['Set-Option:Property'] = $_
             Set-Option -Name 'ShowLegacySharingUX'
             Set-Option -Name 'EnableMeetingCopy'
+            Set-Option -Name 'ShowLegacyRoomFinder'
 
             Set-Option -Name 'CalendarEditorPreference' -Converter {
                 param ($regValue)
