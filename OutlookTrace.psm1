@@ -1681,9 +1681,9 @@ function Save-Item {
     [CmdletBinding(PositionalBinding = $false)]
     param(
         [Parameter(Mandatory, Position = 0)]
-        # Folder path to save files (Forwarded to Get-ChildItem)
+        # Path to the items to copy
         [string]$Path,
-        # Destination folder path
+        # Destination folder path (Renaming by a file path is not supported)
         [Parameter(Mandatory)]
         [string]$Destination,
         # Filter (Forwarded to Get-ChildItem)
@@ -1699,12 +1699,29 @@ function Save-Item {
         [switch]$PassThru
     )
 
-    if (-not (Test-Path $Path)) {
-        Write-Error "$Path is not found"
-        return
+    # Get source directory when recursing so that I know when to create a subdirectory in the destination
+    if ($Recurse) {
+        $srcItem = Get-Item -Path $Path -ErrorAction SilentlyContinue | Select-Object -First 1
+
+        if (-not $srcItem) {
+            Write-Error "$Path is not found"
+            return
+        }
+
+        if ($srcItem.PSIsContainer) {
+            $src = $srcItem.FullName
+        }
+        else {
+            $src = $srcItem.DirectoryName
+        }
+
+        $src = $src.TrimEnd('\')
     }
 
-    $Path = Convert-Path $Path
+    # Get destination full path.
+    # Do not use Covert-Path because it fails when the path does not exist.
+    # Do not just use [IO.Path]::GetFullPath() only because it resolves to .NET's current directory, not PowerShell's.
+    $Destination = [IO.Path]::GetFullPath([IO.Path]::Combine($PWD.ProviderPath, $Destination)).TrimEnd('\')
 
     # Without Recurse, Path needs a trailing * in order to use Include or Exclude
     if (-not $Recurse -and ($Include -or $Exclude)) {
@@ -1715,18 +1732,26 @@ function Save-Item {
         }
     }
 
-    $dest = $Destination
-
     Get-ChildItem -Path $Path -Filter $Filter -Include $Include -Exclude $Exclude -Force:$IncludeHidden -Recurse:$Recurse -File | & {
         param(
             [Parameter(ValueFromPipeline)]
             [System.IO.FileInfo]$file
         )
         process {
-            $childPath = $file.DirectoryName.SubString($Path.Length)
+            # If this file is from the destination directory, skip it.
+            if ($file.DirectoryName.StartsWith($Destination)) {
+                Write-Verbose "Skipping $($file.FullName)"
+                return
+            }
 
-            if ($childPath) {
-                $dest = Join-Path $Destination -ChildPath $childPath
+            $dest = $Destination
+
+            if ($Recurse) {
+                $childPath = $file.DirectoryName.SubString($src.Length)
+
+                if ($childPath) {
+                    $dest = Join-Path $Destination -ChildPath $childPath
+                }
             }
 
             if (-not (Test-Path $dest)) {
@@ -5128,11 +5153,7 @@ function Get-OutlookOption {
             $PSDefaultParameterValues['Set-Option:Property'] = $_
 
             $meteredNetworkBehaviorConverter = {
-                param (
-                    $regValue,
-                    $regName
-                )
-
+                param ($regValue, $regName)
                 switch ($regValue) {
                     0 { 'Default'; break }
                     1 { 'Ignore'; break }
@@ -5145,10 +5166,7 @@ function Get-OutlookOption {
             Set-Option -Name 'ConservativeMeteredNetworkBehavior' -Converter $meteredNetworkBehaviorConverter
 
             $batteryModeConverter = {
-                param (
-                    $regValue
-                )
-
+                param ($regValue)
                 switch ($regValue) {
                     0 { 'Default'; break }
                     1 { 'Always'; break }
