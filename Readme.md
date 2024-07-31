@@ -148,6 +148,7 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 | Performance   | Performance counter log (Process, Memory, LogicalDisk etc.)                                                    |
 | TTD           | Time Travel Debugging trace (OS must be Windows 10 or above)                                                   |
 | Recording     | Screen recording by [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)                               |
+| NewOutlook    | New Outlook for Windows logs                                                                                   |
 
 >[!IMPORTANT]
 >`Collect-OutlookInfo` tries to download FiddlerCap, Procmon, TTD, and ZoomIt when `Component` parameter includes `Fiddler`, `Procmon`, `TTD` and `Recording` respectively.  
