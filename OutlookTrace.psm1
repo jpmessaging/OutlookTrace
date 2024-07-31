@@ -11632,13 +11632,13 @@ function Collect-OutlookInfo {
         return
     }
 
-    # MS Office must be installed to collect Outlook, TCO, or TTD.
+    # MS Office must be installed to collect Outlook and TCO.
     # This is just a fail fast. Start-OutlookTrace/TCOTrace fail anyway.
-    if ($Component -contains 'Outlook' -or $Component -contains 'TCO' -or $Component -contains 'TTD') {
+    if ($Component -contains 'Outlook' -or $Component -contains 'TCO') {
         $err = $($null = Get-OfficeInfo -ErrorAction Continue) 2>&1
 
         if ($err) {
-            Write-Error "Component `"Outlook`", `"TCO`", or `"TTD`" is specified, but Microsoft Office is not installed"
+            Write-Error "Component `"Outlook`" or `"TCO`" is specified, but Microsoft Office is not installed"
             return
         }
     }
@@ -12092,6 +12092,11 @@ function Collect-OutlookInfo {
             $hungDumpCts = New-Object System.Threading.CancellationTokenSource
             $monitorStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
             $startedEventList.Add($monitorStartedEvent)
+
+            if (-not $PSBoundParameters.ContainsKey('HungMonitorTarget') -and $Component -contains 'NewOutlook') {
+                $HungMonitorTarget = 'olk'
+            }
+
             Write-Log "Starting HungMonitorTask. HungMonitorTarget:$HungMonitorTarget, HungTimeout:$HungTimeout, User:$targetUser"
 
             $hungMonitorTask = Start-Task -Name 'HungMonitorTask' -ScriptBlock { param($Path, $Name, $User, $Timeout, $DumpCount, $CancellationToken, $StartedEvent) Start-HungMonitor @PSBoundParameters } `
@@ -12124,16 +12129,22 @@ function Collect-OutlookInfo {
                 ShowUI  = $TTDShowUI
             }
 
+            $ttdTarget = 'outlook'
+
+            if ($Component -contains 'NewOutlook') {
+                $ttdTarget = 'olk'
+            }
+
             # If Outlook is already running, attach to it. Otherwise, start monitoring for outlook.exe.
-            if ($outlookProcess = Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue) {
-                Write-Log "Attaching TTD to Outlook (PID:$($outlookProcess.Id))"
-                Write-Progress -Status "Attaching TTD to Outlook (PID:$($outlookProcess.Id)). This might take a while. Please wait"
+            if ($outlookProcess = Get-Process -Name $ttdTarget -ErrorAction SilentlyContinue) {
+                Write-Log "Attaching TTD to $($outlookProcess.Name) (PID:$($outlookProcess.Id))"
+                Write-Progress -Status "Attaching TTD to $($outlookProcess.Name) (PID:$($outlookProcess.Id)). This might take a while. Please wait"
 
                 $ttdArgs.ProcessId = $outlookProcess.Id
                 $ttdProcess = Attach-TTD @ttdArgs -ErrorAction Stop
             }
             else {
-                $ttdArgs.ExecutableName = 'outlook.exe'
+                $ttdArgs.ExecutableName = "$ttdTarget.exe"
                 $ttdArgs.CommandlineFilter = $TTDCommandlineFilter
 
                 # If, for some reason, lingering "TTD.exe -monitor" is running, stop it first
