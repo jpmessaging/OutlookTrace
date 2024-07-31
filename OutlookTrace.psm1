@@ -3286,6 +3286,7 @@ function Save-OfficeRegistry {
         'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies'
         'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug'
         'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug'
+        'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
         'HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols'
 
         # Policies
