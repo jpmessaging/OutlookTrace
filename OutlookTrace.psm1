@@ -7003,7 +7003,7 @@ function Attach-TTD {
         $null = New-Item $Path -ItemType Directory -ErrorAction Stop
     }
 
-    $Path = Convert-Path -LiteralPath $Path | Select-Object -ExpandProperty Path
+    $Path = Convert-Path -LiteralPath $Path
 
     # If Path contains spaces, surround by double-quotes
     $outPath = $Path
@@ -11256,6 +11256,91 @@ function Disable-MonarchDevTools {
     }
 }
 
+<#
+.SYNOPSIS
+    Enable Edge DevTools. This takes effect for subsequent launches of Monarch.
+
+.NOTES
+    There are several ways to enable DevTools for Monarch:
+
+    1. Environment Variable, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS with "--auto-open-devtools-for-tabs"
+
+    2. Registry Key, HKLM|HKCU\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments with name "olk.exe" with "--auto-open-devtools-for-tabs"
+
+    Both options apply to any WebView2 apps as explained below:
+
+    Globals
+    https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/webview2-idl?view=webview2-1.0.2535.41#createcorewebview2environmentwithoptions
+
+    WebView2 browser flags
+    https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/webview-features-flags?tabs=dotnetcsharp
+
+    3. config.json in %LOCALAPPDATA%\Microsoft\Olk
+       This is Monarch only.
+
+    This command uses the 2nd method.
+#>
+function Enable-EdgeDevTools {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        # Target executable name, such as "olk.exe"
+        [string]$ExecutableName,
+        $User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    $keyPath = Join-Path $userRegRoot 'SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+
+    # Don't use New-Item -Force when the key already exists because it removes existing values.
+    if (-not (Test-Path $keyPath)) {
+        $err = $($key = New-Item $keyPath -Force) 2>&1
+
+        if ($key) {
+            $key.Dispose()
+        }
+        else {
+            Write-Error -Message "Failed to create $keyPath. $err" -Exception $err.Exception
+            return
+        }
+    }
+
+    # Set-ItemProperty either creates a new value or overwrites the existing value.
+    $err = Set-ItemProperty $keyPath -Name $ExecutableName -Value '--auto-open-devtools-for-tabs' 2>&1
+
+    if ($err) {
+        Write-Error -Message "Failed to set '$ExecutableName' in $keyPath. $err" -Exception $err.Exception
+    }
+}
+
+function Disable-EdgeDevTools {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        # Target executable name, such as "olk.exe"
+        [string]$ExecutableName,
+        $User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    $keyPath = Join-Path $userRegRoot 'SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+    $err = Remove-ItemProperty $keyPath -Name $ExecutableName
+
+    if ($err) {
+        Write-Error -Message "Failed to remove '$ExecutableName' from $keyPath. $err" -Exception $err.Exception
+    }
+}
+
 function Get-FileExtEditFlags {
     param(
         [Parameter(Mandatory)]
@@ -11961,7 +12046,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'NewOutlook') {
-            Enable-MonarchDevTools -User $targetUser
+            Enable-EdgeDevTools -ExecutableName 'olk.exe' -User $targetUser -ErrorAction Stop
             $newOutlookTraceStarted = $true
         }
 
@@ -12259,7 +12344,7 @@ function Collect-OutlookInfo {
         }
 
         if ($newOutlookTraceStarted) {
-            Disable-MonarchDevTools -User $targetUser 2>&1 | Write-Log -Category Error -PassThru
+            Disable-EdgeDevTools -ExecutableName 'olk.exe' -User $targetUser 2>&1 | Write-Log -Category Error -PassThru
             Save-MonarchLog -User $targetUser -Path (Join-Path $tempPath 'Monarch')  2>&1 | Write-Log -Category Error -PassThru
             Save-MonarchSetupLog -User $targetUser -Path (Join-Path $tempPath 'MonarchSetup')  2>&1 | Write-Log -Category Error -PassThru
         }
@@ -12516,4 +12601,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-MonarchDevTools, Disable-MonarchDevTools, Get-FileExtEditFlags, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-FileExtEditFlags, Collect-OutlookInfo
