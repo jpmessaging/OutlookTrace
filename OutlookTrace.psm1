@@ -8161,7 +8161,7 @@ function Get-Token {
     if ($EnableLogging) {
         $logFile = Join-Path (Split-Path $PSCommandPath) 'msal.log'
         [IO.StreamWriter]$writer = [IO.File]::AppendText($logFile)
-        Write-Verbose "MSAL Loggin is enabled. Log file:$logFile"
+        Write-Verbose "MSAL Logging is enabled. Log file:$logFile"
 
         # Add a CSV header line
         $writer.WriteLine("datetime,level,containsPii,message");
