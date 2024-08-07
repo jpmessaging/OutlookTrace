@@ -5453,7 +5453,7 @@ function Remove-IdentityCache {
     }
 
     Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Identity' `
-    | Get-ChildItem `
+    | Get-ChildItem -ErrorAction SilentlyContinue `
     | Remove-Item -Recurse -Force
 
     $localAppData = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
@@ -5479,7 +5479,6 @@ function Remove-IdentityCache {
         # Accounts
         'Packages\Microsoft.AAD.BrokerPlugin_cw5n1h2txyewy\ac\TokenBroker\Accounts'
         'Packages\Microsoft.Windows.CloudExperienceHost_cw5n1h2txyewy\AC\TokenBroker\Accounts'
-
     } `
     | Join-Path $localAppData -ChildPath { $_ } `
     | Where-Object { Test-Path $_ } `
