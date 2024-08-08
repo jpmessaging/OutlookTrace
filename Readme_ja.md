@@ -29,7 +29,15 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
     Unblock-File C:\temp\OutlookTrace.psm1
     ```
 
-5. OutlookTrace.psm1 をインポートします。
+5. 一時的に ExecutionPolicy を `RemoteSigned` へ変更します
+
+   ```PowerShell
+   Set-ExecutionPolicy RemoteSigned -Scope Process
+   ```
+
+   確認を求められるので、`Y` を入力します。
+
+6. OutlookTrace.psm1 をインポートします。
 
     ```PowerShell
     Import-Module <OutlookTrace.psm1 へのパス> -DisableNameChecking
@@ -43,7 +51,7 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 
     💡 もし上記が失敗する場合には、`Get-ExecutionPolicy -List` を実行して、その結果をお寄せください。
 
-6. `Collect-OutlookInfo` を実行します
+7. `Collect-OutlookInfo` を実行します。
 
     ※ 採取するコンポーネントについてはエンジニアからの案内をご確認ください。
 
@@ -59,7 +67,7 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
     Collect-OutlookInfo -Path C:\temp -Component Configuration, Outlook, Netsh, PSR, WAM
     ```
 
-7. 正常にトレースが開始されると、`Hit enter to stop` と表示されます。
+8. 正常にトレースが開始されると、`Hit enter to stop` と表示されます。
 
     ※ 採取するコンポーネントに `Dump` を含めた場合、`Hit enter to save a process dump of Outlook. To quit, enter q:` とプロンプトされます。ダンプ ファイルを取得したいタイミングで Enter を入力してください。ハング事象の場合、およそ 30 秒間隔で 3 回程度採取ください。ダンプ ファイルの採取が終了したら `q` を入力します。
 
@@ -101,8 +109,8 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
         自動的にブラウザが起動されたら、そのブラウザはクローズいただいて結構です。
     </details>
 
-8. Outlook を起動して、現象を再現させます。
-9. 採取するコンポーネントに Fiddler を含めた場合、以下の手順で停止して保存します。
+9.  Outlook を起動して、現象を再現させます。
+10. 採取するコンポーネントに Fiddler を含めた場合、以下の手順で停止して保存します。
 
     <details>
         <summary>Fiddler 停止方法</summary>
@@ -127,7 +135,7 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 
     </details>
 
-10. コンソールに Enter キーを入力しトレースを停止します。
+11. コンソールに Enter キーを入力しトレースを停止します。
 
 手順 6 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。  
 Fiddler トレースを採取した場合には、手順 9 で指定したパスワードも併せてお寄せください。
