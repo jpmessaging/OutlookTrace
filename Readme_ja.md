@@ -17,26 +17,31 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 
 1. Outlook を実行している場合には終了します。
 2. OutlookTrace.psm1 をダウンロードして対象のマシン上にコピーします。
-3. 管理者権限でコマンド プロンプト (cmd) を起動します。
-4. PowerShell を以下のように起動します。
+3. 管理者権限で Windows PowerShell を起動します。
+4. PowerShell で以下を実行して OutlookTrace.psm1 のブロックを解除します
 
-    ```
-    powershell -ExecutionPolicy Bypass
+    ```PowerShell
+    Unblock-File <OutlookTrace.psm1 のパス>
     ```
 
-    💡 上記の手順を実行した際に「新しいクロスプラットフォームの PowerShell をお試しください」と表示される場合がありますが、そのまま手順を続けてください。
+    例:  
+    ```PowerShell
+    Unblock-File C:\temp\OutlookTrace.psm1
+    ```
 
 5. OutlookTrace.psm1 をインポートします。
 
-    ```
+    ```PowerShell
     Import-Module <OutlookTrace.psm1 へのパス> -DisableNameChecking
     ```
 
     例:
 
-    ```
+    ```PowerShell
     Import-Module C:\temp\OutlookTrace.psm1 -DisableNameChecking
     ```
+
+    💡 もし上記が失敗する場合には、`Get-ExecutionPolicy -List` を実行して、その結果をお寄せください。
 
 6. `Collect-OutlookInfo` を実行します
 
