@@ -710,6 +710,9 @@ namespace Win32
 
     public static class User32
     {
+        [DllImport("user32.dll")]
+        public static extern bool IsHungAppWindow(IntPtr hWnd);
+
         [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
         public static extern uint SendMessageTimeoutW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
 
@@ -7799,9 +7802,10 @@ function Save-HungDump {
         [Parameter(Mandatory = $true, Position = 1)]
         [ValidateRange(1, [int]::MaxValue)]
         [int]$ProcessId,
-        [TimeSpan]$Timeout = [TimeSpan]::FromSeconds(5),
+        [TimeSpan]$Timeout,
         [int]$DumpCount = 1,
-        [Threading.CancellationToken]$CancellationToken
+        [Threading.CancellationToken]$CancellationToken,
+        [TimeSpan]$DumpInterval = [TimeSpan]::FromSeconds(10)
     )
 
     if (-not ($process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
@@ -7809,7 +7813,6 @@ function Save-HungDump {
         return
     }
 
-    $ERROR_TIMEOUT = 1460
     $savedDumpCount = 0
     $interval = [TimeSpan]::FromSeconds(1)
 
@@ -7850,32 +7853,49 @@ function Save-HungDump {
                 return
             }
 
-            $result = [IntPtr]::Zero
+            $isHung = $false
+            $detector = 'SendMessageTimeoutW()'
 
-            if (-not ([Win32.User32]::SendMessageTimeoutW($hWnd, 0, [IntPtr]::Zero, [IntPtr]::Zero, 0, $Timeout.TotalMilliseconds, [ref]$result))) {
-                $ec = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-
-                # if error code is 0 or ERROR_TIMEOUT, timeout occurred.
-                if ($ec -eq 0 -or $ec -eq $ERROR_TIMEOUT) {
-                    Write-Log "Hung window is detected for $name (PID:$ProcessId, hWnd:$hWnd). $($savedDumpCount+1)/$DumpCount" -Category Warning
-                    $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId
-
-                    if ($dumpResult) {
-                        $savedDumpCount++
-                        Write-Log "Dump file is saved as '$($dumpResult.DumpFile)'"
-                    }
-
-                    if ($savedDumpCount -ge $DumpCount) {
-                        Write-Log "Dump count reached $DumpCount. Exiting"
-                        return
-                    }
-                }
-                else {
-                    Write-Error ("SendMessageTimeoutW failed with 0x{0:x8}" -f $ec)
-                }
+            # If Timeout paramter is specified, use SendMessageTimeoutW(); otherwise use IsHungAppWindow().
+            if ($PSBoundParameters.ContainsKey('Timeout')) {
+                $result = [IntPtr]::Zero
+                $ret = [Win32.User32]::SendMessageTimeoutW($hWnd, 0, [IntPtr]::Zero, [IntPtr]::Zero, 0, $Timeout.TotalMilliseconds, [ref]$result)
+                $isHung = $ret -eq 0
+            }
+            else {
+                $detector = 'IsHungAppWindow()'
+                $isHung = [Win32.User32]::IsHungAppWindow($hWnd)
             }
 
-            Start-Sleep -Seconds $interval.TotalSeconds
+            if (-not $isHung) {
+                Start-Sleep -Seconds $interval.TotalSeconds
+                continue
+            }
+
+            # Hung detected. Save a dump file.
+            Write-Log "$detector detected a hung window for $($process.Name) (PID:$ProcessId, hWnd:$hWnd). $($savedDumpCount+1)/$DumpCount" -Category Warning
+            $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId
+
+            if ($dumpResult) {
+                $savedDumpCount++
+                Write-Log "Dump file is saved as '$($dumpResult.DumpFile)'"
+            }
+
+            if ($savedDumpCount -ge $DumpCount) {
+                Write-Log "Dump count reached $DumpCount. Exiting"
+                return
+            }
+
+            Write-Log "Pausing $($DumpInterval.TotalSeconds) seconds (or until canceled via CancellationToken) before next hung check"
+
+            if ($CancellationToken) {
+                $null = $CancellationToken.WaitHandle.WaitOne($DumpInterval)
+            }
+            else {
+                Start-Sleep -Seconds $DumpInterval.TotalSeconds
+            }
+
+            Write-Log "Resuming hung check"
         }
     }
     finally {
@@ -9202,8 +9222,7 @@ function Start-HungMonitor {
 
     # Key:Process Hash, Value:true/false for "need to log".
     $procCache = @{}
-
-    $internal = [TimeSpan]::FromSeconds(1)
+    $interval = [TimeSpan]::FromSeconds(1)
 
     # The target process may restart while being monitored. Keep monitoring until canceled (via CancellationToken).
     while ($true) {
@@ -9266,7 +9285,7 @@ function Start-HungMonitor {
                 break
             }
 
-            Start-Sleep -Seconds $internal.TotalSeconds
+            Start-Sleep -Seconds $interval.TotalSeconds
         }
 
         Write-Log "Found $Name (PID:$($target.Id), CreationDate:$($target.CreationDate)). Starting hung window monitoring"
@@ -9286,8 +9305,8 @@ function Start-HungMonitor {
 
         if ($CancellationToken) {
             $hungDumpArgs.CancellationToken = $CancellationToken
-
         }
+
         Save-HungDump @hungDumpArgs 2>&1 | Write-Log -Category Error -PassThru
     }
 }
@@ -11662,9 +11681,9 @@ function Collect-OutlookInfo {
         # Target user whose configuration is collected. By default, it's the logon user (Note:Not necessarily the current user running the script).
         # [ArgumentCompleter({ Get-LogonUser })]
         [string]$User,
-        # Timespan used to detect a hung window when "HungDump" is requested in Component.
+        # Timespan used to detect a hung window when "HungDump" is in Component.
         [ValidateRange('00:00:01', '00:01:00')]
-        [TimeSpan]$HungTimeout = [TimeSpan]::FromSeconds(5),
+        [TimeSpan]$HungTimeout,
         # Max number of hung dump files to be saved per process instance
         [ValidateRange(1, 10)]
         [int]$MaxHungDumpCount = 3,
@@ -12177,23 +12196,25 @@ function Collect-OutlookInfo {
             $monitorStartedEvent = New-Object System.Threading.EventWaitHandle($false, [Threading.EventResetMode]::ManualReset)
             $startedEventList.Add($monitorStartedEvent)
 
-            if (-not $PSBoundParameters.ContainsKey('HungMonitorTarget') -and $Component -contains 'NewOutlook') {
-                $HungMonitorTarget = 'olk'
-            }
-
-            Write-Log "Starting HungMonitorTask. HungMonitorTarget:$HungMonitorTarget, HungTimeout:$HungTimeout, User:$targetUser"
-
-            $hungMonitorTask = Start-Task -Name 'HungMonitorTask' -ScriptBlock { param($Path, $Name, $User, $Timeout, $DumpCount, $CancellationToken, $StartedEvent) Start-HungMonitor @PSBoundParameters } `
-                -ArgumentList @{
+            $hungMonitorArgs = @{
                 Path              = Join-Path $tempPath 'HungDump'
                 Name              = $HungMonitorTarget
                 User              = $targetUser
-                Timeout           = $HungTimeout
                 DumpCount         = $MaxHungDumpCount
                 CancellationToken = $hungDumpCts.Token
                 StartedEvent      = $monitorStartedEvent
             }
 
+            if (-not $PSBoundParameters.ContainsKey('HungMonitorTarget') -and $Component -contains 'NewOutlook') {
+                $hungMonitorArgs.Name = 'olk'
+            }
+
+            if ($PSBoundParameters.ContainsKey('HungTimeout')) {
+                $hungMonitorArgs.Timeout = $HungTimeout
+            }
+
+            Write-Log "Starting HungMonitorTask. HungMonitorTarget:$($hungMonitorArgs.Name), HungTimeout:$($hungMonitorArgs.Timeout), User:$targetUser"
+            $hungMonitorTask = Start-Task -Name 'HungMonitorTask' -ScriptBlock { param($Path, $Name, $User, $Timeout, $DumpCount, $CancellationToken, $StartedEvent) Start-HungMonitor @PSBoundParameters } -ArgumentList $hungMonitorArgs
             $hungDumpStarted = $true
         }
 
