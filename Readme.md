@@ -172,7 +172,7 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 | AutoFlush            | Switch to flush log data every time it's written (This is just for troubleshooting the script)                                                 |
 | PsrRecycleInterval   | PSR recycle interval. A new instance of PSR is created after this interval (Default: `00:10:00`, Min: `00:01:00`, Max: `01:00:00`)             |
 | User                 | Target user whose configuration data is collected. By default, it's the logon user (Note: Not necessarily the current user running the script) |
-| HungTimeout          | Timespan used to detect a hung window when `HungDump` is in `Component` parameter (Min: `00:00:01`, Max: `00:01:00`)                           |
+| HungTimeout          | TimeSpan used to detect a hung window when `HungDump` is in `Component` parameter (Default: `00:00:05`, Min: `00:00:01`, Max: `00:01:00`)      |
 | HungMonitorTarget    | Name of the target process to monitor a hung window (Default: `Outlook`, or `olk` when `NewOutlook` is in `Component` parameter)               |
 | MaxHungDumpCount     | Max number of hung dump files to be saved per process instance (Default: `3`, Min: `1`, Max: `10`)                                             |
 | CrashDumpTargets     | Names of the target processes for crash dumps. When not specified, all processes are the targets                                               |

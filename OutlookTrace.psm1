@@ -7802,7 +7802,7 @@ function Save-HungDump {
         [Parameter(Mandatory = $true, Position = 1)]
         [ValidateRange(1, [int]::MaxValue)]
         [int]$ProcessId,
-        [TimeSpan]$Timeout,
+        [TimeSpan]$Timeout = [TimeSpan]::FromSeconds(5),
         [int]$DumpCount = 1,
         [Threading.CancellationToken]$CancellationToken,
         [TimeSpan]$DumpInterval = [TimeSpan]::FromSeconds(10)
@@ -7813,6 +7813,8 @@ function Save-HungDump {
         return
     }
 
+    $WM_NULL = 0
+    $SMTO_ABORTIFHUNG = 2
     $savedDumpCount = 0
     $interval = [TimeSpan]::FromSeconds(1)
 
@@ -7853,19 +7855,12 @@ function Save-HungDump {
                 return
             }
 
-            $isHung = $false
-            $detector = 'SendMessageTimeoutW()'
-
-            # If Timeout paramter is specified, use SendMessageTimeoutW(); otherwise use IsHungAppWindow().
-            if ($PSBoundParameters.ContainsKey('Timeout')) {
-                $result = [IntPtr]::Zero
-                $ret = [Win32.User32]::SendMessageTimeoutW($hWnd, 0, [IntPtr]::Zero, [IntPtr]::Zero, 0, $Timeout.TotalMilliseconds, [ref]$result)
-                $isHung = $ret -eq 0
-            }
-            else {
-                $detector = 'IsHungAppWindow()'
-                $isHung = [Win32.User32]::IsHungAppWindow($hWnd)
-            }
+            # > https://groups.google.com/g/microsoft.public.win32.programmer.kernel/c/b-r5qbLwUSA
+            # > IsHungAppWindow is a private function used by User32 to determine things like whether SMTO_ABORTIFHUNG should abort or not, or whether it should give up on an application and force-paint its background because the app isn't painting. It is not for general use. (For example, it isn't supported on all Windows platforms)
+            # > If you want to see if an app is hung, use SendMessageTimeout with SMTO_ABORTIFHUNG and the WM_NULL message.
+            $result = [IntPtr]::Zero
+            $ret = [Win32.User32]::SendMessageTimeoutW($hWnd, $WM_NULL, [IntPtr]::Zero, [IntPtr]::Zero, $SMTO_ABORTIFHUNG, $Timeout.TotalMilliseconds, [ref]$result)
+            $isHung = $ret -eq 0
 
             if (-not $isHung) {
                 Start-Sleep -Seconds $interval.TotalSeconds
@@ -7873,7 +7868,7 @@ function Save-HungDump {
             }
 
             # Hung detected. Save a dump file.
-            Write-Log "$detector detected a hung window for $($process.Name) (PID:$ProcessId, hWnd:$hWnd). $($savedDumpCount+1)/$DumpCount" -Category Warning
+            Write-Log "SendMessageTimeoutW() detected a hung window with $($process.Name) (PID:$ProcessId, hWnd:$hWnd). $($savedDumpCount+1)/$DumpCount" -Category Warning
             $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId
 
             if ($dumpResult) {
@@ -11683,7 +11678,7 @@ function Collect-OutlookInfo {
         [string]$User,
         # Timespan used to detect a hung window when "HungDump" is in Component.
         [ValidateRange('00:00:01', '00:01:00')]
-        [TimeSpan]$HungTimeout,
+        [TimeSpan]$HungTimeout = [TimeSpan]::FromSeconds(5),
         # Max number of hung dump files to be saved per process instance
         [ValidateRange(1, 10)]
         [int]$MaxHungDumpCount = 3,
@@ -12200,6 +12195,7 @@ function Collect-OutlookInfo {
                 Path              = Join-Path $tempPath 'HungDump'
                 Name              = $HungMonitorTarget
                 User              = $targetUser
+                Timeout           = $HungTimeout
                 DumpCount         = $MaxHungDumpCount
                 CancellationToken = $hungDumpCts.Token
                 StartedEvent      = $monitorStartedEvent
@@ -12207,10 +12203,6 @@ function Collect-OutlookInfo {
 
             if (-not $PSBoundParameters.ContainsKey('HungMonitorTarget') -and $Component -contains 'NewOutlook') {
                 $hungMonitorArgs.Name = 'olk'
-            }
-
-            if ($PSBoundParameters.ContainsKey('HungTimeout')) {
-                $hungMonitorArgs.Timeout = $HungTimeout
             }
 
             Write-Log "Starting HungMonitorTask. HungMonitorTarget:$($hungMonitorArgs.Name), HungTimeout:$($hungMonitorArgs.Timeout), User:$targetUser"
