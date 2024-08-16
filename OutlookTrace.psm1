@@ -11978,7 +11978,6 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { Get-ClickToRunConfiguration }
             Invoke-ScriptBlock { Get-PresentationMode }
             $PSDefaultParameterValues['Invoke-ScriptBlock:ArgumentList'] = @{ User = $targetUser }
-            Invoke-ScriptBlock { param($User) Get-OutlookProfile @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-OutlookAddin @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-OutlookOption @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-AutodiscoverConfig @PSBoundParameters }
@@ -12441,6 +12440,7 @@ function Collect-OutlookInfo {
                 Write-Progress -Status 'Saving MSIPC logs'
                 Invoke-ScriptBlock { param($User, $Path, $All) Save-MSIPC @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = $MSIPCDir; All = $true }
 
+                Invoke-ScriptBlock { param($User) Get-OutlookProfile @PSBoundParameters }
                 Invoke-ScriptBlock { param($User) Get-OneAuthAccount @PSBoundParameters } -ArgumentList @{ User = $targetUser } -Path $OfficeDir
                 Invoke-ScriptBlock { param($Path, $User) Save-OneAuthAccount @PSBoundParameters } -ArgumentList @{ Path = Join-Path $OfficeDir 'OneAuthAccount'; User = $targetUser }
             }
