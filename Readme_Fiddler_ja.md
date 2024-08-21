@@ -62,7 +62,7 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
     Collect-OutlookInfo -Path C:\temp -Component Configuration, Outlook, Fiddler, Netsh, PSR, WAM
     ```
 
-    正常にトレースが開始されると、`Hit enter to stop` と表示されます。
+    正常にトレースが開始されると、`Press enter to stop` と表示されます。
 
 11. [FiddlerCap Web Recorder] ダイアログ ボックスが表示されない場合、**Outlook を開始するユーザー**にて出力先フォルダーの FiddlerCap フォルダーにある FiddlerCap.exe を実行します。
 

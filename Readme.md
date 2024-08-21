@@ -41,9 +41,9 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
     Collect-OutlookInfo -Path C:\temp -Component Configuration, Outlook, Netsh, PSR, WAM
     ```
 
-7.  When traces have started successfully, it shows "Hit enter to stop".
+7.  When traces have started successfully, it shows "Press enter to stop".
 
-    Note: When `Dump` is included in Component parameter, you are prompted with `Hit enter to save a process dump of Outlook. To quit, enter q:`. Hit enter key to save a dump file. For a hang issue, repeat the process to collect 3 dump files, with interval of about 30 seconds between saves. When finished, hit `q`.
+    Note: When `Dump` is included in Component parameter, you are prompted with `Press enter to save a process dump of Outlook. To quit, enter q:`. Press enter key to save a dump file. For a hang issue, repeat the process to collect 3 dump files, with interval of about 30 seconds between saves. When finished, press `q`.
 
     Note: When `Fiddler` is included in Component parameter, a dialog box [FiddlerCap Web Recorder] appears. Use the following instructions to start capture, and then reproduce the issue
 
@@ -112,7 +112,7 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
     </details>
 
-10. Hit enter key in the console to stop.
+10. Press enter key in the console to stop.
 
 Send the zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 6.  
 If you captured a Fiddler trace, send the password used in step 9 too.

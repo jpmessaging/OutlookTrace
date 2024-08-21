@@ -12149,7 +12149,7 @@ function Collect-OutlookInfo {
 
             # Ask a user when she/he wants to save a dump file
             while ($true) {
-                Write-Host "Hit enter to save a process dump of Outlook. To quit, enter q: " -NoNewline
+                Write-Host "Press enter to save a process dump of Outlook. To quit, enter q: " -NoNewline
                 $userInput = $host.UI.ReadLine()
 
                 if ($userInput.ToLower().Trim() -eq 'q') {
@@ -12273,7 +12273,7 @@ function Collect-OutlookInfo {
             Write-Log "Waiting for the user to stop"
             $ScriptInfo.WaitStart = Get-Date
 
-            Write-Host 'Hit enter to stop: ' -NoNewline
+            Write-Host 'Press enter to stop: ' -NoNewline
             $waitResult = Wait-EnterOrControlC
 
             if ($waitResult.Key -eq 'Ctrl+C') {
@@ -12300,7 +12300,7 @@ function Collect-OutlookInfo {
         if ($recordingStarted) {
             # This will show the user a Save As dialog
             Stop-Recording
-            Write-Host "Please save the recording (Save As dialog should appear). Then hit enter to continue:" -ForegroundColor Yellow -NoNewline
+            Write-Host "Please save the recording (Save As dialog should appear). Then press enter to continue:" -ForegroundColor Yellow -NoNewline
             $null = $host.UI.ReadLine()
 
             # If the zoomit was started by above, then kill it.

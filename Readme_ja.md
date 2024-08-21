@@ -67,9 +67,9 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
     Collect-OutlookInfo -Path C:\temp -Component Configuration, Outlook, Netsh, PSR, WAM
     ```
 
-8. 正常にトレースが開始されると、`Hit enter to stop` と表示されます。
+8. 正常にトレースが開始されると、`Press enter to stop` と表示されます。
 
-    ※ 採取するコンポーネントに `Dump` を含めた場合、`Hit enter to save a process dump of Outlook. To quit, enter q:` とプロンプトされます。ダンプ ファイルを取得したいタイミングで Enter を入力してください。ハング事象の場合、およそ 30 秒間隔で 3 回程度採取ください。ダンプ ファイルの採取が終了したら `q` を入力します。
+    ※ 採取するコンポーネントに `Dump` を含めた場合、`Press enter to save a process dump of Outlook. To quit, enter q:` とプロンプトされます。ダンプ ファイルを取得したいタイミングで Enter を入力してください。ハング事象の場合、およそ 30 秒間隔で 3 回程度採取ください。ダンプ ファイルの採取が終了したら `q` を入力します。
 
     ※ 採取するコンポーネントに `Fiddler` を含めた場合、[FiddlerCap Web Recorder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
 
