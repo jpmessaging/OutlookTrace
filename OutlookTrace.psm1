@@ -12433,16 +12433,16 @@ function Collect-OutlookInfo {
                 Write-Log "$($processCaptureTask.Name) is complete"
             }
 
+            Invoke-ScriptBlock { param($User) Get-OutlookProfile @PSBoundParameters } -ArgumentList @{ User = $targetUser } -Path $OfficeDir
+            Invoke-ScriptBlock { param($User) Get-OneAuthAccount @PSBoundParameters } -ArgumentList @{ User = $targetUser } -Path $OfficeDir
+            Invoke-ScriptBlock { param($Path, $User) Save-OneAuthAccount @PSBoundParameters } -ArgumentList @{ Path = Join-Path $OfficeDir 'OneAuthAccount'; User = $targetUser }
+
             if ($startSuccess) {
                 Write-Progress -Status 'Saving Event logs'
                 Save-EventLog -Path $EventDir 2>&1 | Write-Log -Category Error
 
                 Write-Progress -Status 'Saving MSIPC logs'
                 Invoke-ScriptBlock { param($User, $Path, $All) Save-MSIPC @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = $MSIPCDir; All = $true }
-
-                Invoke-ScriptBlock { param($User) Get-OutlookProfile @PSBoundParameters }
-                Invoke-ScriptBlock { param($User) Get-OneAuthAccount @PSBoundParameters } -ArgumentList @{ User = $targetUser } -Path $OfficeDir
-                Invoke-ScriptBlock { param($Path, $User) Save-OneAuthAccount @PSBoundParameters } -ArgumentList @{ Path = Join-Path $OfficeDir 'OneAuthAccount'; User = $targetUser }
             }
 
             if ($osConfigurationTask) {
