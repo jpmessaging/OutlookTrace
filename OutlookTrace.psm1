@@ -4693,7 +4693,8 @@ function Get-MapiAccount {
     # Get Profile root path
     $profRoot = $Account.PSPath.SubString(0, $Account.PSPath.IndexOf($KnownSections.AccountManager))
 
-    $serviceUid = [BitConverter]::ToString($account.'Service UID').Replace('-', [String]::Empty)
+    $deliveryFolderEntryID = [BitConverter]::ToString($Account.'Delivery Folder EntryID').Replace('-', [String]::Empty)
+    $serviceUid = [BitConverter]::ToString($Account.'Service UID').Replace('-', [String]::Empty)
     $service = Join-Path $profRoot $serviceUid | Get-ItemProperty -Name $PropTags.PR_EMSMDB_SECTION_UID -ErrorAction SilentlyContinue
     $emsmdbUid = [BitConverter]::ToString($service.$($PropTags.PR_EMSMDB_SECTION_UID)).Replace('-', '').ToLowerInvariant()
 
@@ -4715,10 +4716,11 @@ function Get-MapiAccount {
     $emsmdb = Join-Path $profRoot $emsmdbUid | Get-ItemProperty -Name $emsmdbProperties -ErrorAction SilentlyContinue
 
     $props = [ordered]@{
-        Profile          = $null
-        AccountType      = 'MAPI'
-        IsDefaultAccount = $false
-        EmsmdbUid        = $emsmdbUid
+        Profile               = $null
+        AccountType           = 'MAPI'
+        IsDefaultAccount      = $false
+        DeliveryFolderEntryID = $deliveryFolderEntryID
+        EmsmdbUid             = $emsmdbUid
     }
 
     if ($displayNameBin = $emsmdb.$($PropTags.PR_DISPLAY_NAME)) {
