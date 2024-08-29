@@ -11302,6 +11302,30 @@ function Enable-EdgeDevTools {
         $User
     )
 
+    Add-WebView2Flags @PSBoundParameters -FlagNames 'auto-open-devtools-for-tabs'
+}
+
+function Disable-EdgeDevTools {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        # Target executable name, such as "olk.exe"
+        [string]$ExecutableName,
+        $User
+    )
+
+    Remove-WebView2Flags -ExecutableName $ExecutableName -User $User -FlagNames 'auto-open-devtools-for-tabs'
+}
+
+function Get-WebView2Flags {
+    [CmdletBinding()]
+    # [OutputType([System.Collections.Generic.HashSet[string]])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$ExecutableName,
+        $User
+    )
+
     $userRegRoot = Get-UserRegistryRoot -User $User
 
     if (-not $userRegRoot) {
@@ -11309,8 +11333,41 @@ function Enable-EdgeDevTools {
     }
 
     $keyPath = Join-Path $userRegRoot 'SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+    $flagSet = New-Object System.Collections.Generic.HashSet[string]
 
-    # Don't use New-Item -Force when the key already exists because it removes existing values.
+    if (Test-Path $keyPath) {
+        $currentFlags = Get-ItemProperty $keyPath -Name $ExecutableName -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $ExecutableName
+
+        if ($currentFlags) {
+            foreach ($entry in $currentFlags.Split(' ')) {
+                if ($entry) {
+                    $null = $flagSet.Add($entry)
+                }
+            }
+        }
+    }
+
+    [PSCustomObject]@{
+        Path  = $keyPath
+        Flags = $flagSet
+    }
+}
+
+function Add-WebView2Flags {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$ExecutableName,
+        [Parameter(Mandatory)]
+        [ValidateSet('auto-open-devtools-for-tabs', 'disable-background-timer-throttling')]
+        [string[]]$FlagNames,
+        $User
+    )
+
+    $wv2Flags = Get-WebView2Flags -ExecutableName $ExecutableName -User $User
+    $keyPath = $wv2Flags.Path
+    $flags = $wv2Flags.Flags
+
     if (-not (Test-Path $keyPath)) {
         $err = $($key = New-Item $keyPath -Force) 2>&1
 
@@ -11323,34 +11380,70 @@ function Enable-EdgeDevTools {
         }
     }
 
+    # Consolidate current & new flags
+    $isAdded = $false
+
+    foreach ($flagName in $FlagNames) {
+        $flagEntry = "--$flagName"
+
+        if (-not $flags.Contains($flagEntry)) {
+            $isAdded = $flags.Add($flagEntry)
+        }
+    }
+
+    if (-not $isAdded) {
+        return
+    }
+
     # Set-ItemProperty either creates a new value or overwrites the existing value.
-    $err = Set-ItemProperty $keyPath -Name $ExecutableName -Value '--auto-open-devtools-for-tabs' 2>&1
+    $err = Set-ItemProperty $keyPath -Name $ExecutableName -Value ($flags -join ' ') 2>&1
 
     if ($err) {
         Write-Error -Message "Failed to set '$ExecutableName' in $keyPath. $err" -Exception $err.Exception
     }
+    else {
+        Write-Log "Flags set: $($flags.Keys -join ' ')"
+    }
 }
 
-function Disable-EdgeDevTools {
+function Remove-WebView2Flags {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        # Target executable name, such as "olk.exe"
         [string]$ExecutableName,
+        [Parameter(Mandatory)]
+        [ValidateSet('auto-open-devtools-for-tabs', 'disable-background-timer-throttling')]
+        [string[]]$FlagNames,
         $User
     )
 
-    $userRegRoot = Get-UserRegistryRoot -User $User
+    $wv2Flags = Get-WebView2Flags -ExecutableName $ExecutableName -User $User
+    $keyPath = $wv2Flags.Path
+    $flags = $wv2Flags.Flags
+    $isRemoved = $false
 
-    if (-not $userRegRoot) {
+    foreach ($flagName in $FlagNames) {
+        $flagEntry = "--$flagName"
+        $isRemoved = $flags.Remove($flagEntry)
+    }
+
+    if (-not $isRemoved) {
         return
     }
 
-    $keyPath = Join-Path $userRegRoot 'SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
-    $err = Remove-ItemProperty $keyPath -Name $ExecutableName
+    if ($flags.Count) {
+        $err = Set-ItemProperty $keyPath -Name $ExecutableName -Value ($flags -join ' ') 2>&1
 
-    if ($err) {
-        Write-Error -Message "Failed to remove '$ExecutableName' from $keyPath. $err" -Exception $err.Exception
+        if ($err) {
+            Write-Error -Message "Failed to set '$ExecutableName' in $keyPath. $err" -Exception $err.Exception
+        }
+        else {
+            Write-Log "Flags set: $($flags.Keys -join ' ')"
+        }
+    }
+    else {
+        # If the resulting flags is empty, remove the registry value
+        Remove-ItemProperty $keyPath -Name $ExecutableName -ErrorAction SilentlyContinue
     }
 }
 
@@ -12613,4 +12706,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-FileExtEditFlags, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Collect-OutlookInfo
