@@ -2762,7 +2762,7 @@ function Start-PSR {
         $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
 
-    $Path = Convert-Path -Literal $Path
+    $Path = Convert-Path -LiteralPath $Path
 
     # File name must be ***.mht
     if ([IO.Path]::GetExtension($FileName) -ne ".mht") {
@@ -11352,7 +11352,7 @@ function Get-WebView2Flags {
     }
 
     [PSCustomObject]@{
-        Path  = $keyPath
+        Path  = Convert-Path -LiteralPath $keyPath | Join-Path -ChildPath {$ExecutableName}
         Flags = $flagSet
     }
 }
