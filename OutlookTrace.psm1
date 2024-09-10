@@ -4194,6 +4194,7 @@ $PropTags = @{
     PR_PROFILE_OFFICE365_MAILBOX         = '000b6659'
     PR_PROFILE_EXCHANGE_CONSUMER_ACCOUNT = '000b665e'
     PR_PROFILE_USER_EMAIL_ADDRESSES      = '101f6637'
+    PR_AB_SEARCH_PATH_CUSTOMIZATION      = '00033d1b'
 }
 
 function Get-OutlookProfile {
@@ -4274,15 +4275,16 @@ function Get-OutlookProfile {
                 }
 
                 [PSCustomObject]@{
-                    User           = $User
-                    Name           = $profileName
-                    Path           = $prof.Name
-                    IsDefault      = $profileName -eq $defaultProfile
-                    Accounts       = $mailAccounts | Select-Object -Property * -ExcludeProperty 'EmsmdbUid'
-                    StoreProviders = $storeProviders
-                    DataFiles      = $dataFiles
-                    OfflineState   = $globalSection.OfflineState
-                    CacheSyncMode  = $globalSection.CacheSyncMode
+                    User                      = $User
+                    Name                      = $profileName
+                    Path                      = $prof.Name
+                    IsDefault                 = $profileName -eq $defaultProfile
+                    Accounts                  = $mailAccounts | Select-Object -Property * -ExcludeProperty 'EmsmdbUid'
+                    StoreProviders            = $storeProviders
+                    DataFiles                 = $dataFiles
+                    OfflineState              = $globalSection.OfflineState
+                    CacheSyncMode             = $globalSection.CacheSyncMode
+                    ABSearchPathCustomization = $globalSection.ABSearchPathCustomization
                 }
             }
             catch {
@@ -4561,6 +4563,7 @@ function Get-GlobalSection {
     $properties = @(
         $PropTags.PR_LAST_OFFLINESTATE_OFFLINE
         $PropTags.PR_CACHE_SYNC_MODE
+        $PropTags.PR_AB_SEARCH_PATH_CUSTOMIZATION
     )
 
     $globalSection = Join-Path $Profile.PSPath $KnownSections.Global | Get-ItemProperty -Name $properties -ErrorAction SilentlyContinue
@@ -4568,6 +4571,7 @@ function Get-GlobalSection {
     # It's possible that Global Section does not have any of above properties and thus null.
     $offlineState = 'Unknown'
     $cacheSyncMode = [Win32.Mapi.CacheSyncMode]::FullItems
+    $ABSearchPathCustomization = 1 # "Start with Global Address List"
 
     if ($globalSection) {
         if ($offlineStateBin = $globalSection.$($PropTags.PR_LAST_OFFLINESTATE_OFFLINE)) {
@@ -4583,13 +4587,25 @@ function Get-GlobalSection {
         if ($syncModeBin = $globalSection.$($PropTags.PR_CACHE_SYNC_MODE)) {
             $cacheSyncMode = [BitConverter]::ToInt32($syncModeBin, 0)
         }
-    }
 
-    [PSCustomObject]@{
-        DisplayName   = 'Outlook Global Section'
-        Uid           = $KnownSections.Global
-        OfflineState  = $offlineState
-        CacheSyncMode = $cacheSyncMode
+        if ($ABSearchPathCustomizationBin = $globalSection.$($PropTags.PR_AB_SEARCH_PATH_CUSTOMIZATION)) {
+            $ABSearchPathCustomization = [BitConverter]::ToInt32($ABSearchPathCustomizationBin, 0)
+        }
+
+        $ABSearchPathCustomizationName = switch ($ABSearchPathCustomization) {
+            0 { 'Custom'; break }
+            1 { 'Start with Global Addrss List'; break }
+            2 { 'Start with contact folders'; break }
+            default { 'Start with Global Addrss List'; break }
+        }
+
+        [PSCustomObject]@{
+            DisplayName               = 'Outlook Global Section'
+            Uid                       = $KnownSections.Global
+            OfflineState              = $offlineState
+            CacheSyncMode             = $cacheSyncMode
+            ABSearchPathCustomization = $ABSearchPathCustomizationName
+        }
     }
 }
 
@@ -4715,10 +4731,10 @@ function Get-MapiAccount {
     $emsmdb = Join-Path $profRoot $emsmdbUid | Get-ItemProperty -Name $emsmdbProperties -ErrorAction SilentlyContinue
 
     $props = [ordered]@{
-        Profile               = $null
-        AccountType           = 'MAPI'
-        IsDefaultAccount      = $false
-        EmsmdbUid             = $emsmdbUid
+        Profile          = $null
+        AccountType      = 'MAPI'
+        IsDefaultAccount = $false
+        EmsmdbUid        = $emsmdbUid
     }
 
     if ($Account.'Delivery Folder EntryID') {
@@ -4845,7 +4861,7 @@ function Convert-MVUnicode {
             for ($i = 0; $i -lt $count; ++$i) {
                 $offset64 = $reader.ReadInt64()
 
-                # suffix "L" is for long date type
+                # suffix "L" is for long data type
                 if ($offset64 -le 0xffffffffL) {
                     $offset64
                 }
@@ -11352,7 +11368,7 @@ function Get-WebView2Flags {
     }
 
     [PSCustomObject]@{
-        Path  = Convert-Path -LiteralPath $keyPath | Join-Path -ChildPath {$ExecutableName}
+        Path  = Convert-Path -LiteralPath $keyPath | Join-Path -ChildPath { $ExecutableName }
         Flags = $flagSet
     }
 }
