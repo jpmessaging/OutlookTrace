@@ -1434,6 +1434,35 @@ function Stop-Task {
     }
 }
 
+<#
+.SYNOPSIS
+    Convert a PSPath to a path without prefix (sucn as "Microsoft.PowerShell.Core\FileSystem::", Microsoft.PowerShell.Core\Registry::)
+#>
+function ConvertFrom-PSPath {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [string]$Path,
+        # Keep provider name such as "FileSystem::" or "Registry::"
+        [switch]$KeepProvider
+    )
+
+    process {
+        if ($Path -match '(?<Prefix>^.*::)(?<Rest>.*)') {
+            if ($KeepProvider) {
+                $pathWithoutPrefix = $Matches['Rest']
+                if ($Matches['Prefix'] -match '(?<Provider>\w+::)') {
+                    "$($Matches['Provider'])$pathWithoutPrefix"
+                }
+            }
+            else {
+                $Matches['Rest']
+            }
+        }
+    }
+}
+
 function Test-RunAsAdministrator {
     [CmdletBinding()]
     [OutputType([bool])]
@@ -11339,7 +11368,6 @@ function Disable-EdgeDevTools {
 
 function Get-WebView2Flags {
     [CmdletBinding()]
-    # [OutputType([System.Collections.Generic.HashSet[string]])]
     param(
         [Parameter(Mandatory)]
         [string]$ExecutableName,
@@ -11350,6 +11378,12 @@ function Get-WebView2Flags {
 
     if (-not $userRegRoot) {
         return
+    }
+
+    $ext = [IO.Path]::GetExtension($ExecutableName)
+
+    if (-not $ext -or $ext -ne '.exe') {
+        $ExecutableName = [IO.Path]::ChangeExtension($ExecutableName, 'exe')
     }
 
     $keyPath = Join-Path $userRegRoot 'SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
@@ -11368,7 +11402,7 @@ function Get-WebView2Flags {
     }
 
     [PSCustomObject]@{
-        Path  = Convert-Path -LiteralPath $keyPath | Join-Path -ChildPath { $ExecutableName }
+        Path  = Join-Path $keyPath $ExecutableName | ConvertFrom-PSPath # Do not use Convert-Path here because the path might not exist.
         Flags = $flagSet
     }
 }
