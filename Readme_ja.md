@@ -1,4 +1,6 @@
-﻿## 概要
+﻿[![en](https://img.shields.io/badge/English-英語-red)](https://github.com/jpmessaging/OutlookTrace/blob/master/Readme.md)
+
+## 概要
 
 OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 

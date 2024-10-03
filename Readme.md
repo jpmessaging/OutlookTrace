@@ -1,4 +1,6 @@
-﻿## Overview
+﻿[![ja](https://img.shields.io/badge/Japanese-日本語-green)](https://github.com/jpmessaging/OutlookTrace/blob/master/Readme_ja.md)
+
+## Overview
 
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
