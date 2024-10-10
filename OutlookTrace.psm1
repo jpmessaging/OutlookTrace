@@ -11574,6 +11574,44 @@ function Test-ScriptExpiration {
     [DateTime]::Now - $ReleaseDate -le $ValidTimeSpan
 }
 
+function Disable-CtrlC {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    $success = $false
+
+    # This does not work in some environments such as PowerShell ISE.
+    try {
+        [Console]::TreatControlCAsInput = $true
+        $success = $true
+    }
+    catch {
+        # ignore
+    }
+
+    $success
+}
+
+function Enable-CtrlC {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    $success = $false
+
+    # This does not work in some environments such as PowerShell ISE.
+    try {
+        [Console]::TreatControlCAsInput = $false
+        $success = $true
+    }
+    catch {
+        # ignore
+    }
+
+    $success
+}
+
 <#
 .SYNOPSIS
 Wait until user enters Enter key or Ctrl+C.
@@ -12004,6 +12042,13 @@ function Collect-OutlookInfo {
         # Set thread culture to en-US for consitent logging.
         Set-ThreadCulture 'en-US' 2>&1 | Write-Log -Category Error
 
+        # Disable Ctrl+C temporarily while collecting data (this does not work in PowerShell ISE)
+        $ctrlCDisabled = Disable-CtrlC
+
+        if ($ctrlCDisabled) {
+            Write-Log "Ctrl+C is successfully disabled"
+        }
+
         # To use Start-Task, make sure to open runspaces first and close it when finished.
         # Currently MaxRunspaces is 8 or more because there are 8 tasks at most. 3 of them, processCaptureTask, psrTask, and hungMonitorTask are long running.
         $minimumMaxRunspacesCount = 8
@@ -12380,11 +12425,26 @@ function Collect-OutlookInfo {
 
             # If Outlook is already running, attach to it. Otherwise, start monitoring for outlook.exe.
             if ($outlookProcess = Get-Process -Name $ttdTarget -ErrorAction SilentlyContinue) {
-                Write-Log "Attaching TTD to $($outlookProcess.Name) (PID:$($outlookProcess.Id))"
-                Write-Progress -Status "Attaching TTD to $($outlookProcess.Name) (PID:$($outlookProcess.Id)). This might take a while. Please wait"
+                $logMsg = "Attaching TTD to $($outlookProcess.Name) (PID:$($outlookProcess.Id))"
+                Write-Log $logMsg
 
                 $ttdArgs.ProcessId = $outlookProcess.Id
-                $ttdProcess = Attach-TTD @ttdArgs -ErrorAction Stop
+                $outlookProcess.Dispose()
+
+                # Attach TTD with a background task and asynchronously wait
+                $attachTask = Start-Task -Name 'AttachTTD' -ScriptBlock { param($TTDPath, $Path, $ProcessID, $ShowUI) Attach-TTD @PSBoundParameters } -ArgumentList $ttdArgs
+
+                $waitMsg = "$logMsg. This might take a while. Please wait"
+                $waitCount = 0
+                $waitInterval = [TimeSpan]::FromSeconds(1)
+
+                # Wait for the attach task to finish with a progress notification
+                while (-not (Wait-Task -Task $attachTask -Timeout $waitInterval)) {
+                    Write-Progress -Status ($waitMsg + '.' * $waitCount)
+                    $waitCount = ++$waitCount % 10
+                }
+
+                $ttdProcess = Receive-Task -Task $attachTask -AutoRemoveTask -ErrorAction Stop
             }
             else {
                 $ttdArgs.ExecutableName = "$ttdTarget.exe"
@@ -12396,6 +12456,7 @@ function Collect-OutlookInfo {
                 $ttdProcess = Start-TTDMonitor @ttdArgs -ErrorAction Stop
             }
 
+            $ttdProcess | Add-Member -MemberType NoteProperty -Name 'TargetName' -Value $ttdTarget
             $ttdStarted = $true
         }
 
@@ -12472,16 +12533,16 @@ function Collect-OutlookInfo {
                 $err = $($ttdProcess | Stop-TTDMonitor) 2>&1 | Write-Log -Category Error -PassThru
             }
 
-            # Stopping or Detaching TTD might fail if TTD.exe died during tracing. In this case, ask the user to shutdown Outlook manually so that trace file is fully written.
+            # Stopping or detaching TTD might fail if TTD.exe died during tracing. In this case, ask the user to shutdown Outlook manually so that trace file is fully written.
             if ($err) {
-                $outlookProcess = @(Get-Process -Name 'Outlook' -ErrorAction SilentlyContinue | `
+                $outlookProcess = @(Get-Process -Name $ttdProcess.TargetName -ErrorAction SilentlyContinue | `
                         Where-Object { $_.Modules | Where-Object { $_.ModuleName -match 'TTDRecordCPU' } })
 
                 if ($outlookProcess.Count) {
-                    Write-Host "Please shutdown Outlook (PID:$($outlookProcess.Id -join ','))" -ForegroundColor Yellow
+                    Write-Host "Please shutdown $($outlookProcess[0].Name) (PID:$($outlookProcess.Id -join ','))" -ForegroundColor Yellow
 
                     foreach ($proc in $outlookProcess) {
-                        Write-Host "Waiting for Outlook (PID:$($proc.Id)) to shutdown ..." -ForegroundColor Yellow
+                        Write-Host "Waiting for $($proc.Name) (PID:$($proc.Id)) to shutdown ..." -ForegroundColor Yellow
                         $proc.WaitForExit()
                         $proc.Dispose()
                     }
@@ -12700,6 +12761,10 @@ function Collect-OutlookInfo {
         Reset-ThreadCulture 2>&1 | Write-Log -Category Error
         Close-TaskRunspace 2>&1 | Write-Log -Category Error
         Close-Log
+
+        if ($ctrlCDisabled) {
+            $null = Enable-CtrlC
+        }
 
         $ScriptInfo.End = Get-Date
         $ScriptInfo | Export-CliXml (Join-Path $tempPath 'ScriptInfo.xml')
