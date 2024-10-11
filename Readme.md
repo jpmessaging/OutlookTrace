@@ -158,8 +158,8 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 > 
 > - [FiddlerCap](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe)
 > - [Procmon](https://download.sysinternals.com/files/ProcessMonitor.zip)
-> - [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-410-0/TTD.msixbundle)
-> - [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip) 
+> - [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-429-0/TTD.msixbundle)
+> - [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)
 
 ### Optional parameters
 
