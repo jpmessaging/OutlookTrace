@@ -6781,29 +6781,51 @@ function Expand-TTDMsixBundle {
         $root = [IO.Path]::GetDirectoryName($MsixBundlePath)
         $dest = Join-Path $root 'TTD'
 
-        & $expand -Path $MsixBundlePath -Destination $dest
+        # See if TTD.exe of the same architecture already exists
+        $ttdPath = Get-ChildItem $dest -Filter 'TTD.exe' -File -Recurse | & {
+            begin {
+                # Map PROCESSOR_ARCHITECTURE to Get-ImageInfo's Architecture value (x86, x64, ARM64)
+                $archMap = @{
+                    'x86'   = 'x86'
+                    'AMD64' = 'x64'
+                    'ARM64' = 'ARM64'
+                }
+            }
 
-        $msixFileName =
-        switch ($env:PROCESSOR_ARCHITECTURE) {
-            'AMD64' { 'TTD-x64.msix'; break }
-            'x86' { 'TTD-x86.msix'; break }
-        }
+            process {
+                $image = Get-ImageInfo $_.FullName
 
-        if (-not $msixFileName) {
-            Write-Error "Unsupported Processor Archtecture:$($env:PROCESSOR_ARCHITECTURE)"
-            return
-        }
+                if ($image.Architecture -eq $archMap[$env:PROCESSOR_ARCHITECTURE]) {
+                    $_.FullName
+                }
+            }
+        } | Select-Object -First 1
 
-        $msixFilePath = Join-Path $dest $msixFileName
-        $dest = Join-Path $dest $env:PROCESSOR_ARCHITECTURE
+        if (-not $ttdPath) {
+            $msixFileName = switch ($env:PROCESSOR_ARCHITECTURE) {
+                'AMD64' { 'TTD-x64.msix'; break }
+                'x86' { 'TTD-x86.msix'; break }
+                'ARM64' { 'TTD-ARM64.msix'; break }
+            }
 
-        & $expand -Path $msixFilePath -Destination $dest
+            if (-not $msixFileName) {
+                Write-Error "Unsupported Processor Archtecture:$($env:PROCESSOR_ARCHITECTURE)"
+                return
+            }
 
-        $ttdPath = Join-Path $dest 'TTD.exe'
+            & $expand -Path $MsixBundlePath -Destination $dest
 
-        if (-not (Test-Path($ttdPath))) {
-            Write-Error "Cannot find $ttdPath"
-            return
+            $msixFilePath = Join-Path $dest $msixFileName
+            $dest = Join-Path $dest ([IO.Path]::GetFileNameWithoutExtension($msixFileName))
+
+            & $expand -Path $msixFilePath -Destination $dest
+
+            $ttdPath = Join-Path $dest 'TTD.exe'
+
+            if (-not (Test-Path($ttdPath))) {
+                Write-Error "Cannot find $ttdPath"
+                return
+            }
         }
 
         [PSCustomObject]@{
@@ -10624,11 +10646,11 @@ function Get-ImageInfo {
         # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-image_file_header
         $machine = $reader.ReadUInt16()
 
-        $arch =
-        switch ($machine) {
+        $arch = switch ($machine) {
             0x014c { 'x86'; break }
             0x0200 { 'IA64'; break }
             0x8664 { 'x64'; break }
+            0xaa64 { 'ARM64'; break }
             default { 'Unknown'; break }
         }
 
