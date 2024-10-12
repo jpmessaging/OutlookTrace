@@ -12479,12 +12479,14 @@ function Collect-OutlookInfo {
         }
 
         # Wait all "Started" events
-        Write-Progress -Status "Waiting for all tasks to start"
-        Write-Log "Waiting for all tasks to start"
+        if ($startedEventList.Count -gt 0) {
+            Write-Progress -Status "Waiting for all tasks to start"
+            Write-Log "Waiting for all tasks to start"
 
-        foreach ($event in $startedEventList) {
-            $null = $event.WaitOne()
-            $event.Dispose()
+            foreach ($event in $startedEventList) {
+                $null = $event.WaitOne()
+                $event.Dispose()
+            }
         }
 
         Write-Progress -Completed
