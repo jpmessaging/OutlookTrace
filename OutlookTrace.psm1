@@ -1699,7 +1699,7 @@ function Disable-DebugPrivilege {
         [System.Diagnostics.Process]::LeaveDebugMode()
     }
     catch {
-        Write-Error -Message "Failed to disale Debug Privilege. $_" -Exception $_.Exception
+        Write-Error -Message "Failed to disable Debug Privilege. $_" -Exception $_.Exception
     }
 }
 
@@ -12771,12 +12771,7 @@ function Collect-OutlookInfo {
         }
 
         if ($debugPrivilegeEnabled) {
-            try {
-                [System.Diagnostics.Process]::LeaveDebugMode()
-            }
-            catch {
-                Write-Log -Message "System.Diagnostics.Process.LeaveDebugMode failed" -ErrorRecord $_ -Category Error
-            }
+            Disable-DebugPrivilege 2>&1 | Write-Log -Category Error
         }
 
         Write-Progress -Completed
