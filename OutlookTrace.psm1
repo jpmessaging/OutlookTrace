@@ -958,7 +958,8 @@ function Open-Log {
     param (
         [Parameter(Mandatory = $true)]
         [string]$Path,
-        [switch]$AutoFlush
+        [switch]$AutoFlush,
+        [switch]$WithBOM
     )
 
     if ($Script:LogWriter) {
@@ -967,7 +968,8 @@ function Open-Log {
 
     # Open a file & add header
     try {
-        [IO.StreamWriter]$Script:LogWriter = [IO.File]::AppendText($Path)
+        $utf8Encoding = New-Object System.Text.UTF8Encoding -ArgumentList $WithBOM.IsPresent
+        $Script:LogWriter = New-Object System.IO.StreamWriter -ArgumentList $Path, <# append #> $true, $utf8Encoding
 
         if ($AutoFlush) {
             $Script:LogWriter.AutoFlush = $true
@@ -12025,7 +12027,7 @@ function Collect-OutlookInfo {
     $null = New-Item $tempPath -ItemType directory -ErrorAction Stop
 
     # Start logging.
-    Open-Log -Path (Join-Path $tempPath 'Log.txt') -AutoFlush:$AutoFlush -ErrorAction Stop
+    Open-Log -Path (Join-Path $tempPath 'Log.csv') -WithBOM -AutoFlush:$AutoFlush -ErrorAction Stop
     Write-Log "Script Version:$Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString())); PID:$pid"
     Write-Log "PSVersion:$($PSVersionTable.PSVersion); CLRVersion:$($PSVersionTable.CLRVersion)"
     Write-Log "PROCESSOR_ARCHITECTURE:$env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432:$env:PROCESSOR_ARCHITEW6432"
