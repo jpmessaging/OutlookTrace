@@ -5565,9 +5565,7 @@ function Start-LdapTrace {
     $Path = Convert-Path -LiteralPath $Path
 
     # Process name must contain the extension such as "Outlook.exe", instead of "Outlook"
-    if ([IO.Path]::GetExtension($TargetExecutable) -ne 'exe') {
-        $TargetExecutable = [IO.Path]::GetFileNameWithoutExtension($TargetExecutable) + ".exe"
-    }
+    $TargetExecutable = [IO.Path]::ChangeExtension($TargetExecutable, 'exe')
 
     # Create a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing
     $keypath = "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\ldap\tracing"
@@ -5649,9 +5647,7 @@ function Stop-LdapTrace {
 
     if ($TargetExecutable) {
         # Process name must contain the extension such as "outlook.exe", instead of "outlook"
-        if ([IO.Path]::GetExtension($TargetExecutable) -ne 'exe') {
-            $TargetExecutable = [IO.Path]::GetFileNameWithoutExtension($TargetExecutable) + ".exe"
-        }
+        $TargetExecutable = [IO.Path]::ChangeExtension($TargetExecutable, 'exe')
 
         $targetPath = Join-Path $tracingKey -ChildPath $TargetExecutable
     }
@@ -6902,9 +6898,7 @@ function Start-TTDMonitor {
     $Path = Convert-Path -LiteralPath $Path
 
     # Make sure extension is ".exe"
-    if (-not ([System.IO.Path]::GetExtension($ExecutableName))) {
-        $ExecutableName = "$ExecutableName.exe"
-    }
+    $ExecutableName = [IO.Path]::ChangeExtension($ExecutableName, '.exe')
 
     $outPath = $Path.ToString()
 
@@ -7379,10 +7373,7 @@ function Add-WerDumpKey {
         }
 
         if ($TargetProcess) {
-            if (-not $TargetProcess.EndsWith(".exe")) {
-                Write-Log "TargetProcess '$TargetProcess' does not end with '.exe'. Adding '.exe'"
-                $TargetProcess += '.exe'
-            }
+            $TargetProcess = [IO.Path]::ChangeExtension($TargetProcess, '.exe')
 
             # Create a ProcessName key under LocalDumps, if it doesn't exist.
             $targetKey = Join-Path $localDumpsKey $TargetProcess
@@ -7461,11 +7452,7 @@ function Remove-WerDumpKey {
         }
 
         if ($TargetProcess) {
-            if (-not $TargetProcess.EndsWith(".exe")) {
-                Write-Log "$TargetProcess does not end with '.exe'. Adding '.exe'"
-                $TargetProcess += '.exe'
-            }
-
+            $TargetProcess = [IO.Path]::ChangeExtension($TargetProcess, '.exe')
             $targetKey = Join-Path $localDumpsKey $TargetProcess
             Write-Log "Removing $targetKey"
             Remove-Item $targetKey
@@ -11405,11 +11392,7 @@ function Get-WebView2Flags {
         return
     }
 
-    $ext = [IO.Path]::GetExtension($ExecutableName)
-
-    if (-not $ext -or $ext -ne '.exe') {
-        $ExecutableName = [IO.Path]::ChangeExtension($ExecutableName, 'exe')
-    }
+    $ExecutableName = [IO.Path]::ChangeExtension($ExecutableName, 'exe')
 
     $keyPath = Join-Path $userRegRoot 'SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
     $flagSet = New-Object System.Collections.Generic.HashSet[string]
@@ -11427,7 +11410,8 @@ function Get-WebView2Flags {
     }
 
     [PSCustomObject]@{
-        Path  = Join-Path $keyPath $ExecutableName | ConvertFrom-PSPath # Do not use Convert-Path here because the path might not exist.
+        Path  = $keyPath # Make sure to keep "Registry::" prefix here because Add-WebView2Flags uses it with Test-Path
+        Name  = $ExecutableName
         Flags = $flagSet
     }
 }
@@ -11444,6 +11428,8 @@ function Add-WebView2Flags {
     )
 
     $wv2Flags = Get-WebView2Flags -ExecutableName $ExecutableName -User $User
+
+    $regValueName = $wv2Flags.Name
     $keyPath = $wv2Flags.Path
     $flags = $wv2Flags.Flags
 
@@ -11475,13 +11461,13 @@ function Add-WebView2Flags {
     }
 
     # Set-ItemProperty either creates a new value or overwrites the existing value.
-    $err = Set-ItemProperty $keyPath -Name $ExecutableName -Value ($flags -join ' ') 2>&1
+    $err = Set-ItemProperty $keyPath -Name $regValueName -Value ($flags -join ' ') 2>&1
 
     if ($err) {
-        Write-Error -Message "Failed to set '$ExecutableName' in $keyPath. $err" -Exception $err.Exception
+        Write-Error -Message "Failed to set '$regValueName' in $keyPath. $err" -Exception $err.Exception
     }
     else {
-        Write-Log "Flags set: $($flags.Keys -join ' ')"
+        Write-Log "Flags set for $($regValueName): $($flags -join ' ')"
     }
 }
 
@@ -11497,6 +11483,8 @@ function Remove-WebView2Flags {
     )
 
     $wv2Flags = Get-WebView2Flags -ExecutableName $ExecutableName -User $User
+
+    $regValueName = $wv2Flags.Name
     $keyPath = $wv2Flags.Path
     $flags = $wv2Flags.Flags
     $isRemoved = $false
@@ -11511,10 +11499,10 @@ function Remove-WebView2Flags {
     }
 
     if ($flags.Count) {
-        $err = Set-ItemProperty $keyPath -Name $ExecutableName -Value ($flags -join ' ') 2>&1
+        $err = Set-ItemProperty $keyPath -Name $regValueName -Value ($flags -join ' ') 2>&1
 
         if ($err) {
-            Write-Error -Message "Failed to set '$ExecutableName' in $keyPath. $err" -Exception $err.Exception
+            Write-Error -Message "Failed to set '$regValueName' in $keyPath. $err" -Exception $err.Exception
         }
         else {
             Write-Log "Flags set: $($flags.Keys -join ' ')"
@@ -11522,7 +11510,7 @@ function Remove-WebView2Flags {
     }
     else {
         # If the resulting flags is empty, remove the registry value
-        Remove-ItemProperty $keyPath -Name $ExecutableName -ErrorAction SilentlyContinue
+        Remove-ItemProperty $keyPath -Name $regValueName -ErrorAction SilentlyContinue
     }
 }
 
