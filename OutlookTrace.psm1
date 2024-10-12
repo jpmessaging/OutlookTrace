@@ -6801,7 +6801,10 @@ function Expand-TTDMsixBundle {
             }
         } | Select-Object -First 1
 
-        if (-not $ttdPath) {
+        if ($ttdPath) {
+            Write-Log "Skip expanding $MsixBundlePath because TTD.exe (for $env:PROCESSOR_ARCHITECTURE) already exists at $ttdPath"
+        }
+        else {
             $msixFileName = switch ($env:PROCESSOR_ARCHITECTURE) {
                 'AMD64' { 'TTD-x64.msix'; break }
                 'x86' { 'TTD-x86.msix'; break }
