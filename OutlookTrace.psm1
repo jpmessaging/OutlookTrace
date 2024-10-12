@@ -12493,6 +12493,7 @@ function Collect-OutlookInfo {
 
         Write-Progress -Completed
         $waitStart = Get-Timestamp
+        $waitResult = $null
 
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted -or $newOutlookTraceStarted) {
             Write-Log "Waiting for the user to stop"
