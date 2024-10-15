@@ -6900,7 +6900,7 @@ function Start-TTDMonitor {
     $Path = Convert-Path -LiteralPath $Path
 
     # Make sure extension is ".exe"
-    $ExecutableName = [IO.Path]::ChangeExtension($ExecutableName, '.exe')
+    $ExecutableName = [IO.Path]::ChangeExtension($ExecutableName, 'exe')
 
     $outPath = $Path.ToString()
 
@@ -7375,7 +7375,7 @@ function Add-WerDumpKey {
         }
 
         if ($TargetProcess) {
-            $TargetProcess = [IO.Path]::ChangeExtension($TargetProcess, '.exe')
+            $TargetProcess = [IO.Path]::ChangeExtension($TargetProcess, 'exe')
 
             # Create a ProcessName key under LocalDumps, if it doesn't exist.
             $targetKey = Join-Path $localDumpsKey $TargetProcess
@@ -7454,7 +7454,7 @@ function Remove-WerDumpKey {
         }
 
         if ($TargetProcess) {
-            $TargetProcess = [IO.Path]::ChangeExtension($TargetProcess, '.exe')
+            $TargetProcess = [IO.Path]::ChangeExtension($TargetProcess, 'exe')
             $targetKey = Join-Path $localDumpsKey $TargetProcess
             Write-Log "Removing $targetKey"
             Remove-Item $targetKey
@@ -11882,8 +11882,8 @@ function Collect-OutlookInfo {
         # Max number of hung dump files to be saved per process instance
         [ValidateRange(1, 10)]
         [int]$MaxHungDumpCount = 3,
-        # Name of the target process to monitor a hung window (This is just for testing)
-        [string]$HungMonitorTarget = 'Outlook',
+        # Target process name (such as Outlook or olk). This is optional. 'Outlook' is used by default and 'olk' is used when 'NewOutlook' is specified in Component parameter.
+        [string]$TargetProcessName,
         # Names of the target processes for crash dumps. When not specified, all processes will be the targets.
         [string[]]$CrashDumpTargets,
         # Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)
@@ -12041,6 +12041,21 @@ function Collect-OutlookInfo {
     if ($runAsAdmin -and -not $debugPrivilegeEnabled) {
         Write-Log -Message "Running as admin, but failed to enable Debug Privilege. $debugPrivilegeError" -ErrorRecord $debugPrivilegeError -Category Error
     }
+
+    # Determine TargetProcessName (must be without extension)
+    if ($TargetProcessName) {
+        $TargetProcessName = [IO.Path]::GetFileNameWithoutExtension($TargetProcessName)
+    }
+    else {
+        if ($Component -contains 'NewOutlook') {
+            $TargetProcessName = 'olk'
+        }
+        else {
+            $TargetProcessName = 'outlook'
+        }
+    }
+
+    Write-Log "TargetProcessName: $TargetProcessName"
 
     $ScriptInfo = [PSCustomObject]@{
         Version    = $Script:Version
@@ -12354,19 +12369,21 @@ function Collect-OutlookInfo {
             # Close the progress bar for now.
             Write-Progress -Completed
 
+            $TargetProcessNameWithExtension = [IO.Path]::ChangeExtension($TargetProcessName, 'exe')
+
             # Ask a user when she/he wants to save a dump file
             while ($true) {
-                Write-Host "Press enter to save a process dump of Outlook. To quit, enter q: " -NoNewline
+                Write-Host "Press enter to save a process dump of $TargetProcessName. To quit, enter q: " -NoNewline
                 $userInput = $host.UI.ReadLine()
 
                 if ($userInput.ToLower().Trim() -eq 'q') {
                     break
                 }
 
-                $win32Process = Get-CimInstance 'Win32_Process' -Filter "Name = 'Outlook.exe'" | Select-Object -First 1
+                $win32Process = Get-CimInstance 'Win32_Process' -Filter "Name = '$TargetProcessNameWithExtension'" | Select-Object -First 1
 
                 if (-not $win32Process) {
-                    Write-Host "Cannot find Outlook.exe. Please start Outlook" -ForegroundColor Yellow
+                    Write-Host "Cannot find $TargetProcessNameWithExtension. Please start $TargetProcessName" -ForegroundColor Yellow
                     continue
                 }
 
@@ -12376,13 +12393,13 @@ function Collect-OutlookInfo {
 
                     if ($owner -and $owner.Sid -ne $targetUser.Sid) {
                         $owner = Resolve-User $owner.Sid
-                        Write-Host "Found Outlook.exe (PID:$($win32Process.ProcessId)), but its owner is `"$owner`", not the target user `"$targetUser`"" -ForegroundColor Yellow
+                        Write-Host "Found $TargetProcessNameWithExtension (PID:$($win32Process.ProcessId)), but its owner is `"$owner`", not the target user `"$targetUser`"" -ForegroundColor Yellow
                         continue
                     }
 
-                    Write-Progress -Activity "Saving a process dump of Outlook" -Status "Please wait" -PercentComplete -1
+                    Write-Progress -Activity "Saving a process dump of $TargetProcessName" -Status "Please wait" -PercentComplete -1
                     $dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $win32Process.ProcessId
-                    Write-Progress -Activity "Saving a process dump of Outlook" -Status "Done" -Completed
+                    Write-Progress -Activity "Saving a process dump of $TargetProcessName" -Status "Done" -Completed
                     Write-Log "Saved a dump file:$($dumpResult.DumpFile)"
                 }
                 finally {
@@ -12399,7 +12416,7 @@ function Collect-OutlookInfo {
 
             $hungMonitorArgs = @{
                 Path              = Join-Path $tempPath 'HungDump'
-                Name              = $HungMonitorTarget
+                Name              = $TargetProcessName
                 User              = $targetUser
                 Timeout           = $HungTimeout
                 DumpCount         = $MaxHungDumpCount
@@ -12407,11 +12424,7 @@ function Collect-OutlookInfo {
                 StartedEvent      = $monitorStartedEvent
             }
 
-            if (-not $PSBoundParameters.ContainsKey('HungMonitorTarget') -and $Component -contains 'NewOutlook') {
-                $hungMonitorArgs.Name = 'olk'
-            }
-
-            Write-Log "Starting HungMonitorTask. HungMonitorTarget:$($hungMonitorArgs.Name), HungTimeout:$($hungMonitorArgs.Timeout), User:$targetUser"
+            Write-Log "Starting HungMonitorTask. TargetProcessName:$($hungMonitorArgs.Name), HungTimeout:$($hungMonitorArgs.Timeout), User:$targetUser"
             $hungMonitorTask = Start-Task -Name 'HungMonitorTask' -ScriptBlock { param($Path, $Name, $User, $Timeout, $DumpCount, $CancellationToken, $StartedEvent) Start-HungMonitor @PSBoundParameters } -ArgumentList $hungMonitorArgs
             $hungDumpStarted = $true
         }
@@ -12432,14 +12445,8 @@ function Collect-OutlookInfo {
                 ShowUI  = $TTDShowUI
             }
 
-            $ttdTarget = 'outlook'
-
-            if ($Component -contains 'NewOutlook') {
-                $ttdTarget = 'olk'
-            }
-
-            # If Outlook is already running, attach to it. Otherwise, start monitoring for outlook.exe.
-            if ($outlookProcess = Get-Process -Name $ttdTarget -ErrorAction SilentlyContinue) {
+            # If the target processs (Outlook, olk, etc) is already running, attach to it. Otherwise, start monitoring
+            if ($outlookProcess = Get-Process -Name $TargetProcessName -ErrorAction SilentlyContinue) {
                 $logMsg = "Attaching TTD to $($outlookProcess.Name) (PID:$($outlookProcess.Id))"
                 Write-Log $logMsg
 
@@ -12462,7 +12469,7 @@ function Collect-OutlookInfo {
                 $ttdProcess = Receive-Task -Task $attachTask -AutoRemoveTask -ErrorAction Stop
             }
             else {
-                $ttdArgs.ExecutableName = "$ttdTarget.exe"
+                $ttdArgs.ExecutableName = $TargetProcessName
                 $ttdArgs.CommandlineFilter = $TTDCommandlineFilter
 
                 # If, for some reason, lingering "TTD.exe -monitor" is running, stop it first
@@ -12471,7 +12478,7 @@ function Collect-OutlookInfo {
                 $ttdProcess = Start-TTDMonitor @ttdArgs -ErrorAction Stop
             }
 
-            $ttdProcess | Add-Member -MemberType NoteProperty -Name 'TargetName' -Value $ttdTarget
+            $ttdProcess | Add-Member -MemberType NoteProperty -Name 'TargetProcessName' -Value $TargetProcessName
             $ttdStarted = $true
         }
 
@@ -12553,7 +12560,7 @@ function Collect-OutlookInfo {
 
             # Stopping or detaching TTD might fail if TTD.exe died during tracing. In this case, ask the user to shutdown Outlook manually so that trace file is fully written.
             if ($err) {
-                $outlookProcess = @(Get-Process -Name $ttdProcess.TargetName -ErrorAction SilentlyContinue | `
+                $outlookProcess = @(Get-Process -Name $ttdProcess.TargetProcessName -ErrorAction SilentlyContinue | `
                         Where-Object { $_.Modules | Where-Object { $_.ModuleName -match 'TTDRecordCPU' } })
 
                 if ($outlookProcess.Count) {
