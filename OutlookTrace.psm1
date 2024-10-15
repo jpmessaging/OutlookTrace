@@ -11627,6 +11627,155 @@ function Enable-CtrlC {
     $success
 }
 
+function Get-ExperimentConfigs {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        # Application name such as "Outlook" (See HKCU\Software\Microsoft\Office\16.0\Common\ExperimentConfigs\Ecs)
+        $AppName,
+        $User,
+        [switch]$SkipParsing
+    )
+
+    function Get-Value {
+        param(
+            [Parameter(Mandatory, ValueFromPipeline)]
+            [string]$data,
+            [switch]$Skip
+        )
+
+        process {
+            if ($Skip) {
+                return $data
+            }
+
+            # Note: the value can be empty (e.g. "std::wstring|")
+            if ($data -Match '(?<DataType>[\w:]+)\|(?<Value>.*)') {
+                $typeName = $Matches['DataType']
+                $value = $Matches['Value']
+
+                switch ($typeName) {
+                    'bool' { if ($value -eq 0) { $false } else { $true } }
+                    'Mso::AnyType' { $data } # as-is
+                    default { $value }
+                }
+            }
+            else {
+                Write-Verbose "Cannot parse $data"
+                $data
+            }
+        }
+    }
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+    $key = Join-Path $userRegRoot "Software\Microsoft\Office\16.0\Common\ExperimentConfigs\Ecs\$AppName\ConfigContextData"
+
+    # Read ChunkCount and VersionId
+    $configContextData = Get-ItemProperty $key -Name 'ChunkCount', 'VersionId' -ErrorAction SilentlyContinue
+
+    if (-not $configContextData) {
+        Write-Error "Cannot find ChunkCount & VersionId in $($key | ConvertFrom-PSPath)"
+        return
+    }
+
+    # ChunkCount is a string like "uint64_t|40". Extract the value
+    $chunkCount = $null
+    $versionId = $null
+
+    if ($configContextData.ChunkCount -Match '(?<DataType>\w+)\|(?<Value>\w+)') {
+        $chunkCount = $Matches['Value'] -as [int]
+    }
+
+    if (-not $chunkCount) {
+        Write-Error "ChunkCount registry value is missing in $key"
+        return
+    }
+
+    # VersionId is a string like "uint16_t|1". Extract the value
+    if ($configContextData.VersionId -Match '(?<DataType>\w+)\|(?<Value>\w+)') {
+        $versionId = $Matches['Value']
+    }
+
+    if (-not $versionId) {
+        Write-Error "VersionId registry value is missing in $key"
+        return
+    }
+
+    $sb = New-Object System.Text.StringBuilder
+
+    # Read "1", "1.1", "1.2", ... "1.40"
+    for ($chunkIndex = 0; $chunkIndex -le $chunkCount; ++$chunkIndex) {
+        $name = $versionId
+
+        if ($chunkIndex -gt 0) {
+            $name += ".$chunkIndex"
+        }
+
+        $bin = Get-ItemProperty $key -Name $name | Select-Object -ExpandProperty $name
+        $null = $sb.Append([System.Text.Encoding]::ASCII.GetString($bin))
+    }
+
+    $dataString = $sb.ToString()
+    Write-Verbose "Raw string: `n$dataString"
+
+    # Extract "EcsConfigResponseData" json value
+    $keyword = 'EcsConfigResponseData|'
+    $jsonData = $dataString.Substring($dataString.IndexOf($keyword) + $keyword.Length)
+
+    $config = ConvertFrom-Json $jsonData
+
+    # If SkipParsing is specified, make Get-Value a no-op
+    $skipParamKey = 'Get-Value:Skip'
+
+    if ($SkipParsing) {
+        $PSDefaultParameterValues[$skipParamKey] = $true
+    }
+
+    # Parse FCMap
+    # It's an array of kvp, where Key is "F" and Value is "V".
+    # Note:fcMap itself should not be an object because it's possible that there are multiple properties with the same name with different cases
+    # e.g. "Microsoft.Office.FileIO.NoDocumentVersionsCommandsForHistoricVersions" & "Microsoft.Office.FileIO.nodocumentversionscommandsforhistoricversions"
+    $fcMap = @(
+        foreach ($item in $config.FCMap) {
+            [PSCustomObject]@{
+                Name  = $item.F
+                Value = $item.V | Get-Value
+            }
+        }
+    )
+
+    # Parse FCGroupMap
+    # It's an object with properties called "FCGroupMap_1", "FCGroupMap_2" etc. and each group is an array of kvp, where Key is "F" and Value is "V")
+    $fcGroupMap = @{}
+
+    $config.FCGroupMap | Get-Member -MemberType Properties | & {
+        process {
+            $values = @(
+                foreach ($item in $config.FCGroupMap.($_.Name)) {
+                    [PSCustomObject]@{
+                        Name  = $item.F
+                        Value = $item.V | Get-Value
+                    }
+                }
+            )
+
+            $fcGroupMap.($_.Name) = $values
+        }
+    }
+
+    [PSCustomObject]@{
+        Version               = $config.Ver | Get-Value
+        CountryCode           = $config.CC | Get-Value
+        DeferredConfigs       = $config.DefConfs | Get-Value
+        ExpiryTime            = if ($SkipParsing) { $config.ExpTime } else { [DateTimeOffset]::FromUnixTimeSeconds(($config.ExpTime | Get-Value)).DateTime }
+        ETag                  = $config.ETag | Get-Value
+        FeatureConfigMap      = $fcMap
+        GroupFeatureConfigMap = [PSCustomObject]$fCGroupMap
+    }
+
+    $PSDefaultParameterValues.Remove($skipParamKey)
+}
+
 <#
 .SYNOPSIS
 Wait until user enters Enter key or Ctrl+C.
@@ -12845,4 +12994,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Collect-OutlookInfo
