@@ -11765,9 +11765,10 @@ function Get-ExperimentConfigs {
 
     [PSCustomObject]@{
         Version               = $config.Ver | Get-Value
+        ConfigIds             = $config.ConfIds | Get-Value
         CountryCode           = $config.CC | Get-Value
         DeferredConfigs       = $config.DefConfs | Get-Value
-        ExpiryTime            = if ($SkipParsing) { $config.ExpTime } else { [DateTimeOffset]::FromUnixTimeSeconds(($config.ExpTime | Get-Value)).DateTime }
+        ExpiryTime            = if ($SkipParsing) { $config.ExpTime } else { [DateTimeOffset]::FromUnixTimeSeconds(($config.ExpTime | Get-Value)).LocalDateTime }
         ETag                  = $config.ETag | Get-Value
         FeatureConfigMap      = $fcMap
         GroupFeatureConfigMap = [PSCustomObject]$fCGroupMap
