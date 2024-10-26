@@ -3914,7 +3914,7 @@ function Get-ProxyAutoConfig {
                     $pacUrl = $wpadUrl.ToString().ToLowerInvariant()
 
                     if ($urlCache.ContainsKey($pacUrl)) {
-                        Write-Log "Skipped $pacUrl because it's already tried"
+                        Write-Log "Skipped a PAC URL '$pacUrl' (Connection:$($proxy.Connection)) because it's already tried"
                     }
                     else {
                         $urlCache.Add($pacUrl, $true)
