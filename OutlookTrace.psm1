@@ -4302,7 +4302,7 @@ function Get-OutlookProfile {
                     $dataFiles = $storeProviders | Get-DataFile -MailAccounts $mailAccounts
                 }
                 else {
-                    Write-Log "Profile $profileName does not have mail accounts" -Category Warning
+                    Write-Log "Profile '$profileName' does not have mail accounts" -Category Warning
                 }
 
                 [PSCustomObject]@{
@@ -4625,9 +4625,9 @@ function Get-GlobalSection {
 
         $ABSearchPathCustomizationName = switch ($ABSearchPathCustomization) {
             0 { 'Custom'; break }
-            1 { 'Start with Global Addrss List'; break }
+            1 { 'Start with Global Address List'; break }
             2 { 'Start with contact folders'; break }
-            default { 'Start with Global Addrss List'; break }
+            default { 'Start with Global Address List'; break }
         }
 
         [PSCustomObject]@{
@@ -7580,6 +7580,8 @@ function Enable-PageHeap {
         return
     }
 
+    $ProcessName = [IO.Path]::ChangeExtension($ProcessName, 'exe')
+
     Disable-PageHeap -ProcessName $ProcessName -ErrorAction SilentlyContinue
 
     $IFEO = 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
@@ -7619,6 +7621,8 @@ function Disable-PageHeap {
         Write-Error "Please run as administrator"
         return
     }
+
+    $ProcessName = [IO.Path]::ChangeExtension($ProcessName, 'exe')
 
     $IFEO = 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
     $imageKeyPath = Join-Path $IFEO $ProcessName
@@ -11764,6 +11768,7 @@ function Get-ExperimentConfigs {
     }
 
     [PSCustomObject]@{
+        AppName               = $AppName
         Version               = $config.Ver | Get-Value
         ConfigIds             = $config.ConfIds | Get-Value
         CountryCode           = $config.CC | Get-Value
@@ -11981,6 +11986,95 @@ function ConvertFrom-ArgumentList {
 
 <#
 .SYNOPSIS
+    Helper function to select a single process instance (owner is also checked When User parameter is given)
+    If there are multipile processes, ask the user.
+#>
+function Get-SingleProcess {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        # Process name (such as 'outlook')
+        [string]$Name,
+        $User
+    )
+
+    $processName = [IO.Path]::ChangeExtension($Name, 'exe')
+
+    $win32Processes = @(Get-CimInstance 'Win32_Process' -Filter "Name = '$processName'")
+
+    # Check if its owner is the target user
+    if ($User) {
+        $win32Processes = @(
+            foreach ($win32Proc in $win32Processes) {
+                $owner = $win32Proc | Get-ProcessOwner
+
+                if ($owner -and $owner.Sid -ne $User.Sid) {
+                    Write-Log -Message "Skipping $processName (PID:$($win32Proc.ProcessId)) because its owner is `"$owner`", not the target user `"$User`"" -Category Warning
+                    $win32Proc.Dispose()
+                    continue
+                }
+
+                $win32Proc
+            }
+        )
+    }
+
+    $selectedProcess = $null
+
+    try {
+        switch ($win32Processes.Count) {
+            0 { <# nothing to return #> break }
+            1 { $selectedProcess = $win32Processes[0]; break }
+
+            default {
+                # Multiple instances are found. Ask the user to select one.
+                $msg = New-Object System.Text.StringBuilder -ArgumentList "Multiple instances of $processName are found:`n`n"
+
+                foreach ($win32Proc in $win32Processes) {
+                    $null = $msg.Append("- $($win32Proc.Name) (PID:$($win32Proc.ProcessId))`n")
+                }
+
+                Write-Host $msg.ToString() -ForegroundColor Yellow
+
+                while (-not $selectedProcess) {
+                    Write-Host "Please enter the PID of the target process: " -NoNewline
+                    $userInput = $host.UI.ReadLine()
+                    $id = 0
+
+                    if ([int]::TryParse($userInput, [ref]$id)) {
+                        $selectedProcess = $win32Processes | Where-Object { $_.ProcessId -eq $id }
+
+                        if (-not $selectedProcess) {
+                            Write-Host "Cannot find $processName with PID:$id" -ForegroundColor Yellow
+                        }
+                    }
+                    elseif ($userInput -eq 'q') {
+                        break
+                    }
+                    else {
+                        Write-Host "Invalid input `"$userInput`". Please enter a valid PID (to quit, press q)" -ForegroundColor Yellow
+                    }
+                }
+            }
+        }
+
+        if ($selectedProcess) {
+            # Return an object with minimal info so that the caller does not need to dispose the object
+            [PSCustomObject]@{
+                Id   = $selectedProcess.ProcessId
+                Name = $selectedProcess.Name
+            }
+        }
+    }
+    finally {
+        foreach ($win32Proc in $win32Processes) {
+            $win32Proc.Dispose()
+        }
+    }
+}
+
+<#
+.SYNOPSIS
     Collect Microsoft Office Outlook related configuration & traces
 .DESCRIPTION
     This will collect different kinds of traces & log files depending on the value specified in the "Component" parameter.
@@ -12036,7 +12130,7 @@ function Collect-OutlookInfo {
         [string]$TargetProcessName,
         # Names of the target processes for crash dumps. When not specified, all processes will be the targets.
         [string[]]$CrashDumpTargets,
-        # Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)
+        # Switch to enable full page heap for the target process (With page heap, Outlook will consume a lot of memory and slow down)
         [switch]$EnablePageHeap,
         # Switch to add Microsoft.AAD.BrokerPlugin to Loopback Exempt
         [switch]$EnableLoopbackExempt,
@@ -12255,9 +12349,9 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($User) Remove-IdentityCache @PSBoundParameters } -ArgumentList @{ User = $targetUser }
         }
 
-        # Enable PageHeap for outlook.exe
+        # Enable PageHeap for the target process
         if ($EnablePageHeap) {
-            $pageHeapEnabled = Enable-PageHeap -ProcessName 'outlook.exe' -ErrorAction Stop
+            $pageHeapEnabled = Enable-PageHeap -ProcessName $TargetProcessName -ErrorAction Stop
         }
 
         # List of "Started" events for Wait & Close all at once.
@@ -12463,7 +12557,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'LDAP') {
-            Start-LDAPTrace -Path (Join-Path $tempPath 'LDAP') -TargetExecutable 'Outlook.exe'
+            Start-LDAPTrace -Path (Join-Path $tempPath 'LDAP') -TargetExecutable $TargetProcessName
             $ldapTraceStarted = $true
         }
 
@@ -12519,41 +12613,36 @@ function Collect-OutlookInfo {
             # Close the progress bar for now.
             Write-Progress -Completed
 
-            $TargetProcessNameWithExtension = [IO.Path]::ChangeExtension($TargetProcessName, 'exe')
-
             # Ask a user when she/he wants to save a dump file
             while ($true) {
-                Write-Host "Press enter to save a process dump of $TargetProcessName. To quit, enter q: " -NoNewline
+                Write-Host "Press enter to save a process dump of $TargetProcessName. To quit, press q: " -NoNewline
                 $userInput = $host.UI.ReadLine()
 
                 if ($userInput.ToLower().Trim() -eq 'q') {
                     break
                 }
 
-                $win32Process = Get-CimInstance 'Win32_Process' -Filter "Name = '$TargetProcessNameWithExtension'" | Select-Object -First 1
+                $process = Get-SingleProcess -Name $TargetProcessName -User $targetUser
 
-                if (-not $win32Process) {
-                    Write-Host "Cannot find $TargetProcessNameWithExtension. Please start $TargetProcessName" -ForegroundColor Yellow
+                if (-not $process) {
+                    Write-Host "Cannot find $TargetProcessName. Please start $TargetProcessName" -ForegroundColor Yellow
                     continue
                 }
 
-                try {
-                    # Check its owner is the target user
-                    $owner = $win32Process | Get-ProcessOwner
+                $activity = "Saving a process dump of $TargetProcessName"
+                Write-Progress -Activity $activity -Status "Please wait" -PercentComplete -1
 
-                    if ($owner -and $owner.Sid -ne $targetUser.Sid) {
-                        $owner = Resolve-User $owner.Sid
-                        Write-Host "Found $TargetProcessNameWithExtension (PID:$($win32Process.ProcessId)), but its owner is `"$owner`", not the target user `"$targetUser`"" -ForegroundColor Yellow
-                        continue
-                    }
+                $err = $($dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $process.Id) 2>&1
 
-                    Write-Progress -Activity "Saving a process dump of $TargetProcessName" -Status "Please wait" -PercentComplete -1
-                    $dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $win32Process.ProcessId
-                    Write-Progress -Activity "Saving a process dump of $TargetProcessName" -Status "Done" -Completed
-                    Write-Log "Saved a dump file:$($dumpResult.DumpFile)"
+                Write-Progress -Activity $activity -Status "Done" -Completed
+
+                if ($dumpResult) {
+                    Write-Host "A dump file of $($dumpResult.ProcessName) (PID:$($dumpResult.ProcessId)) was successfully saved" -ForegroundColor Green
+                    Write-Log "Saved a dump file of $($dumpResult.ProcessName) (PID:$($dumpResult.ProcessId)):$($dumpResult.DumpFile)"
                 }
-                finally {
-                    $win32Process.Dispose()
+                else {
+                    Write-Error "Failed to save a dump file of $($dumpResult.ProcessName) (PID:$($dumpResult.ProcessId)). $err"
+                    Write-Log -Message "Save-Dump failed for $($dumpResult.ProcessName) (PID:$($dumpResult.ProcessId)). $err" -ErrorRecord $err -Category Error
                 }
             }
         }
@@ -12595,13 +12684,14 @@ function Collect-OutlookInfo {
                 ShowUI  = $TTDShowUI
             }
 
-            # If the target processs (Outlook, olk, etc) is already running, attach to it. Otherwise, start monitoring
-            if ($outlookProcess = Get-Process -Name $TargetProcessName -ErrorAction SilentlyContinue) {
-                $logMsg = "Attaching TTD to $($outlookProcess.Name) (PID:$($outlookProcess.Id))"
+            # If the target process (Outlook, olk, etc) is already running, attach to it. Otherwise, start monitoring
+            $process = Get-SingleProcess -Name $TargetProcessName -User $targetUser
+
+            if ($process) {
+                $logMsg = "Attaching TTD to $($process.Name) (PID:$($process.Id))"
                 Write-Log $logMsg
 
-                $ttdArgs.ProcessId = $outlookProcess.Id
-                $outlookProcess.Dispose()
+                $ttdArgs.ProcessId = $process.Id
 
                 # Attach TTD with a background task and asynchronously wait
                 $attachTask = Start-Task -Name 'AttachTTD' -ScriptBlock { param($TTDPath, $Path, $ProcessID, $ShowUI) Attach-TTD @PSBoundParameters } -ArgumentList $ttdArgs
@@ -12745,7 +12835,7 @@ function Collect-OutlookInfo {
 
         if ($ldapTraceStarted) {
             Write-Progress -Status 'Stopping LDAP trace'
-            Stop-LDAPTrace -TargetExecutable 'Outlook.exe' 2>&1 | Write-Log -Category Error -PassThru
+            Stop-LDAPTrace -TargetExecutable $TargetProcessName 2>&1 | Write-Log -Category Error -PassThru
         }
 
         if ($capiTraceStarted) {
@@ -12916,7 +13006,7 @@ function Collect-OutlookInfo {
         }
 
         if ($pageHeapEnabled) {
-            Disable-PageHeap -ProcessName 'outlook.exe' 2>&1 | Write-Log -Category Error -PassThru
+            Disable-PageHeap -ProcessName $TargetProcessName 2>&1 | Write-Log -Category Error -PassThru
         }
 
         if ($loopbackExemptAdded) {
