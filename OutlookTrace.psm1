@@ -5615,7 +5615,7 @@ function Start-LdapTrace {
     $traceFile = Join-Path $Path -ChildPath $FileName
 
     # Start ETW session
-    Write-Log "Starting a LDAP trace"
+    Write-Log "Starting a LDAP trace for $TargetExecutable"
     $err = $($stdout = Invoke-Command {
             $ErrorActionPreference = 'Continue'
             & logman.exe create trace $SessionName -ow -o $traceFile -p Microsoft-Windows-LDAP-Client 0x1a59afa3 0xff -bs 1024 -mode $mode -max $MaxFileSizeMB -ets
@@ -12455,6 +12455,7 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($User) Get-OfficeIdentity @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-PrivacyPolicy @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-MapiCorruptFiles @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-ExperimentConfigs -AppName 'outlook' @PSBoundParameters }
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:ArgumentList')
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:Path')
 
