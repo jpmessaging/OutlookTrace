@@ -8816,6 +8816,7 @@ function Start-PerfTrace {
         '\Processor(*)\*'
         '\TCPv4\*'
         '\TCPv6\*'
+        '\System\Processor Queue Length'
     )
 
     $configFile = Join-Path $Path "perf.config"
