@@ -12489,6 +12489,7 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($User) Get-PrivacyPolicy @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-MapiCorruptFiles @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-ExperimentConfigs -AppName 'outlook' @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-CloudSettings @PSBoundParameters }
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:ArgumentList')
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:Path')
 
