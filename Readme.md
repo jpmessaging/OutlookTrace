@@ -10,31 +10,45 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
 1.  Shutdown Outlook if it's running.
 2.  Download OutlookTrace.psm1 and place it on the target machine.
-3.  Start cmd as administrator.
-4.  Start PowerShell as follow.
+3.  Start PowerShell as administrator.
+4.  Run the following command to unblock the file.
 
     ```PowerShell
-    powershell -ExecutionPolicy Bypass
-    ```
-
-5.  Import OutlookTrace.psm1
-
-    ```
-    Import-Module <path to OutlookTrace.psm1> -DisableNameChecking
+    Unblock-File <Path to OutlookTrace.psm1>
     ```
 
     e.g.
 
+    ```PowerShell
+    Unblock-File C:\temp\OutlookTrace.psm1
     ```
+
+5. Temporarily set ExecutionPolicy to `RemoteSigned`.
+
+   ```PowerShell
+   Set-ExecutionPolicy RemoteSigned -Scope Process
+   ```
+
+    Press `Y` when asked for a confirmation.
+
+6.  Import OutlookTrace.psm1.
+
+    ```PowerShell
+    Import-Module <Path to OutlookTrace.psm1> -DisableNameChecking
+    ```
+
+    e.g.
+
+    ```PowerShell
     Import-Module C:\temp\OutlookTrace.psm1 -DisableNameChecking
     ```
 
-6.  Run `Collect-OutlookInfo`
+7.  Run `Collect-OutlookInfo`.
 
     Note: Follow Microsoft engineer's instruction regarding which components to trace.
 
     ```
-    Collect-OutlookInfo -Path <output folder> -Component <components to trace>
+    Collect-OutlookInfo -Path <Output folder> -Component <components to trace>
     ```
 
     e.g.
@@ -43,7 +57,7 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
     Collect-OutlookInfo -Path C:\temp -Component Configuration, Outlook, Netsh, PSR, WAM
     ```
 
-7.  When traces have started successfully, it shows "Press enter to stop".
+8.  When traces have started successfully, it shows `Press enter to stop`.
 
     Note: When `Dump` is included in Component parameter, you are prompted with `Press enter to save a process dump of Outlook. To quit, enter q:`. Press enter key to save a dump file. For a hang issue, repeat the process to collect 3 dump files, with interval of about 30 seconds between saves. When finished, press `q`.
 
@@ -87,8 +101,8 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
     </details>
 
-8.  Start Outlook and reproduce the issue.
-9.  When "Fiddler" is included, stop and save the capture.
+9.  Start Outlook and reproduce the issue.
+10. When `Fiddler` is included, stop and save the capture.
 
     <details>
     <summary>How to stop Fiddler capture</summary>
@@ -114,7 +128,7 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
     </details>
 
-10. Press enter key in the console to stop.
+11. Press enter key in the console to stop.
 
 Send the zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 6.  
 If you captured a Fiddler trace, send the password used in step 9 too.
@@ -165,18 +179,18 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 
 | Name                 | Description                                                                                                                                    |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| NetshReportMode      | Netsh trace's report mode. Valid values: `None`, `Mini`, `Full` (Default: `None`)                                                              |
+| User                 | Target user whose configuration data is collected. By default, it's the logon user (Note: Not necessarily the current user running the script) |
 | LogFileMode          | ETW trace's mode. Valid values: `NewFile`, `Circular` (Default: `NewFile`)                                                                     |
 | MaxFileSizeMB        | Max file size for ETW trace files. By default, 256 MB when `NewFile` and 2048 MB when `Circular`                                               |
+| NetshReportMode      | Netsh trace's report mode. Valid values: `None`, `Mini`, `Full` (Default: `None`)                                                              |
 | ArchiveType          | Valid values: `Zip` or `Cab`. Zip is faster, but Cab is smaller (Default: `Zip`)                                                               |
 | SkipArchive          | Switch to skip archiving (zip or cab)                                                                                                          |
 | SkipAutoUpdate       | Switch to skip auto update                                                                                                                     |
 | AutoFlush            | Switch to flush log data every time it's written (This is just for troubleshooting the script)                                                 |
 | PsrRecycleInterval   | PSR recycle interval. A new instance of PSR is created after this interval (Default: `00:10:00`, Min: `00:01:00`, Max: `01:00:00`)             |
-| User                 | Target user whose configuration data is collected. By default, it's the logon user (Note: Not necessarily the current user running the script) |
 | HungTimeout          | TimeSpan used to detect a hung window when `HungDump` is in `Component` parameter (Default: `00:00:05`, Min: `00:00:01`, Max: `00:01:00`)      |
-| HungMonitorTarget    | Name of the target process to monitor a hung window (Default: `Outlook`, or `olk` when `NewOutlook` is in `Component` parameter)               |
 | MaxHungDumpCount     | Max number of hung dump files to be saved per process instance (Default: `3`, Min: `1`, Max: `10`)                                             |
+| TargetProcessName    | Target process name (such as `Outlook` or `olk`). By default `Outlook`. `olk` when `NewOutlook` is in `Component` parameter                    |
 | CrashDumpTargets     | Names of the target processes for crash dumps. When not specified, all processes are the targets                                               |
 | RemoveIdentityCache  | Switch to remove identity cache                                                                                                                |
 | EnablePageHeap       | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                           |
