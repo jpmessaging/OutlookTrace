@@ -42,7 +42,7 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 6. OutlookTrace.psm1 をインポートします。
 
     ```PowerShell
-    Import-Module <OutlookTrace.psm1 へのパス> -DisableNameChecking
+    Import-Module <OutlookTrace.psm1 のパス> -DisableNameChecking
     ```
 
     例:

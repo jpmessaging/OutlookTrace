@@ -11796,7 +11796,7 @@ function Get-CloudSettings {
     }
 
     Join-Path $userRegRoot 'Software\Microsoft\Office\Outlook\Settings\Data' `
-    | Get-ItemProperty `
+    | Get-ItemProperty -ErrorAction SilentlyContinue `
     | Split-ItemProperty `
     | & {
         process {
