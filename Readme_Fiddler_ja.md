@@ -6,6 +6,14 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 
 [ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2024-11-11/OutlookTrace.psm1)
 
+SHA256: `F407E0297966676DD07FE3DE9E4B5B163B3078E5BD16A775A0C78D06B8C00C9F`
+
+`Get-FileHash` コマンドでファイル ハッシュを取得できます:  
+
+  ```PowerShell
+  Get-FileHash <Path to OutlookTrace.psm1> -Algorithm SHA256
+  ```
+
 ## 利用方法
 
 1. ログの出力先フォルダーを作成します。以下の説明では C:\temp を出力先フォルダーの例として使用します。
