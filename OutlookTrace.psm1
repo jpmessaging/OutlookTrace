@@ -4685,7 +4685,7 @@ function Get-StoreProvider {
             $props = [ordered]@{}
 
             if ($displayNameBin = $store.$($PropTags.PR_DISPLAY_NAME)) {
-                $props.DisplayName = [System.Text.Encoding]::Unicode.GetString($displayNameBin)
+                $props.DisplayName = Get-MapiString $displayNameBin
             }
 
             if ($resourceFlagsBin = $store.$($PropTags.PR_RESOURCE_FLAGS)) {
@@ -4693,11 +4693,11 @@ function Get-StoreProvider {
             }
 
             if ($alternateStoreTypeBin = $store.$($PropTags.PR_PROFILE_ALTERNATE_STORE_TYPE)) {
-                $props.AlternateStoreType = [System.Text.Encoding]::Unicode.GetString($alternateStoreTypeBin)
+                $props.AlternateStoreType = Get-MapiString $alternateStoreTypeBin
             }
 
             if ($pstPath = $store.$($PropTags.PR_PROFILE_PST_PATH)) {
-                $props.PstPath = [System.Text.Encoding]::Unicode.GetString($pstPath, 0, $pstPath.Length - 2)
+                $props.PstPath = Get-MapiString $pstPath
                 $props.PstSize = 'Unknown'
 
                 if ($props.PstPath -and (Test-Path $props.PstPath)) {
@@ -4711,11 +4711,11 @@ function Get-StoreProvider {
             }
 
             if ($userSmtpEmailAddressBin = $store.$($PropTags.PR_PROFILE_USER_SMTP_EMAIL_ADDRESS)) {
-                $props.UserSmtpEmailAddress = [System.Text.Encoding]::Unicode.GetString($userSmtpEmailAddressBin)
+                $props.UserSmtpEmailAddress = Get-MapiString $userSmtpEmailAddressBin
             }
 
             if ($tenantIdBin = $store.$($PropTags.PR_PROFILE_TENANT_ID)) {
-                $props.TenantId = [System.Text.Encoding]::Unicode.GetString($tenantIdBin)
+                $props.TenantId = Get-MapiString $tenantIdBin
             }
 
             if ($entryIdBin = $store.$($PropTags.PR_ENTRYID)) {
@@ -4773,19 +4773,19 @@ function Get-MapiAccount {
     }
 
     if ($displayNameBin = $emsmdb.$($PropTags.PR_DISPLAY_NAME)) {
-        $props.DisplayName = [System.Text.Encoding]::Unicode.GetString($displayNameBin)
+        $props.DisplayName = Get-MapiString $displayNameBin
     }
 
     if ($identityUniqueIdBin = $emsmdb.$($PropTags.PR_EMSMDB_IDENTITY_UNIQUEID)) {
-        $props.IdentityUniqueId = [System.Text.Encoding]::Unicode.GetString($identityUniqueIdBin)
+        $props.IdentityUniqueId = Get-MapiString $identityUniqueIdBin
     }
 
     if ($userFullNameBin = $emsmdb.$($PropTags.PR_PROFILE_USER_FULL_NAME)) {
-        $props.UserFullName = [System.Text.Encoding]::Unicode.GetString($userFullNameBin)
+        $props.UserFullName = Get-MapiString $userFullNameBin
     }
 
     if ($ostPath = $emsmdb.$($PropTags.PR_PROFILE_OFFLINE_STORE_PATH)) {
-        $props.OstPath = [System.Text.Encoding]::Unicode.GetString($ostPath, 0, $ostPath.Length - 2)
+        $props.OstPath = Get-MapiString $ostPath
         $props.OstSize = 'Unknown'
 
         if ($props.OstPath -and (Test-Path $props.OstPath)) {
@@ -4842,6 +4842,11 @@ function Get-MapiAccount {
         [Win32.Mapi.SharedCalProfileConfigFlags]$props.SharedCalendarOption = [BitConverter]::ToInt32($configFlagsExBin, 0) -band 0xffff
     }
 
+    # Connected Experience
+    if ($props.IdentityUniqueId) {
+        $props.ConnectedExperienceEnabled = Get-ConnectedExperience $props.IdentityUniqueId | Select-Object -ExpandProperty 'Enabled'
+    }
+
     [PSCustomObject]$props
 }
 
@@ -4862,6 +4867,32 @@ function Format-ByteSize {
     }
 
     "{0:N2} {1}" -f $Size, $suffix[$index]
+}
+
+<#
+.SYNOPSIS
+    Get a string from a byte array of PT_STRING8 or MAPI PT_UNICODE value.
+    The data is interpreted as PT_UNICODE by default. Use "Ascii" switch for PT_STRING8.
+#>
+function Get-MapiString {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [byte[]]$Bin,
+        # Interpret as PT_STRING8
+        [switch]$Ascii
+    )
+
+    # PT_UNICODE ends with a double-byte NULL (0x00 00)
+    $terminatingNullCount = 2
+
+    # PT_STRING8 ends with a single NULL (0x00)
+    if ($Ascii) {
+        $terminatingNullCount = 1
+    }
+
+    [System.Text.Encoding]::Unicode.GetString($Bin, 0, $Bin.Length - $terminatingNullCount)
 }
 
 <#
@@ -9914,7 +9945,7 @@ function Get-OfficeIdentity {
     }
 
     foreach ($identity in $identities) {
-        $connectedExperience = Get-ConnectedExperience $identity
+        $connectedExperience = Get-ConnectedExperience $identity.PSChildName
 
         [PSCustomObject]@{
             Profile                    = $identity.PSChildName
@@ -9937,7 +9968,7 @@ function Get-ConnectedExperience {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        $Identity
+        [string]$Identity
     )
 
     if (-not $userRegRoot) {
@@ -9949,12 +9980,11 @@ function Get-ConnectedExperience {
     }
 
     # Check Office's roaming settings.
-    $profileName = $Identity.PSChildName
     $roamingSettingsPath = Join-Path $userRegRoot 'Software\Microsoft\Office\16.0\Common\Roaming\Identities' `
-    | Join-Path -ChildPath $profileName | Join-Path -ChildPath 'Settings\1272\{00000000-0000-0000-0000-000000000000}'
+    | Join-Path -ChildPath $Identity | Join-Path -ChildPath 'Settings\1272\{00000000-0000-0000-0000-000000000000}'
 
     if (-not (Test-Path $roamingSettingsPath)) {
-        Write-Log "Cannot find roaming settings for $profileName"
+        Write-Log "Cannot find roaming settings for $Identity"
         return
     }
 
@@ -9973,7 +10003,7 @@ function Get-ConnectedExperience {
         $value = [BitConverter]::ToInt32($data, 0)
     }
     else {
-        Write-Log "There is no roaming data for $profileName"
+        Write-Log "There is no roaming data for $Identity"
     }
 
     # 1 == Enabled, 2 == Disabled
