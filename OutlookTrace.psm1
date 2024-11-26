@@ -4884,15 +4884,16 @@ function Get-MapiString {
         [switch]$Ascii
     )
 
-    # PT_UNICODE ends with a double-byte NULL (0x00 00)
-    $terminatingNullCount = 2
-
-    # PT_STRING8 ends with a single NULL (0x00)
     if ($Ascii) {
+        # PT_STRING8 ends with a single NULL (0x00)
         $terminatingNullCount = 1
+        [System.Text.Encoding]::ASCII.GetString($Bin, 0, $Bin.Length - $terminatingNullCount)
     }
-
-    [System.Text.Encoding]::Unicode.GetString($Bin, 0, $Bin.Length - $terminatingNullCount)
+    else {
+        # PT_UNICODE ends with a double-byte NULL (0x00 00)
+        $terminatingNullCount = 2
+        [System.Text.Encoding]::Unicode.GetString($Bin, 0, $Bin.Length - $terminatingNullCount)
+    }
 }
 
 <#
