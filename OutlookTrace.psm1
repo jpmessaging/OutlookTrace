@@ -9986,20 +9986,17 @@ function Get-OfficeIdentity {
     }
 
     foreach ($identity in $identities) {
-        $connectedExperience = Get-ConnectedExperience $identity.PSChildName
-
         [PSCustomObject]@{
-            Profile                    = $identity.PSChildName
-            LastSwitchedTime           = $identity.LastSwitchedTime
-            IsActive                   = $identity -eq $activeIdentity
-            EmailAddress               = $identity.EmailAddress
-            FriendlyName               = $identity.FriendlyName
-            HomeTenantId               = $identity.HomeTenantId
-            SigninName                 = $identity.SigninName
-            IdP                        = $IdpMapping[$identity.IdP]
-            # Persisted                  = $identity.Persisted -eq 1
-            SignedOut                  = $identity.SignedOut -eq 1
-            ConnectedExperienceEnabled = $connectedExperience.Enabled
+            Profile          = $identity.PSChildName
+            LastSwitchedTime = $identity.LastSwitchedTime
+            IsActive         = $identity -eq $activeIdentity
+            EmailAddress     = $identity.EmailAddress
+            FriendlyName     = $identity.FriendlyName
+            HomeTenantId     = $identity.HomeTenantId
+            SigninName       = $identity.SigninName
+            IdP              = $IdpMapping[$identity.IdP]
+            SignedOut        = $identity.SignedOut -eq 1
+            # Persisted      = $identity.Persisted -eq 1
         }
     }
 }
