@@ -205,6 +205,7 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 | EnableLoopbackExempt | Switch to add Microsoft.AAD.BrokerPlugin to Loopback Exempt                                                                                    |
 | SkipVersionCheck     | Switch to skip script version check                                                                                                            |
 | TTDCommandlineFilter | Command line filter for TTD monitor                                                                                                            |
+| TTDModules           | Restrict TTD trace to specified modules                                                                                                        |
 | TTDShowUI            | Switch to show TTD UI                                                                                                                          |
 | WprProfiles          | WPR profiles to capture (Default: `GeneralProfile`, `CPU`, `DiskIO`, `FileIO`, `Registry`, `Network`)                                          |
 

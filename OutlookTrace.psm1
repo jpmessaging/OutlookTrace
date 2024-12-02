@@ -6990,6 +6990,7 @@ function Start-TTDMonitor {
         $ExecutableName,
         [Alias('CmdLineFilter')]
         [string]$CommandlineFilter,
+        [string[]]$Modules,
         [switch]$ShowUI
     )
 
@@ -7001,6 +7002,13 @@ function Start-TTDMonitor {
 
     # Make sure extension is ".exe"
     $ExecutableName = [IO.Path]::ChangeExtension($ExecutableName, 'exe')
+
+    foreach ($module in $Modules) {
+        if (-not [IO.Path]::GetExtension($module)) {
+            Write-Error "Module name must have an extension. Invalid module name:`"$module`""
+            return
+        }
+    }
 
     $outPath = $Path.ToString()
 
@@ -7022,6 +7030,12 @@ function Start-TTDMonitor {
             }
 
             '-cmdLineFilter', $CommandlineFilter
+        }
+
+        if ($Modules) {
+            $Modules | ForEach-Object {
+                "-module $_"
+            }
         }
 
         if (-not $ShowUI) {
@@ -7148,6 +7162,8 @@ function Attach-TTD {
         # Target Process ID
         [ValidateRange(4, [int]::MaxValue)]
         [int]$ProcessId,
+        # Module names to trace. Must have extension.
+        [string[]]$Modules,
         [Switch]$ShowUI
     )
 
@@ -7163,6 +7179,13 @@ function Attach-TTD {
     else {
         Write-Error "Cannot find a process with $ProcessId"
         return
+    }
+
+    foreach ($module in $Modules) {
+        if (-not [IO.Path]::GetExtension($module)) {
+            Write-Error "Module name must have an extension. Invalid module name:`"$module`""
+            return
+        }
     }
 
     # Make sure TTD.exe is available.
@@ -7194,6 +7217,12 @@ function Attach-TTD {
         '-out', $outPath
         '-attach', $ProcessId,
         '-onInitCompleteEvent', $initCompleteEventName
+
+        if ($Modules) {
+            $Modules | ForEach-Object {
+                "-module $_"
+            }
+        }
 
         if (-not $ShowUI) {
             '-noUI'
@@ -12316,6 +12345,8 @@ function Collect-OutlookInfo {
         [switch]$SkipVersionCheck,
         # Command line filter for TTD monitor
         [string]$TTDCommandlineFilter,
+        # Restrict TTD trace to specified modules
+        [string[]]$TTDModules,
         # Switch to show TTD UI
         [switch]$TTDShowUI,
         [ValidateSet('GeneralProfile', 'CPU', 'DiskIO', 'FileIO', 'Registry', 'Network', 'Heap', 'Pool', 'VirtualAllocation', 'Audio', 'Video', 'Power', 'InternetExplorer', 'EdgeBrowser', 'Minifilter', 'GPU', 'Handle', 'XAMLActivity', 'HTMLActivity', 'DesktopComposition', 'XAMLAppResponsiveness', 'HTMLResponsiveness', 'ReferenceSet', 'ResidentSet', 'XAMLHTMLAppMemoryAnalysis', 'UTC', 'DotNET', 'WdfTraceLoggingProvider', 'HeapSnapshot')]
@@ -12858,9 +12889,11 @@ function Collect-OutlookInfo {
             $version = Get-ItemProperty $ttdPath | Select-Object -ExpandProperty 'VersionInfo'
             Write-Log "Using $ttdPath (Version:$($version.FileVersion))"
 
+            # Common args for Attach-TTD and Start-TTDMonitor.
             $ttdArgs = @{
                 TTDPath = $ttdPath
                 Path    = Join-Path $tempPath 'TTD'
+                Modules = $TTDModules
                 ShowUI  = $TTDShowUI
             }
 
@@ -12874,7 +12907,7 @@ function Collect-OutlookInfo {
                 $ttdArgs.ProcessId = $process.Id
 
                 # Attach TTD with a background task and asynchronously wait
-                $attachTask = Start-Task -Name 'AttachTTD' -ScriptBlock { param($TTDPath, $Path, $ProcessID, $ShowUI) Attach-TTD @PSBoundParameters } -ArgumentList $ttdArgs
+                $attachTask = Start-Task -Name 'AttachTTD' -ScriptBlock { param($TTDPath, $Path, $ProcessID, $Modules, $ShowUI) Attach-TTD @PSBoundParameters } -ArgumentList $ttdArgs
 
                 $waitMsg = "$logMsg. This might take a while. Please wait"
                 $waitCount = 0
