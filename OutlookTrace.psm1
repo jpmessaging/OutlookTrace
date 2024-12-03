@@ -7035,10 +7035,8 @@ function Start-TTDMonitor {
             '-cmdLineFilter', $CommandlineFilter
         }
 
-        if ($Modules) {
-            $Modules | ForEach-Object {
-                "-module $_"
-            }
+        foreach ($module in $Modules) {
+            '-module', $module
         }
 
         if (-not $ShowUI) {
@@ -7233,10 +7231,8 @@ function Attach-TTD {
         '-attach', $ProcessId,
         '-onInitCompleteEvent', $initCompleteEventName
 
-        if ($Modules) {
-            $Modules | ForEach-Object {
-                "-module $_"
-            }
+        foreach ($module in $Modules) {
+            '-module', $module
         }
 
         if (-not $ShowUI) {
