@@ -7016,6 +7016,9 @@ function Start-TTDMonitor {
         $outPath = "`"$outPath`""
     }
 
+    $initCompleteEventName = [Guid]::NewGuid().ToString()
+    $initCompleteEvent = New-Object System.Threading.EventWaitHandle -ArgumentList $false, ([System.Threading.EventResetMode]::ManualReset), $initCompleteEventName
+
     $ttdArgs = @(
         '-acceptEula'
         '-timestampFileName'
@@ -7041,6 +7044,8 @@ function Start-TTDMonitor {
         if (-not $ShowUI) {
             '-noUI'
         }
+
+        '-onMonitorReadyEvent', $initCompleteEventName
     )
 
     $stderr = Join-Path $Path 'stderr.txt'
@@ -7049,19 +7054,29 @@ function Start-TTDMonitor {
     $process = Start-Process $TTDPath -ArgumentList $ttdArgs -WindowStyle Hidden -RedirectStandardError $stderr -PassThru
 
     # Make sure TTD.exe started successfully
-    Start-Sleep -Seconds 1
+    $waitInterval = [TimeSpan]::FromSeconds(1)
 
-    if (-not $process -or $process.HasExited) {
-        if ($process) {
-            $process.Dispose()
+    while ($true) {
+        if (-not $process -or $process.HasExited) {
+            # Something went wrong. Clean up and bail.
+            $initCompleteEvent.Dispose()
+
+            if ($process) {
+                $process.Dispose()
+            }
+
+            if (Test-Path $stderr) {
+                $errText = [IO.File]::ReadAllText($stderr)
+            }
+
+            Write-Error "TTD.exe failed to start. $errText"
+            return
         }
 
-        if (Test-Path $stderr) {
-            $errText = [IO.File]::ReadAllText($stderr)
+        if ($initCompleteEvent.WaitOne($waitInterval)) {
+            $initCompleteEvent.Dispose()
+            break
         }
-
-        Write-Error "TTD.exe failed to start. $errText"
-        return
     }
 
     Write-Log "TTD.exe (PID:$($process.Id)) has successfully started"
@@ -7235,7 +7250,7 @@ function Attach-TTD {
     $process = Start-Process $TTDPath -ArgumentList $ttdArgs -WindowStyle Hidden -RedirectStandardError $stderr -PassThru
 
     $attachStart = Get-Timestamp
-    $checkInterval = [TimeSpan]::FromSeconds(1)
+    $waitInterval = [TimeSpan]::FromSeconds(1)
 
     # Check if TTD.exe successfully attached. And if so, wait until TTD.exe signals initCompleteEvent
     while ($true) {
@@ -7254,7 +7269,7 @@ function Attach-TTD {
             return
         }
 
-        if ($initCompleteEvent.WaitOne($checkInterval)) {
+        if ($initCompleteEvent.WaitOne($waitInterval)) {
             # initCompleteEvent is signaled.
             $initCompleteEvent.Dispose()
             break
