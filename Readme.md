@@ -8,10 +8,10 @@ OutlookTrace.psm1 is a PowerShell script to collect several traces related to Mi
 
 SHA256: `1C971F65E45DAE1385A35E58ED781E0BEE228140E7A72C243CADD0BFC82FC340`
 
-You can get the file hash with `Get-FileHash`:  
+You can get the file hash with `Get-FileHash`:
 
   ```PowerShell
-  Get-FileHash <Path to OutlookTrace.psm1> -Algorithm SHA256
+  Get-FileHash <Path to .psm1 file> -Algorithm SHA256
   ```
 
 ## How to use

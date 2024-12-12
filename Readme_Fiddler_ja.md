@@ -8,10 +8,10 @@ OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スク�
 
 SHA256: `1C971F65E45DAE1385A35E58ED781E0BEE228140E7A72C243CADD0BFC82FC340`
 
-`Get-FileHash` コマンドでファイル ハッシュを取得できます:  
+`Get-FileHash` コマンドでファイル ハッシュを取得できます:
 
   ```PowerShell
-  Get-FileHash <Path to OutlookTrace.psm1> -Algorithm SHA256
+  Get-FileHash <.psm1 ファイルのパス> -Algorithm SHA256
   ```
 
 ## 利用方法
