@@ -5140,6 +5140,7 @@ function Get-OutlookOption {
     $options = @(
         New-Option -Name 'Send Mail Immediately' -Description 'Send Mail Immediately' -Category Mail -Value $true
         New-Option -Name 'SaveAllMIMENotJustHeaders' -Description 'Save entire MIME message' -Category Mail -Value $false
+        New-Option -Name 'EditorPreference' -Description 'Specifies editor to use for mail items' -Category Mail -Value $null
         New-Option -Name 'NewMailDesktopAlerts' -Description 'Display a Desktop Alert' -Category Mail -Value $true
         New-Option -Name 'NewMailDesktopAlertsDRMPreview' -Description 'Enable preview for Rights Protected messages' -Category Mail -Value $false
         New-Option -Name 'SaveSent' -Description 'Save copies of messages in the Sent Items folder' -Category Mail -Value $true
@@ -5173,6 +5174,16 @@ function Get-OutlookOption {
             $PSDefaultParameterValues['Set-Option:Property'] = $_
             Set-Option -Name 'Send Mail Immediately'
             Set-Option -Name 'SaveAllMIMENotJustHeaders'
+
+            Set-Option -Name 'EditorPreference' -Converter {
+                param ($regValue)
+                switch (($regValue -band 0x00ff0000) -shr 16) {
+                    1 { 'PlainText'; break }
+                    2 { 'HTML'; break }
+                    3 { 'RTF'; break }
+                    default { ("Unknown (0x{0:x})" -f $regValue) }
+                }
+            }
         }
     }
 
