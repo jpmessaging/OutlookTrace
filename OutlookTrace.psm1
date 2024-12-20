@@ -8158,6 +8158,100 @@ function Save-MSIPC {
     Save-Item @saveArgs
 }
 
+function Save-MIP {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Path,
+        $User
+    )
+
+    # MIP data is in %LOCALAPPDATA%\Microsoft\Outlook\MIPSDK\mip
+    if ($localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData') {
+        $mipPath = Join-Path $localAppdata 'Microsoft\Outlook\MIPSDK\mip'
+
+        if (-not (Test-Path $mipPath)) {
+            Write-Error "Cannot find path '$mipPath'"
+            return
+        }
+    }
+    else {
+        return
+    }
+
+    $saveArgs = @{
+        Path          = $mipPath
+        IncludeHidden = $true
+        Destination   = $Path
+        Recurse       = $true
+    }
+
+    Save-Item @saveArgs
+}
+
+<#
+.SYNOPSIS
+    Enable extended logging for MIP
+
+.NOTES
+    [HKEY_CURRENT_USER\SOFTWARE\Microsoft\Office\16.0\Common\DRM]
+    "EnableExtendedLogging"=dword:00000001
+#>
+function Enable-DrmExtendedLogging {
+    [CmdletBinding()]
+    param (
+        $User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        Write-Error "Cannot find user registry root for $User"
+        return
+    }
+
+    Set-ItemProperty -Path (Join-Path $userRegRoot 'SOFTWARE\Microsoft\Office\16.0\Common\DRM') -Name 'EnableExtendedLogging' -Value 1 -Type DWord
+}
+
+function Disable-DrmExtendedLogging {
+    [CmdletBinding()]
+    param (
+        $User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        Write-Error "Cannot find user registry root for $User"
+        return
+    }
+
+    Remove-ItemProperty -Path (Join-Path $userRegRoot 'SOFTWARE\Microsoft\Office\16.0\Common\DRM') -Name 'EnableExtendedLogging' -ErrorAction SilentlyContinue
+}
+
+function Get-DRMConfig {
+    [CmdletBinding()]
+    param (
+        $User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        Write-Error "Cannot find user registry root for $User"
+        return
+    }
+
+    $drmPath = Join-Path $userRegRoot 'SOFTWARE\Microsoft\Office\16.0\Common\DRM'
+
+    & {
+        $drmPath
+        $drmPath | ConvertTo-PolicyPath
+    } `
+    | Get-ItemProperty -ErrorAction SilentlyContinue `
+    | Split-ItemProperty
+}
+
 <#
 .SYNOPSIS
     Save Outlook policy nudge files
@@ -12688,6 +12782,7 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($User) Get-MapiCorruptFiles @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-ExperimentConfigs -AppName 'outlook' @PSBoundParameters }
             Invoke-ScriptBlock { param($User) Get-CloudSettings @PSBoundParameters }
+            Invoke-ScriptBlock { param($User) Get-DRMConfig @PSBoundParameters }
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:ArgumentList')
             $PSDefaultParameterValues.Remove('Invoke-ScriptBlock:Path')
 
@@ -12752,6 +12847,13 @@ function Collect-OutlookInfo {
             Write-Progress -Status 'Starting Outlook trace'
             # Stop a lingering session if any.
             Stop-OutlookTrace -ErrorAction SilentlyContinue
+
+            $err = Enable-DrmExtendedLogging 2>&1
+
+            if ($err) {
+                Write-Log -Message "Enable-DrmExtendedLogging failed. $err" -ErrorRecord $err -Category Error
+            }
+
             Start-OutlookTrace -Path (Join-Path $tempPath 'Outlook') -ErrorAction Stop
             $outlookTraceStarted = $true
         }
@@ -13060,6 +13162,7 @@ function Collect-OutlookInfo {
         if ($outlookTraceStarted) {
             Write-Progress -Status 'Stopping Outlook trace'
             Stop-OutlookTrace 2>&1 | Write-Log -Category Error -PassThru
+            Disable-DrmExtendedLogging
         }
 
         if ($newOutlookTraceStarted) {
@@ -13150,7 +13253,8 @@ function Collect-OutlookInfo {
                 Save-EventLog -Path $EventDir 2>&1 | Write-Log -Category Error
 
                 Write-Progress -Status 'Saving MSIPC logs'
-                Invoke-ScriptBlock { param($User, $Path, $All) Save-MSIPC @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = $MSIPCDir; All = $true }
+                Invoke-ScriptBlock { param($Path, $User, $All) Save-MSIPC @PSBoundParameters } -ArgumentList @{ Path = $MSIPCDir; User = $targetUser; All = $true }
+                # Invoke-ScriptBlock { param($Path, $User) Save-MIP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'MIP' }
             }
 
             if ($osConfigurationTask) {
@@ -13320,4 +13424,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Collect-OutlookInfo
