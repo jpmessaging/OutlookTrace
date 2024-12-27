@@ -5146,6 +5146,7 @@ function Get-OutlookOption {
         New-Option -Name 'SaveSent' -Description 'Save copies of messages in the Sent Items folder' -Category Mail -Value $true
         New-Option -Name 'DelegateSentItemsStyle' -Description "When set to 1, items sent on behalf of a manager will now go to the manager's sent items box" -Category Mail -Value $false
         New-Option -Name 'EnableAppsInOutlook' -Description "Shows apps in Outlook" -Category General -Value $true
+        New-Option -Name 'UseNewOutlook' -Description 'Use the new Outlook for Windows' -Category General -Value $false
         New-Option -Name 'HideNewOutlookToggle' -Description 'Hide the "Try the new Outlook" toggle in Outlook Desktop' -Category General -Value $false
         New-Option -Name 'ShowLegacySharingUX' -Description 'Turn off Calendar Sharing REST API and use Legacy UI' -Category Calendar -Value $false
         New-Option -Name 'EnableMeetingCopy' -Description 'Re-enable copying meetings:' -Category Calendar -Value $false
@@ -5231,6 +5232,7 @@ function Get-OutlookOption {
             Set-Option -Name 'SaveSent'
             Set-Option -Name 'DelegateSentItemsStyle'
             Set-Option -Name 'EnableAppsInOutlook'
+            Set-Option -Name 'UseNewOutlook'
         }
     }
 
