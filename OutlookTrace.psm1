@@ -6496,6 +6496,27 @@ function Stop-TcoTrace {
 
 <#
 .SYNOPSIS
+    Returns ISO 8601 string format of the given DateTime. If not given, it uses the current time.
+    Consolidate to this function to avoid inconsistency in the format.
+.Notes
+    Output string does not include commmas (':') in the time portion because Windows does not allow it in file names.
+#>
+function Get-DateTimeString {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [DateTime]$DateTime
+    )
+
+    if (-not $DateTime) {
+        $DateTime = [DateTime]::Now
+    }
+
+    $DateTime.ToUniversalTime().ToString('yyyy-MM-ddTHHmmssZ')
+}
+
+<#
+.SYNOPSIS
 There are 2 modes of execution:
 1. Without OnLaunch switch
     Start tttracer.exe to launch and trace the given executable
@@ -6539,12 +6560,12 @@ function Start-TTTracer {
     if ($OnLaunch) {
         Write-Log "TTD monitoring $Executable"
         # trace file name must include a wildcard ("%") for OnLaunch recording
-        $outPath = Join-Path $Path "$([IO.Path]::GetFileNameWithoutExtension($Executable))_$(Get-Date -Format "yyyyMMdd_HHmmss")_%.run"
+        $outPath = Join-Path $Path "$([IO.Path]::GetFileNameWithoutExtension($Executable))_$(Get-DateTimeString)_%.run"
         $process = Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "-onLaunch `"$Executable`"", "-parent *" -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     }
     else {
         Write-Log "TTD launching $Executable"
-        $outPath = Join-Path $Path "$([IO.Path]::GetFileNameWithoutExtension($Executable))_$(Get-Date -Format "yyyyMMdd_HHmmss").run"
+        $outPath = Join-Path $Path "$([IO.Path]::GetFileNameWithoutExtension($Executable))_$(Get-DateTimeString).run"
         $process = Start-Process $tttracer -ArgumentList "-out `"$outPath`"", "`"$Executable`"" -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     }
 
@@ -6695,7 +6716,7 @@ function Attach-TTTracer {
     }
 
     # Form the output file name.
-    $outPath = Join-Path $Path "$($targetName)_$(Get-Date -Format "yyyyMMdd_HHmmss").run"
+    $outPath = Join-Path $Path "$($targetName)_$(Get-DateTimeString).run"
 
     # If a folder path is used, it must not end with "\". If that's the case remove it.
     # $outPath = $Path
@@ -7829,7 +7850,7 @@ function Start-WfpTrace {
     }
 
     # Dump some wfp show commands.
-    $now = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $now = Get-DateTimeString
 
     $stateFile = Join-Path $Path "wfpstate_$now.xml"
     $null = & $netshexe wfp show state file=$stateFile
@@ -7847,7 +7868,9 @@ function Start-WfpTrace {
     Write-Log "Starting a WFP job"
 
     $job = Start-Job -ScriptBlock {
-        param($Path, $Interval, $MaxDuration)
+        param($Path, $Interval, $MaxDuration, $GetDateTimeString)
+
+        ${Get-DateTimeString} = [ScriptBlock]::Create($GetDateTimeString)
 
         if ($env:PROCESSOR_ARCHITEW6432) {
             $netshexe = Join-Path $env:SystemRoot 'SysNative\netsh.exe'
@@ -7867,12 +7890,12 @@ function Start-WfpTrace {
             }
 
             # dump netevents
-            $eventFilePath = Join-Path $Path "netevents_$($now.ToString('yyyyMMdd_HHmmss')).xml"
+            $eventFilePath = Join-Path $Path "netevents_$(& ${Get-DateTimeString} $now).xml"
             $null = & $netshexe wfp show netevents file="$eventFilePath" timewindow=$($Interval.TotalSeconds)
 
             Start-Sleep -Seconds $Interval.TotalSeconds
         }
-    } -ArgumentList $Path, $Interval, $MaxDuration
+    } -ArgumentList $Path, $Interval, $MaxDuration, ${Function:Get-DateTimeString}
 
     $job
 }
@@ -7980,7 +8003,7 @@ function Save-Dump {
         }
     }
     else {
-        $dumpFile = Join-Path $Path "$($process.Name)_PID$($ProcessId)_$(Get-Date -Format 'yyyy-MM-dd-HHmmss').dmp"
+        $dumpFile = Join-Path $Path "$($process.Name)_PID$($ProcessId)_$(Get-DateTimeString).dmp"
         $dumpFileStream = [System.IO.File]::Create($dumpFile)
         $writeDumpSuccess = $false
 
@@ -9137,7 +9160,7 @@ function Save-Process {
         $null = New-Item -ItemType Directory -Path $Path -ErrorAction Stop
     }
 
-    $outFileName = "Win32_Process_$(Get-Date -Format "yyyyMMdd_HHmmss").xml"
+    $outFileName = "Win32_Process_$(Get-DateTimeString).xml"
 
     Get-CimInstance Win32_Process | & {
         param([Parameter(ValueFromPipeline)]$win32Process)
@@ -9173,7 +9196,6 @@ function Save-Process {
 
     Write-Log "Win32_Process saved as $outFileName"
 }
-
 
 <#
 .SYNOPSIS
@@ -13377,7 +13399,7 @@ function Collect-OutlookInfo {
         return
     }
 
-    $archiveName = "Outlook_$($env:COMPUTERNAME)_$(Get-Date -Format "yyyyMMdd_HHmmss")"
+    $archiveName = "Outlook_$($env:COMPUTERNAME)_$(Get-DateTimeString)"
 
     if ($SkipArchive) {
         # Rename with a job because it might take a while if Windows Search's SearchProtocolHost.exe opens the folder.
