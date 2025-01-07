@@ -3152,7 +3152,7 @@ function Get-ProcessOwner {
 
     process {
         if (-not $Win32Process) {
-            $Win32Process = Get-CimInstance 'Win32_Process' -Filter "ProcessId = $Id"
+            $Win32Process = Get-CimInstance Win32_Process -Filter "ProcessId = $Id"
             $needDispose = $true
         }
 
@@ -3401,9 +3401,10 @@ function Save-OSConfiguration {
     }
 
     & {
-        @{ScriptBlock = { Get-CimInstance -Class Win32_ComputerSystem }; FileName = 'Win32_ComputerSystem.xml' }
-        @{ScriptBlock = { Get-CimInstance -Class Win32_OperatingSystem }; FileName = 'Win32_OperatingSystem.xml' }
-        @{ScriptBlock = { Get-CimInstance -Class Win32_Processor }; FileName = 'Win32_Processor.xml' }
+        @{ScriptBlock = { Get-CimInstance -ClassName Win32_ComputerSystem }; FileName = 'Win32_ComputerSystem.xml' }
+        @{ScriptBlock = { Get-CimInstance -ClassName Win32_OperatingSystem }; FileName = 'Win32_OperatingSystem.xml' }
+        @{ScriptBlock = { Get-CimInstance -ClassName Win32_Processor }; FileName = 'Win32_Processor.xml' }
+        @{ScriptBlock = { Get-CimInstance -Namespace root\SecurityCenter2 -ClassName AntiVirusProduct }; FileName = 'AntiVirusProduct.xml' }
         @{ScriptBlock = { Get-ComputerInfo } }
         @{ScriptBlock = { Get-WinHttpDefaultProxy } }
         @{ScriptBlock = { Get-NLMConnectivity } }
@@ -7135,7 +7136,7 @@ function Stop-TTDMonitor {
     }
     else {
         # If InputObject is not given, find "TTD.exe -monitor" instance
-        $ttdProcess = Get-CimInstance 'Win32_Process' -Filter 'Name = "TTD.exe"' | & {
+        $ttdProcess = Get-CimInstance Win32_Process -Filter 'Name = "TTD.exe"' | & {
             process {
                 if ($_.CommandLine -match '-monitor') {
                     Get-Process -Id $_.ProcessId
@@ -12284,7 +12285,7 @@ function ConvertFrom-ArgumentList {
 
 <#
 .SYNOPSIS
-    Helper function to select a single process instance (owner is also checked When User parameter is given)
+    Helper function to select a single process instance (owner is also checked when User parameter is given)
     If there are multipile processes, ask the user.
 #>
 function Get-SingleProcess {
@@ -12298,7 +12299,7 @@ function Get-SingleProcess {
 
     $processName = [IO.Path]::ChangeExtension($Name, 'exe')
 
-    $win32Processes = @(Get-CimInstance 'Win32_Process' -Filter "Name = '$processName'")
+    $win32Processes = @(Get-CimInstance Win32_Process -Filter "Name = '$processName'")
 
     # Check if its owner is the target user
     if ($User) {
@@ -12485,7 +12486,7 @@ function Collect-OutlookInfo {
         [switch]$SkipVersionCheck,
         # Command line filter for TTD monitor
         [string]$TTDCommandlineFilter,
-        # Restrict TTD trace to specified modules
+        # Restrict TTD trace to specified modules (Must have extensions)
         [string[]]$TTDModules,
         # Switch to show TTD UI
         [switch]$TTDShowUI,
@@ -12567,10 +12568,20 @@ function Collect-OutlookInfo {
         }
     }
 
-    # For TTD, the current user must have Debug Privilege (even for his/her own processes)
-    if ($Component -contains 'TTD' -and -not $debugPrivilegeEnabled) {
-        Write-Error "Cannot collect TTD because the current user `"$currentUser`" does not have Debug Privilege"
-        return
+    if ($Component -contains 'TTD') {
+        # For TTD, the current user must have Debug Privilege (even for his/her own processes)
+        if (-not $debugPrivilegeEnabled) {
+            Write-Error "Cannot collect TTD because the current user `"$currentUser`" does not have Debug Privilege"
+            return
+        }
+
+        # Validate TTDModules have extension
+        $invalidModules = $TTDModules | Where-Object { -not [IO.Path]::GetExtension($_) }
+
+        if ($invalidModules) {
+            Write-Error "Module names in TTDModules parameter must have an extension. Invalid module names:$($invalidModules -join ', ')"
+            return
+        }
     }
 
     # Collecting Dump/HungDump is possible when the current user has DebugPrivilege or the target process's user is the same as the current user.
