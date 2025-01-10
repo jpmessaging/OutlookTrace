@@ -13345,7 +13345,7 @@ function Collect-OutlookInfo {
 
                 $officeModuleInfoTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 $officeModuleInfoTaskCts.Dispose()
-                Write-Log "$($officeRegistryTask.Name) is complete"
+                Write-Log "$($officeModuleInfoTask.Name) is complete"
             }
 
             if ($gpresultTask) {
