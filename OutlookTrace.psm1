@@ -11759,15 +11759,14 @@ function Remove-WebView2Flags {
 
     $regValueName = $wv2Flags.Name
     $keyPath = $wv2Flags.Path
-    $flags = $wv2Flags.Flags
-    $isRemoved = $false
+    [System.Collections.Generic.HashSet[string]]$flags = $wv2Flags.Flags
+    $originalFlagCount = $flags.Count
 
     foreach ($flagName in $FlagNames) {
-        $flagEntry = "--$flagName"
-        $isRemoved = $flags.Remove($flagEntry)
+        $null = $flags.Remove("--$flagName")
     }
 
-    if (-not $isRemoved) {
+    if ($flags.Count -eq $originalFlagCount) {
         return
     }
 
@@ -11778,7 +11777,7 @@ function Remove-WebView2Flags {
             Write-Error -Message "Failed to set '$regValueName' in $keyPath. $err" -Exception $err.Exception
         }
         else {
-            Write-Log "Flags set: $($flags.Keys -join ' ')"
+            Write-Log "Flags set: $($flags -join ' ')"
         }
     }
     else {
