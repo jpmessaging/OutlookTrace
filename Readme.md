@@ -165,7 +165,7 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 | CAPI          | CAPI (Crypt API) ETW                                                                                           |
 | TCO           | TCO trace                                                                                                      |
 | Dump          | Outlook's process dump                                                                                         |
-| CrashDump     | Crash dump for any process (see `CrashDumpTargets` above)                                                      |
+| CrashDump     | Crash dump for any process (see `CrashDumpTargets` below)                                                      |
 | HungDump      | Outlook's hung dump (When a window hung is detected, a dump file is generated)                                 |
 | WPR           | WPR (Windows Performance Recorder) ETW (OS must be Windows 10 or above)                                        |
 | WFP           | Windows Firewall diagnostic log                                                                                |
