@@ -5361,7 +5361,13 @@ function Enable-PickLogonProfile {
         return
     }
 
-    Set-ItemProperty (Join-Path $userRegRoot 'SOFTWARE\Microsoft\Exchange\Client\Options') -Name 'PickLogonProfile' -Value "1"
+    $optionsPath = Join-Path $userRegRoot 'SOFTWARE\Microsoft\Exchange\Client\Options'
+
+    if (-not (Test-Path $optionsPath)) {
+        $null = New-Item $optionsPath -Force -ErrorAction Stop
+    }
+
+    Set-ItemProperty $optionsPath -Name 'PickLogonProfile' -Value "1"
 }
 
 <#
@@ -5380,7 +5386,11 @@ function Disable-PickLogonProfile {
         return
     }
 
-    Set-ItemProperty (Join-Path $userRegRoot 'SOFTWARE\Microsoft\Exchange\Client\Options') -Name 'PickLogonProfile' -Value "0"
+    $optionsPath = Join-Path $userRegRoot 'SOFTWARE\Microsoft\Exchange\Client\Options'
+
+    if (Test-Path $optionsPath) {
+        Set-ItemProperty $optionsPath -Name 'PickLogonProfile' -Value "0"
+    }
 }
 
 function Get-WordMailOption {
