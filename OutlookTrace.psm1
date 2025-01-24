@@ -8246,7 +8246,13 @@ function Enable-DrmExtendedLogging {
         return
     }
 
-    Set-ItemProperty -Path (Join-Path $userRegRoot 'SOFTWARE\Microsoft\Office\16.0\Common\DRM') -Name 'EnableExtendedLogging' -Value 1 -Type DWord
+    $keyPath = Join-Path $userRegRoot 'SOFTWARE\Microsoft\Office\16.0\Common\DRM'
+
+    if (-not (Test-Path $keyPath)) {
+        $null = New-Item -Path $keyPath -ErrorAction Stop
+    }
+
+    Set-ItemProperty $keyPath -Name 'EnableExtendedLogging' -Value 1 -Type DWord
 }
 
 function Disable-DrmExtendedLogging {
@@ -12892,7 +12898,7 @@ function Collect-OutlookInfo {
             # Stop a lingering session if any.
             Stop-OutlookTrace -ErrorAction SilentlyContinue
 
-            $err = Enable-DrmExtendedLogging 2>&1
+            $err = Enable-DrmExtendedLogging -User $targetUser 2>&1
 
             if ($err) {
                 Write-Log -Message "Enable-DrmExtendedLogging failed. $err" -ErrorRecord $err -Category Error
@@ -13206,7 +13212,7 @@ function Collect-OutlookInfo {
         if ($outlookTraceStarted) {
             Write-Progress -Status 'Stopping Outlook trace'
             Stop-OutlookTrace 2>&1 | Write-Log -Category Error -PassThru
-            Disable-DrmExtendedLogging
+            Disable-DrmExtendedLogging -User $targetUser
         }
 
         if ($newOutlookTraceStarted) {
