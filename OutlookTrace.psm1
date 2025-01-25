@@ -8217,6 +8217,7 @@ function Save-MIP {
 
     $saveArgs = @{
         Path          = $mipPath
+        Include       = 'AuthInfoStore.json', 'EngineInfoStore.json', 'EngineStore.json', 'mip.protection.json', 'TemplateStore.json'
         IncludeHidden = $true
         Destination   = $Path
         Recurse       = $true
@@ -13304,7 +13305,7 @@ function Collect-OutlookInfo {
 
                 Write-Progress -Status 'Saving MSIPC logs'
                 Invoke-ScriptBlock { param($Path, $User, $All) Save-MSIPC @PSBoundParameters } -ArgumentList @{ Path = $MSIPCDir; User = $targetUser; All = $true }
-                # Invoke-ScriptBlock { param($Path, $User) Save-MIP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'MIP' }
+                Invoke-ScriptBlock { param($Path, $User) Save-MIP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'MIP' }
             }
 
             if ($osConfigurationTask) {
