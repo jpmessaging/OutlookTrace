@@ -4,9 +4,9 @@
 
 OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
-[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2025-01-12/OutlookTrace.psm1)
+[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2025-01-24/OutlookTrace.psm1)
 
-SHA256: `D3BC91BBED4CFF530457A7F3308C684678FF6EFB8903589999BB26FDE669E911`
+SHA256: `FC3A41CB87872DF75986DEE356D93F5787BB6020B2A9D3A3F0508CAF32DA30E2`
 
 `Get-FileHash` コマンドでファイル ハッシュを取得できます:
 
