@@ -2957,7 +2957,7 @@ function Save-EventLog {
     $logs = @(
         'Application'
         'System'
-        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client|WebAuth|CAPI2|AppLocker|AppxPackaging|AppXDeployment/"
+        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client|WebAuth|CAPI2|AppLocker|AppxPackaging|AppXDeployment/|AppXDeploymentServer/"
     )
 
     $tasks = @(
@@ -3322,6 +3322,8 @@ function Save-OfficeRegistry {
         'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\AeDebug'
         'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
         'HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols'
+        'HKLM\SOFTWARE\Microsoft\WindowsUpdate\Orchestrator'
+        'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Orchestrator'
 
         # Policies
         'HKCU\Software\Policies'
@@ -3429,7 +3431,9 @@ function Save-OSConfiguration {
         @{ScriptBlock = { param($User) Get-ProxyAutoConfig @PSBoundParameters }; ArgumentList = $userArg }
         @{ScriptBlock = { param($User) Get-AppContainerRegistryAcl @PSBoundParameters }; ArgumentList = $userArg }
         @{ScriptBlock = { param($User) Get-StructuredQuerySchema @PSBoundParameters }; ArgumentList = $userArg }
-        @{ScriptBlock = { param($User) Get-AppxPackage @PSBoundParameters }; ArgumentList = $userArg }
+
+        @{ScriptBlock = { Get-AppxPackage -AllUsers } }
+        @{ScriptBlock = { Get-AppxProvisionedPackage -Online } }
 
         # These are just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
