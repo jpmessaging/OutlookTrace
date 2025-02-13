@@ -6245,6 +6245,152 @@ function Start-FiddlerCap {
     }
 }
 
+function Start-FiddlerEverywhereReporter {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        $Path,
+        # Do not start FiddlerCap.exe, but ensure it's avaiable (download it if necessary).
+        [Switch]$CheckAvailabilityOnly
+    )
+
+    if (-not (Test-Path $Path -ErrorAction Stop)) {
+        $null = New-Item -ItemType Directory $Path -ErrorAction Stop
+    }
+
+    $Path = Convert-Path -LiteralPath $Path
+    $fiddlerName = 'Fiddler Everywhere Reporter'
+
+    if (-not (Test-Path $Path)) {
+        $null = New-Item -ItemType Directory $Path -ErrorAction Stop
+    }
+
+    # Look for existing one.
+    $fiddlerExe = Get-ChildItem -Path $Path -Filter "$fiddlerName*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 | Select-Object -ExpandProperty FullName
+
+    if ($fiddlerExe) {
+        Write-Log "Skip downloading because $fiddlerExe is found"
+        $version = (Get-ItemProperty $fiddlerExe).VersionInfo.ProductVersion
+    }
+    else {
+        $url = 'https://api.getfiddler.com/reporter/win/latest'
+
+        # If it's not connected to internet, bail.
+        $connectivity = Get-NLMConnectivity
+
+        if (-not $connectivity.IsConnectedToInternet) {
+            Write-Error "It seems there is no connectivity to Internet. Please download $fiddlerName from `"$url`" and place it `"$Path`". Then run again"
+            return
+        }
+
+        Write-Log "Downloading $fiddlerName"
+        Write-Progress -Activity "Downloading $fiddlerName" -Status "Please wait" -PercentComplete -1
+
+        $webClient = $null
+
+        try {
+            $webClient = New-Object System.Net.WebClient
+            $webClient.UseDefaultCredentials = $true
+            $tempPath = Join-Path $Path -ChildPath "$fiddlerName.exe"
+            $webClient.DownloadFile($url, $tempPath)
+
+            # Rename the file to include the version number.
+            Unblock-File $tempPath
+            $version = (Get-ItemProperty $tempPath).VersionInfo.ProductVersion
+            $newName = "$fiddlerName-$version.exe"
+            Rename-Item $tempPath -NewName $newName
+            $fiddlerExe = Join-Path (Split-Path $tempPath) $newName
+        }
+        catch {
+            Write-Error -Message "Failed to download $fiddlerName from $url. $_" -Exception $_.Exception
+            return
+        }
+        finally {
+            Write-Progress -Activity "Downloading $fiddlerName" -Status "Done" -Completed
+
+            if ($webClient) {
+                $webClient.Dispose()
+            }
+        }
+    }
+
+    if ($CheckAvailabilityOnly) {
+        [PSCustomObject]@{ FiddlerPath = $fiddlerExe }
+        return
+    }
+
+    # Start exe file.
+    $activity = "Starting $fiddlerName"
+    $status = "This may take a while. Please wait"
+    $waitCount = 0
+    $waitInterval = [TimeSpan]::FromSeconds(1)
+
+    $process = $null
+
+    try {
+        Write-Log "Starting $fiddlerName (Version: $version)"
+        Write-Progress -Activity $activity -Status $status
+
+        $err = $($process = Invoke-Command {
+                $ErrorActionPreference = "Continue"
+                try {
+                    Start-Process $fiddlerExe -PassThru
+                }
+                catch {
+                    Write-Error -ErrorRecord $_
+                }
+            }) 2>&1
+
+        if (-not $process -or $process.HasExited) {
+            Write-Error "$fiddlerName failed to start or prematurely exited. $(if ($null -ne $process.ExitCode) {"exit code = $($process.ExitCode)"}) $err"
+            return
+        }
+
+        # Wait for the UI.
+        Write-Log "Waiting $fiddlerName's UI to show up"
+
+        while ($true) {
+            Write-Progress -Activity $activity -Status ($status + '.' * $waitCount)
+
+            if ($process.HasExited) {
+                Write-Log "$fiddlerName (PID:$($process.Id)) has prematurely exited before UI shows up" -Category Error
+                Write-Error "Something went wrong after $fiddlerName was started."
+                return
+            }
+
+            $processes = @(Get-Process -Name $fiddlerName -ErrorAction SilentlyContinue)
+            $foundUIProcess = $false
+
+            foreach ($proc in $processes) {
+                if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+                    $foundUIProcess = $true
+                }
+
+                $proc.Dispose()
+            }
+
+            if ($foundUIProcess) {
+                break
+            }
+
+            Start-Sleep -Seconds $waitInterval.TotalSeconds
+            $waitCount = ++$waitCount % 10
+        }
+
+        Write-Log "$fiddlerName is successfully started"
+
+        [PSCustomObject]@{
+            FiddlerPath = $fiddlerExe
+        }
+    }
+    finally {
+        Write-Progress -Activity $activity -Completed
+
+        if ($process) {
+            $process.Dispose()
+        }
+    }
+}
 function Start-Procmon {
     [CmdletBinding()]
     param(
@@ -12872,16 +13018,21 @@ function Collect-OutlookInfo {
             Write-Progress -Status 'Starting Fiddler'
 
             if ($targetUser.Sid -eq $currentUser.Sid) {
-                $null = Start-FiddlerCap -Path $Path -ErrorAction Stop
-                Write-Warning "FiddlerCap has started. Please manually configure and start capture"
+                # $null = Start-FiddlerCap -Path $Path -ErrorAction Stop
+                # Write-Warning "FiddlerCap has started. Please manually configure and start capture"
+                $null = Start-FiddlerEverywhereReporter -Path $Path -ErrorAction Stop
+                Write-Warning "Fiddler Everywhere Reporter has started. Please manually configure and start capture"
             }
             else {
                 # If target user is different from current user, don't start FiddlerCap because it won't be able to capture (WinInet proxy needs to be configured for the target user).
-                $fiddler = Start-FiddlerCap -Path $Path -ErrorAction Stop -CheckAvailabilityOnly
+                # $fiddler = Start-FiddlerCap -Path $Path -ErrorAction Stop -CheckAvailabilityOnly
+                # Write-Warning "Let the user ($($targetUser.Name)) start $($fiddler.FiddlerPath)"
+
+                $fiddler = Start-FiddlerEverywhereReporter -Path $Path -CheckAvailabilityOnly -ErrorAction Stop
                 Write-Warning "Let the user ($($targetUser.Name)) start $($fiddler.FiddlerPath)"
             }
 
-            $fiddlerCapStarted = $true
+            $fiddlerStarted = $true
         }
 
         if ($Component -contains 'Netsh') {
@@ -13134,7 +13285,7 @@ function Collect-OutlookInfo {
         $waitStart = Get-Timestamp
         $waitResult = $null
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerCapStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted -or $newOutlookTraceStarted) {
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted -or $newOutlookTraceStarted) {
             Write-Log "Waiting for the user to stop"
             $ScriptInfo.WaitStart = Get-Date
 
@@ -13274,8 +13425,9 @@ function Collect-OutlookInfo {
             $CrashDumpTargets | Remove-WerDumpKey
         }
 
-        if ($fiddlerCapStarted) {
-            Write-Warning "Please stop FiddlerCap and save the capture manually"
+        if ($fiddlerStarted) {
+            # Write-Warning "Please stop FiddlerCap and save the capture manually"
+            Write-Warning "Please stop Fiddler Everywhere Reporter and save the capture manually"
         }
 
         if ($psrStarted) {
