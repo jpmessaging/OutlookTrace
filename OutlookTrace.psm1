@@ -4079,6 +4079,7 @@ function Get-NLMConnectivity {
     $nlm = $null
 
     [PSCustomObject]@{
+        TimeStamp             = [DateTimeOffset]::Now
         IsConnectedToInternet = $isConnectedToInternet
         Connectivity          = $connectivity
     }
@@ -6438,6 +6439,7 @@ function Start-FiddlerEverywhereReporter {
         }
     }
 }
+
 function Start-Procmon {
     [CmdletBinding()]
     param(
@@ -6716,8 +6718,8 @@ function Get-DateTimeString {
         [DateTime]$DateTime
     )
 
-    if (-not $DateTime) {
-        $DateTime = [DateTime]::Now
+    if (-not $PSBoundParameters.ContainsKey('DateTime')) {
+        $DateTime = [DateTime]::UtcNow
     }
 
     $DateTime.ToUniversalTime().ToString('yyyy-MM-ddTHHmmssZ')
@@ -9700,7 +9702,7 @@ function Start-PsrMonitor {
     }
 
     while ($true) {
-        $startResult = Start-PSR -Path $Path -FileName "PSR_$(Get-Date -f 'MMdd_HHmmss')"
+        $startResult = Start-PSR -Path $Path -FileName "PSR_$(Get-DateTimeString)"
         $canceled = $CancellationToken.WaitHandle.WaitOne($WaitInterval)
         Stop-PSR -StartResult $startResult
 
@@ -9713,7 +9715,7 @@ function Start-PsrMonitor {
             # Remove mht files older than 1 hour
             Get-ChildItem $Path -Filter '*.mht' | & {
                 begin {
-                    $cutoff = [datetime]::Now.AddHours(-1)
+                    $cutoff = [DateTime]::Now.AddHours(-1)
                     $removedCount = 0
                 }
 
@@ -11436,7 +11438,7 @@ function Get-StructuredQuerySchema {
     $schemaChangedLast = Get-ItemProperty 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\StructuredQuery' -Name 'SchemaChangedLast' -ErrorAction SilentlyContinue `
     | & {
         process {
-            [DateTime]::FromFileTime($_.SchemaChangedLast)
+            [DateTimeOffset]::FromFileTime($_.SchemaChangedLast)
         }
     }
 
@@ -11462,13 +11464,14 @@ function Get-StructuredQuerySchema {
             if ($fileInfo.FullName -match 'Windows\\(?<LCID>\d{4,5})') {
                 $lcid = [int]::Parse($Matches['LCID'])
                 $culture = New-Object System.Globalization.CultureInfo -ArgumentList $lcid
+                $lastWriteTime = New-Object DateTimeOffset -ArgumentList $fileInfo.LastWriteTime
 
                 [PSCustomObject]@{
                     LocaleName                   = $culture.Name
                     LocaleId                     = $lcid
                     Path                         = $fileInfo.FullName
-                    LastWriteTime                = $fileInfo.LastWriteTime
-                    IsNewerThanSchemaChangedLast = $schemaChangedLast -lt $fileInfo.LastWriteTime
+                    LastWriteTime                = $lastWriteTime
+                    IsNewerThanSchemaChangedLast = $schemaChangedLast -lt $lastWriteTime
                 }
             }
             else {
@@ -12879,7 +12882,7 @@ function Collect-OutlookInfo {
         Invocation = $invocation
         RunAsUser  = "$($currentUser.Name) ($($currentUser.Sid))"
         TargetUser = "$($targetUser.Name) ($($targetUser.Sid))"
-        Start      = Get-Date
+        Start      = [DateTimeOffSet]::Now
         WaitStart  = $null
         WaitStop   = $null
         End        = $null
@@ -13334,7 +13337,7 @@ function Collect-OutlookInfo {
 
         if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted -or $newOutlookTraceStarted) {
             Write-Log "Waiting for the user to stop"
-            $ScriptInfo.WaitStart = Get-Date
+            $ScriptInfo.WaitStart = [DateTimeOffset]::Now
 
             Write-Host 'Press enter to stop: ' -NoNewline
             $waitResult = Wait-EnterOrControlC
@@ -13356,7 +13359,7 @@ function Collect-OutlookInfo {
     }
     finally {
         Write-Log "Stopping traces. $(if ($waitStart) { "Wait duration:$(Get-Elapsed $waitStart)" })"
-        $ScriptInfo.WaitStop = Get-Date
+        $ScriptInfo.WaitStop = [DateTimeOffset]::Now
 
         $PSDefaultParameterValues['Write-Progress:Activity'] = 'Stopping traces'
 
@@ -13619,7 +13622,7 @@ function Collect-OutlookInfo {
             $null = Enable-CtrlC
         }
 
-        $ScriptInfo.End = Get-Date
+        $ScriptInfo.End = [DateTimeOffset]::Now
         $ScriptInfo | Export-CliXml (Join-Path $tempPath 'ScriptInfo.xml')
     }
 
@@ -13678,4 +13681,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Collect-OutlookInfo, Get-DateTimeString
