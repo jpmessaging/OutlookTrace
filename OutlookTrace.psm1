@@ -5341,7 +5341,7 @@ function Get-PickLogonProfile {
     $pickLogonProfile = Get-ItemProperty (Join-Path $userRegRoot 'SOFTWARE\Microsoft\Exchange\Client\Options') -Name 'PickLogonProfile' -ErrorAction SilentlyContinue `
     | Select-Object -ExpandProperty 'PickLogonProfile'
 
-    if ($pickLogonProfile -eq 1) {
+    if ($pickLogonProfile -eq '1') {
         $true
     }
     else {
@@ -5371,7 +5371,8 @@ function Enable-PickLogonProfile {
         $null = New-Item $optionsPath -Force -ErrorAction Stop
     }
 
-    Set-ItemProperty $optionsPath -Name 'PickLogonProfile' -Value "1"
+    # Type is string
+    Set-ItemProperty $optionsPath -Name 'PickLogonProfile' -Value '1'
 }
 
 <#
@@ -5393,7 +5394,7 @@ function Disable-PickLogonProfile {
     $optionsPath = Join-Path $userRegRoot 'SOFTWARE\Microsoft\Exchange\Client\Options'
 
     if (Test-Path $optionsPath) {
-        Set-ItemProperty $optionsPath -Name 'PickLogonProfile' -Value "0"
+        Set-ItemProperty $optionsPath -Name 'PickLogonProfile' -Value '0'
     }
 }
 
