@@ -1720,21 +1720,30 @@ function Download-File {
     )
 
     $webClient = $null
-    $progressChangeId = [Guid]::NewGuid().ToString()
-    $completedId = [Guid]::NewGuid().ToString()
+    $progressChangeId = $null
+    $completedId = $null
+
+    $dir = Split-Path $OutFile
+
+    # Directory must exist otherwize WebClient.DownloadFile(Async) fails.
+    if (-not (Test-Path $dir)) {
+        $null = New-Item -Path $dir -ItemType Directory -ErrorAction Stop
+    }
 
     try {
         $webClient = New-Object System.Net.WebClient
         $webClient.UseDefaultCredentials = $true
-        $waitInterval = [TimeSpan]::FromSeconds(1)
         $start = Get-TimeStamp
 
         if (-not $Activity) {
             $webClient.DownloadFile($Uri, $OutFile)
         }
         else {
-            $PSDefaultParameterValues['Write-Progress:Activity'] = $Activity
-            Write-Progress -Status "Starting" -PercentComplete 0
+            Write-Progress -Activity $Activity -Status "Starting" -PercentComplete 0
+            $waitInterval = [TimeSpan]::FromSeconds(1)
+            $progressChangeId = [Guid]::NewGuid().ToString()
+            $completedId = [Guid]::NewGuid().ToString()
+
             Register-ObjectEvent -InputObject $webClient -EventName 'DownloadProgressChanged' -SourceIdentifier $progressChangeId
             Register-ObjectEvent -InputObject $webClient -EventName 'DownloadFileCompleted' -SourceIdentifier $completedId
 
@@ -1745,12 +1754,17 @@ function Download-File {
                 | Select-Object -Last 1 -ExpandProperty 'SourceEventArgs'
 
                 if ($completed) {
-                    if ($completed.Cancelled) {
-                        Write-Error -Message "Download was cancelled"
-                        return
-                    }
-                    elseif ($completed.Error) {
-                        Write-Error -Message "WebClient.DownloadFileAsync() failed. $($completed.Error)" -Exception $completed.Error
+                    if ($completed.Cancelled -or $completed.Error) {
+                        # Remove imcomplete file.
+                        Remove-Item -Path $OutFile -ErrorAction SilentlyContinue
+
+                        if ($completed.Cancelled) {
+                            Write-Error -Message "Download was cancelled"
+                        }
+                        elseif ($completed.Error) {
+                            Write-Error -Message "WebClient.DownloadFileAsync() failed. $($completed.Error)" -Exception $completed.Error
+                        }
+
                         return
                     }
 
@@ -1761,12 +1775,13 @@ function Download-File {
                 | Select-Object -Last 1 -ExpandProperty 'SourceEventArgs'
 
                 if ($progressChanged) {
-                    Write-Progress -Status "$($progressChanged.ProgressPercentage)% ($($progressChanged.BytesReceived)/$($progressChanged.TotalBytesToReceive))" -PercentComplete $progressChanged.ProgressPercentage
+                    Write-Progress -Activity $Activity -Status "$($progressChanged.ProgressPercentage)% ($($progressChanged.BytesReceived)/$($progressChanged.TotalBytesToReceive))" -PercentComplete $progressChanged.ProgressPercentage
                 }
 
                 Start-Sleep -Seconds $waitInterval.TotalSeconds
             }
         }
+
         [PSCustomObject]@{
             Uri     = $Uri
             OutFile = $OutFile
@@ -1778,18 +1793,19 @@ function Download-File {
     }
     finally {
         if ($Activity) {
-            Write-Progress -Status "Done" -Completed
+            Write-Progress -Activity $Activity -Status "Done" -Completed
         }
 
-        Unregister-Event -SourceIdentifier $progressChangeId
-        Unregister-Event -SourceIdentifier $completedId
+        if ($progressChangeId) {
+            Unregister-Event -SourceIdentifier $progressChangeId -ErrorAction SilentlyContinue
+        }
+
+        if ($completedId) {
+            Unregister-Event -SourceIdentifier $completedId -ErrorAction SilentlyContinue
+        }
 
         if ($webClient) {
             $webClient.Dispose()
-        }
-
-        if ($PSDefaultParameterValues.ContainsKey('Write-Progress:Activity')) {
-            $PSDefaultParameterValues.Remove('Write-Progress:Activity')
         }
     }
 }
@@ -6421,7 +6437,7 @@ function Start-FiddlerEverywhereReporter {
 
         $tempPath = Join-Path $Path -ChildPath "$fiddlerName.exe"
 
-        $err = $($result = Download-File -Uri $url -OutFile $tempPath -Activity "Downloading $fiddlerName") 2>&1
+        $err = $($result = Download-File -Uri $url -OutFile $tempPath -Activity "Downloading $fiddlerName") 2>&1 | Select-Object -First 1
 
         if ($result) {
             Unblock-File $tempPath
@@ -6519,10 +6535,12 @@ function Start-FiddlerEverywhereReporter {
 function Start-Procmon {
     [CmdletBinding()]
     param(
-        [parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true)]
         $Path,
-        $PmlFileName = "Procmon.pml",
-        $ProcmonSearchPath # Look for existing procmon.exe before downloading
+        [Parameter(Mandatory = $true)]
+        # Look for existing procmon.exe before downloading
+        $ProcmonSearchPath,
+        $PmlFileName = "Procmon.pml"
     )
 
     # Explicitly check admin rights
@@ -6582,32 +6600,11 @@ function Start-Procmon {
         }
         else {
             # If 'ProcessMonitor.zip' isn't there, download it.
-            # If it's not connected to internet, bail.
-            $connectivity = Get-NLMConnectivity
-            if (-not $connectivity.IsConnectedToInternet) {
-                Write-Error "It seems there is no connectivity to Internet. Please download the ProcessMonitor from `"$procmonDownloadUrl`""
-                return
-            }
+            $err = $($null = Download-File -Uri $procmonDownloadUrl -OutFile $procmonZipFile -Activity "Downloading Process Monitor") 2>&1 | Select-Object -First 1
 
-            Write-Log "Downloading procmon"
-            Write-Progress -Activity "Downloading procmon from $procmonDownloadUrl" -Status "Please wait" -PercentComplete -1
-            $webClient = $null
-            try {
-                $webClient = New-Object System.Net.WebClient
-                $webClient.UseDefaultCredentials = $true
-                $webClient.DownloadFile($procmonDownloadUrl, $procmonZipFile)
-                $procmonZipDownloaded = $true
-            }
-            catch {
-                Write-Error -Message "Failed to download procmon from $procmonDownloadUrl. $_" -Exception $_.Exception
+            if (-not (Test-Path $procmonZipFile)) {
+                Write-Error -ErrorRecord $err
                 return
-            }
-            finally {
-                if ($webClient) {
-                    $webClient.Dispose()
-                }
-
-                Write-Progress -Activity "Downloading procmon from $procmonDownloadUrl" -Status "Done" -Completed
             }
         }
 
@@ -7090,21 +7087,10 @@ function Download-TTD {
     $appInstallerPath = Join-Path $Path 'TTD.appinstaller'
 
     if (-not (Test-Path $appInstallerPath)) {
-        # Invoke-WebRequest throws a terminating error if host name cannot be resolved.
-        try {
-            $err = $(Invoke-Command -ScriptBlock {
-                    $ProgressPreference = "SilentlyContinue";
-                    $null = Invoke-WebRequest -Uri $downloadUrl -OutFile $appInstallerPath
-                }) 2>&1
-
-            Write-Log "TTD.appinstaller is successfully downloaded from $downloadUrl"
-        }
-        catch {
-            $err = $_
-        }
+        $err = $($null = Download-File -Uri $downloadUrl -OutFile $appInstallerPath) 2>&1 | Select-Object -First 1
 
         if (-not (Test-Path $appInstallerPath)) {
-            Write-Error -Message "Failed to download TTD.appinstaller from $downloadUrl. $err"
+            Write-Error -Message "Failed to download TTD.appinstaller from $downloadUrl. $err" -Exception $err.Exception
             return
         }
     }
@@ -7123,20 +7109,10 @@ function Download-TTD {
     $msixName = Split-Path $mainBundle.Uri -Leaf
     $msixBundlePath = Join-Path $Path $msixName
 
-    try {
-        $err = $(Invoke-Command -ScriptBlock {
-                $ProgressPreference = "SilentlyContinue";
-                $null = Invoke-WebRequest -Uri $mainBundle.Uri -OutFile $msixBundlePath
-            }) 2>&1
-
-        Write-Log "$msixName is successfully downloaded from $($mainBundle.Uri)"
-    }
-    catch {
-        $err = $_
-    }
+    $err = $($null = Download-File -Uri $mainBundle.Uri -OutFile $msixBundlePath) 2>&1 | Select-Object -First 1
 
     if (-not (Test-Path $msixBundlePath)) {
-        Write-Error "Failed to download $($mainBundle.Uri). $err"
+        Write-Error -Message "Failed to download $($mainBundle.Uri). $err" -Exception $err.Exception
         return
     }
 
@@ -10924,27 +10900,11 @@ function Download-ZoomIt {
 
     $url = 'https://download.sysinternals.com/files/ZoomIt.zip'
     $zoomItZip = Join-Path $Path 'ZoomIt.zip'
-    $webClient = $null
 
-    if (-not (Test-Path $Path)) {
-        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
-    }
-
-    try {
-        $webClient = New-Object System.Net.WebClient
-        $webClient.UseDefaultCredentials = $true
-        $webClient.DownloadFile($url, $zoomItZip)
-    }
-    catch {
-        Write-Error -Message "Failed to download ZoomIt from $url" -Exception $_.Exception
-    }
-    finally {
-        if ($webClient) {
-            $webClient.Dispose()
-        }
-    }
+    $err = $($null = Download-File -Uri $url -OutFile $zoomItZip) 2>&1 | Select-Object -First 1
 
     if (-not (Test-Path $zoomItZip)) {
+        Write-Error -ErrorRecord $err
         return
     }
 
