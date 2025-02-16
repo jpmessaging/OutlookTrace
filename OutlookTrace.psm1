@@ -6426,6 +6426,7 @@ function Start-FiddlerEverywhereReporter {
         $version = (Get-ItemProperty $fiddlerExe).VersionInfo.ProductVersion
     }
     else {
+        Write-Log "Downloading $fiddlerName"
         $url = 'https://api.getfiddler.com/reporter/win/latest'
 
         # If it's not connected to internet, bail.
@@ -6541,7 +6542,7 @@ function Start-Procmon {
         [Parameter(Mandatory = $true)]
         # Look for existing procmon.exe before downloading
         $ProcmonSearchPath,
-        $PmlFileName = "Procmon.pml"
+        $PmlFileName = "Procmon_$(Get-DateTimeString).pml"
     )
 
     # Explicitly check admin rights
