@@ -1705,6 +1705,94 @@ function Disable-DebugPrivilege {
     }
 }
 
+function Download-File {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '')]
+    [CmdletBinding(PositionalBinding = $false)]
+    param (
+        [Parameter(Mandatory, Position = 0)]
+        # Uri to download
+        [string]$Uri,
+        [Parameter(Mandatory)]
+        # Destination file path
+        [string]$OutFile,
+        # Used for Write-Progress's Activity parameter. If skipped, no progress report.
+        [string]$Activity
+    )
+
+    $webClient = $null
+    $progressChangeId = [Guid]::NewGuid().ToString()
+    $completedId = [Guid]::NewGuid().ToString()
+
+    try {
+        $webClient = New-Object System.Net.WebClient
+        $webClient.UseDefaultCredentials = $true
+        $waitInterval = [TimeSpan]::FromSeconds(1)
+        $start = Get-TimeStamp
+
+        if (-not $Activity) {
+            $webClient.DownloadFile($Uri, $OutFile)
+        }
+        else {
+            $PSDefaultParameterValues['Write-Progress:Activity'] = $Activity
+            Write-Progress -Status "Starting" -PercentComplete 0
+            Register-ObjectEvent -InputObject $webClient -EventName 'DownloadProgressChanged' -SourceIdentifier $progressChangeId
+            Register-ObjectEvent -InputObject $webClient -EventName 'DownloadFileCompleted' -SourceIdentifier $completedId
+
+            $webClient.DownloadFileAsync($Uri, $OutFile)
+
+            while ($true) {
+                [System.ComponentModel.AsyncCompletedEventArgs]$completed = Get-Event -SourceIdentifier $completedId -ErrorAction SilentlyContinue `
+                | Select-Object -Last 1 -ExpandProperty 'SourceEventArgs'
+
+                if ($completed) {
+                    if ($completed.Cancelled) {
+                        Write-Error -Message "Download was cancelled"
+                        return
+                    }
+                    elseif ($completed.Error) {
+                        Write-Error -Message "WebClient.DownloadFileAsync() failed. $($completed.Error)" -Exception $completed.Error
+                        return
+                    }
+
+                    break
+                }
+
+                [System.Net.DownloadProgressChangedEventArgs]$progressChanged = Get-Event -SourceIdentifier $progressChangeId -ErrorAction SilentlyContinue `
+                | Select-Object -Last 1 -ExpandProperty 'SourceEventArgs'
+
+                if ($progressChanged) {
+                    Write-Progress -Status "$($progressChanged.ProgressPercentage)% ($($progressChanged.BytesReceived)/$($progressChanged.TotalBytesToReceive))" -PercentComplete $progressChanged.ProgressPercentage
+                }
+
+                Start-Sleep -Seconds $waitInterval.TotalSeconds
+            }
+        }
+        [PSCustomObject]@{
+            Uri     = $Uri
+            OutFile = $OutFile
+            Elapsed = Get-Elapsed $start
+        }
+    }
+    catch {
+        Write-Error -Message "Failed to download $Uri. $_" -Exception $_.Exception
+    }
+    finally {
+        if ($Activity) {
+            Write-Progress -Status "Done" -Completed
+        }
+
+        Unregister-Event -SourceIdentifier $progressChangeId
+        Unregister-Event -SourceIdentifier $completedId
+
+        if ($webClient) {
+            $webClient.Dispose()
+        }
+
+        if ($PSDefaultParameterValues.ContainsKey('Write-Progress:Activity')) {
+            $PSDefaultParameterValues.Remove('Write-Progress:Activity')
+        }
+    }
+}
 <#
 .SYNOPSIS
     Save files
@@ -6331,34 +6419,22 @@ function Start-FiddlerEverywhereReporter {
             return
         }
 
-        Write-Log "Downloading $fiddlerName"
-        Write-Progress -Activity "Downloading $fiddlerName" -Status "Please wait" -PercentComplete -1
+        $tempPath = Join-Path $Path -ChildPath "$fiddlerName.exe"
 
-        $webClient = $null
+        $err = $($result = Download-File -Uri $url -OutFile $tempPath -Activity "Downloading $fiddlerName") 2>&1
 
-        try {
-            $webClient = New-Object System.Net.WebClient
-            $webClient.UseDefaultCredentials = $true
-            $tempPath = Join-Path $Path -ChildPath "$fiddlerName.exe"
-            $webClient.DownloadFile($url, $tempPath)
-
-            # Rename the file to include the version number.
+        if ($result) {
             Unblock-File $tempPath
             $version = (Get-ItemProperty $tempPath).VersionInfo.ProductVersion
             $newName = "$fiddlerName-$version.exe"
             Rename-Item $tempPath -NewName $newName
             $fiddlerExe = Join-Path (Split-Path $tempPath) $newName
-        }
-        catch {
-            Write-Error -Message "Failed to download $fiddlerName from $url. $_" -Exception $_.Exception
-            return
-        }
-        finally {
-            Write-Progress -Activity "Downloading $fiddlerName" -Status "Done" -Completed
 
-            if ($webClient) {
-                $webClient.Dispose()
-            }
+            Write-Log "Successfully downloaded $fiddlerName. It took $($result.Elapsed)"
+        }
+        else {
+            Write-Error -Message "Failed to download $fiddlerName from $url. $err" -Exception $err.Exception
+            return
         }
     }
 
@@ -7018,7 +7094,7 @@ function Download-TTD {
         try {
             $err = $(Invoke-Command -ScriptBlock {
                     $ProgressPreference = "SilentlyContinue";
-                    Invoke-WebRequest -Uri $downloadUrl -OutFile $appInstallerPath
+                    $null = Invoke-WebRequest -Uri $downloadUrl -OutFile $appInstallerPath
                 }) 2>&1
 
             Write-Log "TTD.appinstaller is successfully downloaded from $downloadUrl"
@@ -7050,7 +7126,7 @@ function Download-TTD {
     try {
         $err = $(Invoke-Command -ScriptBlock {
                 $ProgressPreference = "SilentlyContinue";
-                Invoke-WebRequest -Uri $mainBundle.Uri -OutFile $msixBundlePath
+                $null = Invoke-WebRequest -Uri $mainBundle.Uri -OutFile $msixBundlePath
             }) 2>&1
 
         Write-Log "$msixName is successfully downloaded from $($mainBundle.Uri)"
@@ -13681,4 +13757,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-FiddlerEverywhereReporter, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Collect-OutlookInfo
