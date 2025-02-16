@@ -2930,7 +2930,7 @@ function Start-PSR {
         }
     )
 
-    $err = $($process = Start-Process 'psr' -ArgumentList $psrArgs -PassThru) 2>&1
+    $err = $($process = Start-Process 'psr' -ArgumentList $psrArgs -PassThru) 2>&1 | Select-Object -First 1
 
     if (-not $process -or $process.HasExited) {
         Write-Error -Message "PSR failed to start. $err" -Exception $err.Exception
@@ -2993,7 +2993,7 @@ function Stop-PSR {
     }
 
     # "psr /stop" creates a new instance of psr.exe and it stops the instance currently running.
-    $err = $($stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru)
+    $err = $($stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru) | Select-Object -First 1
 
     if (-not $stopInstance) {
         Write-Error -Message "Failed to run psr.exe /stop. $err" -Exception $err.Exception
@@ -3793,7 +3793,7 @@ function Get-WinInetProxy {
         $currentUserActiveConnProxy = [PSCustomObject]$props
     }
     else {
-        Write-Error ("Win32 WinHttpGetIEProxyConfigForCurrentUser failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
+        Write-Error -Message ("Win32 WinHttpGetIEProxyConfigForCurrentUser failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
     }
 
     # If ProxySettingsPerUser is 0, then check HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\Connections, instead of the user's registry.
@@ -3804,9 +3804,10 @@ function Get-WinInetProxy {
         $regRoot = 'Registry::HKLM'
     }
     else {
-        $err = $($regRoot = Get-UserRegistryRoot -User $User) 2>&1
+        $err = $($regRoot = Get-UserRegistryRoot -User $User) 2>&1 | Select-Object -First 1
+
         if (-not $regRoot) {
-            Write-Error "Cannot get user $User's registry root. $err"
+            Write-Error -Message "Cannot get user $User's registry root. $err" -Exception $err.Exception
             return
         }
     }
@@ -6344,7 +6345,7 @@ function Start-FiddlerCap {
             # To redirect & capture error even when this cmdlet is called with ErrorAction:SilentlyContinue, need "Continue" error action.
             # Usually you can simply specify ErrorAction:Continue to the cmdlet. However, Start-Process does not respect that. So, I need to manually set $ErrorActionPreference here.
             $err = $($process = Invoke-Command {
-                    $ErrorActionPreference = "Continue"
+                    $ErrorActionPreference = 'Continue'
                     # Do not double-quote $fiddlerPath here like /D=`"$fiddlerPath`". FiddlerSetupCap.exe doesn't like it for some reason. It's ok to have spaces in the path.
                     Start-Process $fiddlerSetupFile -ArgumentList "/S /D=$fiddlerPath" -Wait -PassThru
                 }) 2>&1
@@ -6372,7 +6373,7 @@ function Start-FiddlerCap {
     try {
         Write-Log "Starting FiddlerCap"
         $err = $($process = Invoke-Command {
-                $ErrorActionPreference = "Continue"
+                $ErrorActionPreference = 'Continue'
                 try {
                     Start-Process $fiddlerExe -PassThru
                 }
@@ -6472,7 +6473,7 @@ function Start-FiddlerEverywhereReporter {
         Write-Progress -Activity $activity -Status $status
 
         $err = $($process = Invoke-Command {
-                $ErrorActionPreference = "Continue"
+                $ErrorActionPreference = 'Continue'
                 try {
                     Start-Process $fiddlerExe -PassThru
                 }
@@ -6644,7 +6645,7 @@ function Start-Procmon {
     Write-Log "Starting procmon"
     $process = $null
     $err = $($process = Invoke-Command {
-            $ErrorActionPreference = "Continue"
+            $ErrorActionPreference = 'Continue'
             try {
                 Start-Process $procmonFile -ArgumentList "/AcceptEula /Minimized /Quiet /NoFilter /BackingFile `"$pmlFile`"" -PassThru
             }
@@ -6701,7 +6702,7 @@ function Stop-Procmon {
 
     try {
         $err = $($process = Invoke-Command {
-                $ErrorActionPreference = "Continue"
+                $ErrorActionPreference = 'Continue'
                 try {
                     Start-Process $procmonFile -ArgumentList "/Terminate" -Wait -PassThru
                 }
@@ -9651,7 +9652,7 @@ function Start-ProcessCapture {
                     # Check if process is elevated, except for "System Idle Process" (PID 0) and "System" (PID 4)
                     if ($win32Process.ProcessId -gt 4) {
                         try {
-                            $err = $($obj.Elevated = Test-ProcessElevated $win32Process.ProcessId) 2>&1
+                            $err = $($obj.Elevated = Test-ProcessElevated $win32Process.ProcessId) 2>&1 | Select-Object -First 1
                         }
                         catch {
                             $err = $_
@@ -11960,7 +11961,7 @@ function Add-WebView2Flags {
     $flags = $wv2Flags.Flags
 
     if (-not (Test-Path $keyPath)) {
-        $err = $($key = New-Item $keyPath -Force) 2>&1
+        $err = $($key = New-Item $keyPath -Force) 2>&1 | Select-Object -First 1
 
         if ($key) {
             $key.Dispose()
@@ -11987,7 +11988,7 @@ function Add-WebView2Flags {
     }
 
     # Set-ItemProperty either creates a new value or overwrites the existing value.
-    $err = Set-ItemProperty $keyPath -Name $regValueName -Value ($flags -join ' ') 2>&1
+    $err = Set-ItemProperty $keyPath -Name $regValueName -Value ($flags -join ' ') 2>&1 | Select-Object -First 1
 
     if ($err) {
         Write-Error -Message "Failed to set '$regValueName' in $keyPath. $err" -Exception $err.Exception
@@ -12024,7 +12025,7 @@ function Remove-WebView2Flags {
     }
 
     if ($flags.Count) {
-        $err = Set-ItemProperty $keyPath -Name $regValueName -Value ($flags -join ' ') 2>&1
+        $err = Set-ItemProperty $keyPath -Name $regValueName -Value ($flags -join ' ') 2>&1 | Select-Object -First 1
 
         if ($err) {
             Write-Error -Message "Failed to set '$regValueName' in $keyPath. $err" -Exception $err.Exception
