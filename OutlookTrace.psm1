@@ -2445,7 +2445,7 @@ function Start-WamTrace {
     param(
         [Parameter(Mandatory = $true, Position = 0)]
         [string]$Path,
-        [string]$FileName = 'wam.etl',
+        [string]$FileName = "WAM_$(Get-DateTimeString).etl",
         [string]$SessionName = 'WamTrace',
         [ValidateSet('NewFile', 'Circular')]
         [string]$LogFileMode = 'NewFile',
@@ -2513,7 +2513,7 @@ function Start-OutlookTrace {
     param(
         [Parameter(Mandatory = $true, Position = 0)]
         [string]$Path,
-        [string]$FileName = 'outlook.etl',
+        [string]$FileName = "Outlook_$(Get-DateTimeString).etl",
         [string]$SessionName = 'OutlookTrace',
         [ValidateSet('NewFile', 'Circular')]
         [string]$LogFileMode = 'NewFile',
@@ -2594,7 +2594,7 @@ function Start-NetshTrace {
     param (
         [parameter(Mandatory = $true)]
         $Path,
-        $FileName = 'nettrace-winhttp-webio.etl',
+        $FileName = "Netsh_$(Get-DateTimeString).etl",
         [ValidateSet('None', 'Mini', 'Full')]
         $ReportMode = 'None'
     )
@@ -5728,7 +5728,7 @@ function Start-LdapTrace {
         [Parameter(Mandatory = $true, HelpMessage = "Process name to trace. e.g. Outlook.exe")]
         [Alias('TargetProcess')]
         [string]$TargetExecutable,
-        [string]$FileName = 'ldap.etl',
+        [string]$FileName = "LDAP_$(Get-DateTimeString).etl",
         [string]$SessionName = 'LdapTrace',
         [ValidateSet('NewFile', 'Circular')]
         [string]$LogFileMode = 'NewFile',
@@ -6117,7 +6117,7 @@ function Start-CapiTrace {
     param(
         [Parameter(Mandatory = $true, Position = 0)]
         [string]$Path,
-        [string]$FileName = 'capi.etl',
+        [string]$FileName = "CAPI_$(Get-DateTimeString).etl",
         [string]$SessionName = 'CapiTrace',
         [ValidateSet('NewFile', 'Circular')]
         [string]$LogFileMode = 'NewFile',
@@ -6706,10 +6706,11 @@ function Stop-TcoTrace {
 
 <#
 .SYNOPSIS
-    Returns ISO 8601 string format of the given DateTime. If not given, it uses the current time.
-    Consolidate to this function to avoid inconsistency in the format.
-.Notes
+    Returns a string representation of the given DateTime in UTC with a format somewhat close to ISO 8601. Without input, it uses the current time.
     Output string does not include commmas (':') in the time portion because Windows does not allow it in file names.
+.Notes
+    I am aware that Get-Date has FileDateTime & FileDateTimeUniversal with -Format. However I don't think they are easy to read (they use "yyyyMMddTHHmmssffff").
+    Consolidate to this function to avoid inconsistency in the format.
 #>
 function Get-DateTimeString {
     [CmdletBinding()]
@@ -9278,7 +9279,7 @@ function Start-PerfTrace {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Path,
-        [string]$FileName = 'perf',
+        [string]$FileName = "Perf_$(Get-DateTimeString)",
         [ValidateRange(1, [int]::MaxValue)]
         [int]$IntervalSecond = 1,
         [ValidateRange(1, [int]::MaxValue)]
@@ -9315,13 +9316,12 @@ function Start-PerfTrace {
 
     switch ($LogFileMode) {
         'NewFile' {
-            #$stdout = & logman.exe create counter -n 'PerfCounter' -cf $configFile -si $IntervalSecond -max $MaxFileSizeMB -o $filePath -cnf 0 -ow -v 'nnnnnn' -f 'csv'
-            $stdout = & logman.exe create counter -n 'PerfCounter' -cf $configFile -si $IntervalSecond -max $MaxFileSizeMB -o $filePath -ow -v 'mmddhhmm' -f 'bin' -cnf 0
+            $stdout = & logman.exe create counter -n 'PerfCounter' -cf $configFile -si $IntervalSecond -max $MaxFileSizeMB -o $filePath -ow --v -f 'bin' -cnf 0
             break
         }
 
         'Circular' {
-            $stdout = & logman.exe create counter -n 'PerfCounter' -cf $configFile -si $IntervalSecond -max $MaxFileSizeMB -o $filePath -ow -v 'mmddhhmm' -f 'bincirc' # -cnf 0
+            $stdout = & logman.exe create counter -n 'PerfCounter' -cf $configFile -si $IntervalSecond -max $MaxFileSizeMB -o $filePath -ow --v -f 'bincirc' # -cnf 0
             break
         }
     }
@@ -12256,7 +12256,7 @@ function Get-ExperimentConfigs {
         ConfigIds             = $config.ConfIds | Get-Value
         CountryCode           = $config.CC | Get-Value
         DeferredConfigs       = $config.DefConfs | Get-Value
-        ExpiryTime            = if ($SkipParsing) { $config.ExpTime } else { [DateTimeOffset]::FromUnixTimeSeconds(($config.ExpTime | Get-Value)).LocalDateTime }
+        ExpiryTime            = if ($SkipParsing) { $config.ExpTime } else { [DateTimeOffset]::FromUnixTimeSeconds(($config.ExpTime | Get-Value)) }
         ETag                  = $config.ETag | Get-Value
         FeatureConfigMap      = $fcMap
         GroupFeatureConfigMap = [PSCustomObject]$fCGroupMap
@@ -13681,4 +13681,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Collect-OutlookInfo, Get-DateTimeString
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Collect-OutlookInfo
