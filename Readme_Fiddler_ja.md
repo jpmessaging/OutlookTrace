@@ -17,9 +17,9 @@ SHA256: `03E961F8C27A271DBB910FC417BE028AA7061A60880350EEF8DB7205F81C4006`
 ## 利用方法
 
 1. ログの出力先フォルダーを作成します。以下の説明では C:\temp を出力先フォルダーの例として使用します。
-2. 以下のリンクをクリックし、FiddlerCapSetup.exe をダウンロードします。
+2. 以下のリンクをクリックし、Fiddler Everywhere Reporter をダウンロードします。
 
-    [FiddlerCapSetup](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe)
+    [Fiddler Everywhere Reporter](https://api.getfiddler.com/reporter/win/latest)
 
 3. ダウンロードしたファイルをログの出力先フォルダーにコピーします。
 4. Outlook を実行している場合には終了します。
