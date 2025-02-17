@@ -4,9 +4,9 @@
 
 OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
-[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2025-02-04/OutlookTrace.psm1)
+[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2025-02-16/OutlookTrace.psm1)
 
-SHA256: `4A54E3F0E53E6EC64630015B1D1BBAD25C8E2CED254E9D0BD23647053AFAD7B8`
+SHA256: `03E961F8C27A271DBB910FC417BE028AA7061A60880350EEF8DB7205F81C4006`
 
 `Get-FileHash` コマンドでファイル ハッシュを取得できます:
 
@@ -16,7 +16,7 @@ SHA256: `4A54E3F0E53E6EC64630015B1D1BBAD25C8E2CED254E9D0BD23647053AFAD7B8`
 
 Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン レコーディング、そして TTD トレースも含めて採取する場合には以下から事前にダウンロードできます:
 
-- [FiddlerCapSetup](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe)
+- [Fiddler Everywhere Reporter](https://api.getfiddler.com/reporter/win/latest)
 - [Process Monitor](https://download.sysinternals.com/files/ProcessMonitor.zip)
 - [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)
 - [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-429-0/TTD.msixbundle)
@@ -65,7 +65,7 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 
     ※ 採取するコンポーネントについてはエンジニアからの案内をご確認ください。
 
-    ※ Fiddler、Procmon、または ZoomIt によるスクリーン レコーディングを採取する場合、スクリプト内で自動的にダウンロードを試みます。インターネットへのアクセスに制限がある環境で実行する場合には、事前にダウンロードした [FiddlerCapSetup.exe](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe)、[ProcessMonitor.zip](https://download.sysinternals.com/files/ProcessMonitor.zip)、そして [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip) を、下記 `Path` パラメータで指定するフォルダに配置ください。
+    ※ Fiddler、Procmon、または ZoomIt によるスクリーン レコーディングを採取する場合、スクリプト内で自動的にダウンロードを試みます。インターネットへのアクセスに制限がある環境で実行する場合には、事前にダウンロードした [Fiddler Everywhere Reporter](https://api.getfiddler.com/reporter/win/latest)、[ProcessMonitor.zip](https://download.sysinternals.com/files/ProcessMonitor.zip)、そして [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip) を、下記 `Path` パラメータで指定するフォルダに配置ください。
 
     ```
     Collect-OutlookInfo -Path <出力先フォルダ> -Component <採取するコンポーネント>
@@ -81,30 +81,24 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 
     ※ 採取するコンポーネントに `Dump` を含めた場合、`Press enter to save a process dump of Outlook. To quit, enter q:` とプロンプトされます。ダンプ ファイルを取得したいタイミングで Enter を入力してください。ハング事象の場合、およそ 30 秒間隔で 3 回程度採取ください。ダンプ ファイルの採取が終了したら `q` を入力します。
 
-    ※ 採取するコンポーネントに `Fiddler` を含めた場合、[FiddlerCap Web Recorder] ダイアログボックスが表示されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
+    ※ 採取するコンポーネントに `Fiddler` を含めた場合、Fiddler Everywhere Reporter というアプリケーションが開始されます。以下の手順に従って手動で、キャプチャを開始ください。キャプチャ開始後に事象を再現します。
 
     ⚠️ スクリプト実行ユーザーと、情報採取対象ユーザーが異なる場合には FiddlerCap は自動的に開始されません。情報採取対象ユーザーが FiddlerCap.exe を開始する必要があります。
 
     <details>
         <summary>Fiddler 開始方法</summary>
 
-    1. [HTTPS 通信を解読] にチェックを入れます。
-    2. 以下の説明が表示されたら、内容を確認して [OK] をクリックします。
-
-       ```
-       HTTPS の解読は、HTTPS プロトコル経由で送られる Raw トラフィックを見るためにデバッグしやすくしてくれます。
-       この機能は SSL トラフィックを解読し、ローカルに生成された証明書を用いて再度暗号化します。よって、この機能を使うと、不明な発行元からの証明書を使っているリモートサイトであること表示する、赤い警告ページが Web ブラウザーに表示されることを意味します。
-       このトラフィックをキャプチャすることに限定して、このブラウザーに表示される警告を無視してください。
-       ```
-
-    3. 以下の内容のセキュリティ警告が表示されたら、[はい] をクリックします。
+    1. [I agree to the Terms of Service and Privacy Policy] にチェックを入れ、[Proceed] をクリックします
+    2. 上部のボックス 1 で、[Start Capturing Everything] を選択します。
+    3. [Trust Certificate and Enable HTTPS] というダイアログが表示された場合は、[Trust and Enable HTTPS] をクリックします
+    4. 以下の内容のセキュリティ警告が表示されたら、[はい] をクリックします。
 
        ```
        発行者が次であると主張する証明機関 (CA) から証明書をインストールしようとしています:
 
-       DO_NOT_TRUST_FiddlerRoot
+       Fiddler Root Certificate Authority
 
-       証明書が実際に "DO_NOT_TRUST_FiddlerRoot" からのものであるかどうかを検証できません。"DO_NOT_TRUST_FiddlerRoot" に連絡して発行者を確認する必要があります。 次の番号はこの過程で役立ちます:
+       証明書が実際に "Fiddler Root Certificate Authority" からのものであるかどうかを検証できません。"Fiddler Root Certificate Authority" に連絡して発行者を確認する必要があります。 次の番号はこの過程で役立ちます:
 
        拇印 (sha1): ***
 
@@ -113,10 +107,6 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 
        この証明書をインストールしますか?
        ```
-
-    4. [1. キャプチャ開始] をクリックします。
-
-        自動的にブラウザが起動されたら、そのブラウザはクローズいただいて結構です。
     </details>
 
 9.  Outlook を起動して、現象を再現させます。
@@ -125,24 +115,26 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
     <details>
         <summary>Fiddler 停止方法</summary>
         
-    1. [2. キャプチャ停止] をクリックします。
-    2. [3. キャプチャ保存] をクリックします。
-    3. [ファイルの種類] で `Password-Protected Capture (*.saz)` を選択します。
-    4. ファイルを Collect-OutlookInfo の "Path" パラメータに指定したフォルダ配下に作成された GUID 名のフォルダに保存します。
-    5. [FiddlerCap Web Recorder] ダイアログボックスをクローズします。
+    1. [2. Stop Capture] をクリックします。
+    2. [3. Save Capture] をクリックします。
+    3. ファイルを Collect-OutlookInfo の "Path" パラメータに指定したフォルダ配下に作成された GUID 名のフォルダに保存します。
+
+       ⚠️ パスワードの長さは 8 文字以上にする必要があります。
+    4. メニュー アイテムの  [Certificate]-[Remove Root Certificate] をクリックします。
+
         この時以下の内容が表示されたら、[はい] をクリックします。
 
         ```
         次の証明書をルート ストアから削除しますか?
 
-        サブジェクト: DO_NOT_TRUST_FiddlerRoot, DO_NOT_TRUST, Created by http://www.fiddler2.com
+        サブジェクト: Fiddler Root Certificate Authority, Progress Telerik Fiddler, Created by http://www.fiddler2.com
         発行者: 自己発行
         有効期間: ***
         シリアル番号 : ***
         拇印 (sha1): ***
         拇印 (md5):
         ```
-
+    5. Fiddler Everywhere Reporter を終了します。
     </details>
 
 11. コンソールに Enter キーを入力しトレースを停止します。

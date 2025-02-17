@@ -4,9 +4,9 @@
 
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2025-02-04/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2025-02-16/OutlookTrace.psm1)
 
-SHA256: `4A54E3F0E53E6EC64630015B1D1BBAD25C8E2CED254E9D0BD23647053AFAD7B8`
+SHA256: `03E961F8C27A271DBB910FC417BE028AA7061A60880350EEF8DB7205F81C4006`
 
 You can get the file hash with `Get-FileHash`:
 
@@ -69,31 +69,24 @@ You can get the file hash with `Get-FileHash`:
 
     Note: When `Dump` is included in Component parameter, you are prompted with `Press enter to save a process dump of Outlook. To quit, enter q:`. Press enter key to save a dump file. For a hang issue, repeat the process to collect 3 dump files, with interval of about 30 seconds between saves. When finished, press `q`.
 
-    Note: When `Fiddler` is included in Component parameter, a dialog box [FiddlerCap Web Recorder] appears. Use the following instructions to start capture, and then reproduce the issue
+    Note: When `Fiddler` is included in Component parameter, an application called "Fiddler Everywhere Reporter" starts. Use the following instructions to start capture, and then reproduce the issue
 
-    ⚠️ When the target user is different from the one running the script, FiddlerCap does not start. The target user needs to start FiddlerCap.exe manually.
+    ⚠️ When the target user is different from the one running the script, Fiddler Everywhere Reporter does not start. The target user needs to start it manually.
 
     <details>
         <summary>How to start Fiddler capture</summary>
         
-    1. Check [Decrypt HTTPS traffic]
-    2. When the following explanation appears, read it and click [OK].
-
-        ```
-        HTTPS decryption will enable your debugging buddy to see the raw traffic sent via the HTTPS protocol.
-
-        This feature works by decrypting SSL traffic and reencrypting it using a locally generated certificate. FiddlerCap will generate this certificate and remove it when you close this tool.
-        You may choose to temporarily install this certificate in the Trusted store to avoid warnings from your browser or client application.
-        ```
-
-    3.  Click [Yes] on the following security warning.
+    1. Check [I agree to the Terms of Service and Privacy Policy] and click [Proceed].
+    2. Select [Start Capturing Everything] in the box 1. on the top.
+    3. If a dialog [Trust Certificate and Enable HTTPS] appears, click [Trust and Enable HTTPS].
+    4. Click [Yes] in the following security warning.
 
         ```
         You are about to install a certificate from a certification authority (CA) claiming to represent:
 
-        DO_NOT_TRUST_FiddlerRoot
+        Fiddler Root Certificate Authority
 
-        Windows cannot validate that the certificate is actually from "DO_NOT_TRUST_FiddlerRoot". You should confirm its origin by contacting "DO_NOT_TRUST_FiddlerRoot". The following number will assist you in this process:
+        Windows cannot validate that the certificate is actually from "Fiddler Root Certificate Authority". You should confirm its origin by contacting "Fiddler Root Certificate Authority". The following number will assist you in this process:
 
         Thumbprint (sha1): ***
 
@@ -102,11 +95,6 @@ You can get the file hash with `Get-FileHash`:
 
         Do you want to install this certificate?
         ```
-
-    4.  Click [1. Start capture].
-
-        If a web browser starts automatically, you can close the browser.
-
     </details>
 
 9.  Start Outlook and reproduce the issue.
@@ -115,18 +103,18 @@ You can get the file hash with `Get-FileHash`:
     <details>
     <summary>How to stop Fiddler capture</summary>
 
-    1.  Click [2. Stop Capture].
-    2.  Click [3. Save Capture].
-    3.  In [Save as type], select `Password-Protected Capture (*.saz)`.
-    4.  Save the capture in the folder with GUID name created under "Path" parameter you specified in Collect-OutloookInfo.
-    5.  Close the [FiddlerCap Web Recorder] dialog box.
+    1. Click [2. Stop Capture].
+    2. Click [3. Save Capture].
+    3. Save the capture in the folder with GUID name created under "Path" parameter you specified in Collect-OutloookInfo.  
+       ⚠️ Password must be at least 8 characters.
+    4. Click a menu item [Certificate]-[Remove Root Certificate]  
 
-        If the following dialog appears, click [Yes].
+        In the following dialog, click [Yes].
 
         ```
         Do you want to DELETE the following certificate from the Root Store?
 
-        Subject : DO_NOT_TRUST_FiddlerRoot, DO_NOT_TRUST, Created by http://www.fiddler2.com
+        Subject : Fiddler Root Certificate Authority, Progress Telerik Fiddler, Created by http://www.fiddler2.com
         Issuer : Self Issued
         Time Validity : ***
         Serial Number : ***
@@ -134,6 +122,7 @@ You can get the file hash with `Get-FileHash`:
         Thumbprint (md5) : ***
         ```
 
+    5. Close the Fiddler Everywhere Reporter
     </details>
 
 11. Press enter key in the console to stop.
@@ -152,33 +141,33 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 
 ### Possible values for `Component` parameter
 
-| Name          | Description                                                                                                    |
-| ------------- | -------------------------------------------------------------------------------------------------------------- |
-| Configuration | OS config, Registry, Event logs, Proxy settings, etc.                                                          |
-| Outlook       | Outlook ETW                                                                                                    |
-| Netsh         | Netsh ETW                                                                                                      |
-| PSR           | Problem Steps Recorder                                                                                         |
-| WAM           | WAM (Web Account Manager) ETW                                                                                  |
-| Fiddler       | [Fiddler](https://www.telerik.com/fiddler/fiddlercap) trace (Fiddler trace must be manually started & stopped) |
-| Procmon       | [Process monitor](https://docs.microsoft.com/en-us/sysinternals/downloads/procmon)                             |
-| LDAP          | LDAP ETW                                                                                                       |
-| CAPI          | CAPI (Crypt API) ETW                                                                                           |
-| TCO           | TCO trace                                                                                                      |
-| Dump          | Outlook's process dump                                                                                         |
-| CrashDump     | Crash dump for any process (see `CrashDumpTargets` below)                                                      |
-| HungDump      | Outlook's hung dump (When a window hung is detected, a dump file is generated)                                 |
-| WPR           | WPR (Windows Performance Recorder) ETW (OS must be Windows 10 or above)                                        |
-| WFP           | Windows Firewall diagnostic log                                                                                |
-| Performance   | Performance counter log (Process, Memory, LogicalDisk etc.)                                                    |
-| TTD           | Time Travel Debugging trace (OS must be Windows 10 or above)                                                   |
-| Recording     | Screen recording by [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)                               |
-| NewOutlook    | New Outlook for Windows logs                                                                                   |
+| Name          | Description                                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Configuration | OS config, Registry, Event logs, Proxy settings, etc.                                                              |
+| Outlook       | Outlook ETW                                                                                                        |
+| Netsh         | Netsh ETW                                                                                                          |
+| PSR           | Problem Steps Recorder                                                                                             |
+| WAM           | WAM (Web Account Manager) ETW                                                                                      |
+| Fiddler       | [Fiddler](https://api.getfiddler.com/reporter/win/latest) trace (Fiddler trace must be manually started & stopped) |
+| Procmon       | [Process monitor](https://docs.microsoft.com/en-us/sysinternals/downloads/procmon)                                 |
+| LDAP          | LDAP ETW                                                                                                           |
+| CAPI          | CAPI (Crypt API) ETW                                                                                               |
+| TCO           | TCO trace                                                                                                          |
+| Dump          | Outlook's process dump                                                                                             |
+| CrashDump     | Crash dump for any process (see `CrashDumpTargets` below)                                                          |
+| HungDump      | Outlook's hung dump (When a window hung is detected, a dump file is generated)                                     |
+| WPR           | WPR (Windows Performance Recorder) ETW (OS must be Windows 10 or above)                                            |
+| WFP           | Windows Firewall diagnostic log                                                                                    |
+| Performance   | Performance counter log (Process, Memory, LogicalDisk etc.)                                                        |
+| TTD           | Time Travel Debugging trace (OS must be Windows 10 or above)                                                       |
+| Recording     | Screen recording by [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)                                   |
+| NewOutlook    | New Outlook for Windows logs                                                                                       |
 
 >[!IMPORTANT]
 >`Collect-OutlookInfo` tries to download FiddlerCap, Procmon, TTD, and ZoomIt when `Component` parameter includes `Fiddler`, `Procmon`, `TTD` and `Recording` respectively.  
 > If the target machine does not have access to the Internet, please download from the links below and place them in the folder specified by `Path` parameter:
 > 
-> - [FiddlerCap](https://telerik-fiddler.s3.amazonaws.com/fiddler/FiddlerCapSetup.exe)
+> - [Fiddler Everywhere Reporter](https://api.getfiddler.com/reporter/win/latest)
 > - [Procmon](https://download.sysinternals.com/files/ProcessMonitor.zip)
 > - [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-429-0/TTD.msixbundle)
 > - [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)
