@@ -10537,14 +10537,15 @@ function Get-OneAuthAccount {
         return
     }
 
-    Join-Path $localAppdata 'Microsoft\OneAuth\accounts' `
-    | Get-ChildItem -ErrorAction SilentlyContinue | & {
+    Join-Path $localAppdata 'Microsoft\OneAuth\accounts\*' `
+    | Get-ChildItem -ErrorAction SilentlyContinue -File -Exclude 'OneAuthAccounts.zip' | & {
+        param([Parameter(ValueFromPipeline)]$file)
         process {
             try {
-                Get-Content $_.FullName -Encoding UTF8 | ConvertFrom-Json
+                Get-Content $file.FullName -Encoding UTF8 | ConvertFrom-Json
             }
             catch {
-                Write-Error -Message "Failed to parse $($_.FullName)" -Exception $_.Exception
+                Write-Error -Message "Failed to parse $($file.FullName)" -Exception $_.Exception
             }
         }
     }
