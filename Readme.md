@@ -164,7 +164,7 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 | NewOutlook    | New Outlook for Windows logs                                                                                       |
 
 >[!IMPORTANT]
->`Collect-OutlookInfo` tries to download FiddlerCap, Procmon, TTD, and ZoomIt when `Component` parameter includes `Fiddler`, `Procmon`, `TTD` and `Recording` respectively.  
+>`Collect-OutlookInfo` tries to download Fiddler Everywhere Reporter, Procmon, TTD, and ZoomIt when `Component` parameter includes `Fiddler`, `Procmon`, `TTD` and `Recording` respectively.  
 > If the target machine does not have access to the Internet, please download from the links below and place them in the folder specified by `Path` parameter:
 > 
 > - [Fiddler Everywhere Reporter](https://api.getfiddler.com/reporter/win/latest)

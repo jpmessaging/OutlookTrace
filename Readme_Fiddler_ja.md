@@ -105,8 +105,9 @@ SHA256: `2019E4F265C16DEA0C0EFE67F64B09EA823CA1A7836821D24537F7A36550600F`
 20. ファイルを Collect-OutlookInfo の "Path" パラメータに指定したフォルダ配下に作成された GUID 名のフォルダに保存します。
 
     ⚠️ パスワードの長さは 8 文字以上にする必要があります。
+
 21. メニュー アイテムの  [Certificate]-[Remove Root Certificate] をクリックします。
-22. [FiddlerCap Web Recorder] ダイアログボックスをクローズします。
+
     この時以下の内容が表示されたら、[はい] をクリックします。
 
     ```
@@ -119,6 +120,7 @@ SHA256: `2019E4F265C16DEA0C0EFE67F64B09EA823CA1A7836821D24537F7A36550600F`
     拇印 (md5):
     ```
 
+22. Fiddler Everywhere Reporter を終了します。
 23. コンソールに Enter キーを入力しトレースを停止します。
 
 手順 9 で出力先に指定したフォルダに作成された `"Outlook_<マシン名>_<取得日時>.zip"` という名前の ZIP ファイルをお寄せください。

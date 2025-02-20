@@ -120,6 +120,7 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
     3. ファイルを Collect-OutlookInfo の "Path" パラメータに指定したフォルダ配下に作成された GUID 名のフォルダに保存します。
 
        ⚠️ パスワードの長さは 8 文字以上にする必要があります。
+
     4. メニュー アイテムの  [Certificate]-[Remove Root Certificate] をクリックします。
 
         この時以下の内容が表示されたら、[はい] をクリックします。
