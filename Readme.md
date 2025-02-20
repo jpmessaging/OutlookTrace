@@ -4,9 +4,9 @@
 
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2025-02-16/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2025-02-19/OutlookTrace.psm1)
 
-SHA256: `03E961F8C27A271DBB910FC417BE028AA7061A60880350EEF8DB7205F81C4006`
+SHA256: `2019E4F265C16DEA0C0EFE67F64B09EA823CA1A7836821D24537F7A36550600F`
 
 You can get the file hash with `Get-FileHash`:
 
