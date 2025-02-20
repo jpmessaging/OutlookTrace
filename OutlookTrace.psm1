@@ -12556,29 +12556,38 @@ function Get-SingleProcess {
         [Parameter(Mandatory)]
         # Process name (such as 'outlook')
         [string]$Name,
-        $User
+        $User,
+        [string]$CommandLineFilter
     )
 
     $processName = [IO.Path]::ChangeExtension($Name, 'exe')
 
-    $win32Processes = @(Get-CimInstance Win32_Process -Filter "Name = '$processName'")
+    $win32Processes = @(Get-CimInstance Win32_Process -Filter "Name = '$processName'" | & {
+            param([Parameter(ValueFromPipeline)]$win32Proc)
+            process {
+                # Drop if its owner is not the target user
+                if ($User) {
+                    $owner = $win32Proc | Get-ProcessOwner
 
-    # Check if its owner is the target user
-    if ($User) {
-        $win32Processes = @(
-            foreach ($win32Proc in $win32Processes) {
-                $owner = $win32Proc | Get-ProcessOwner
-
-                if ($owner -and $owner.Sid -ne $User.Sid) {
-                    Write-Log -Message "Skipping $processName (PID:$($win32Proc.ProcessId)) because its owner is `"$owner`", not the target user `"$User`"" -Category Warning
-                    $win32Proc.Dispose()
-                    continue
+                    if ($owner -and $owner.Sid -ne $User.Sid) {
+                        Write-Log -Message "Skipping $processName (PID:$($win32Proc.ProcessId)) because its owner is `"$owner`", not the target user `"$User`"" -Category Warning
+                        $win32Proc.Dispose()
+                        return
+                    }
                 }
 
-                $win32Proc
+                # Drop if its commandline does not contain the given filter
+                if ($CommandLineFilter) {
+                    if ($win32Proc.CommandLine.IndexOf($CommandLineFilter, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+                        Write-Log -Message "Skipping $processName (PID:$($win32Proc.ProcessId)) because its command line does not contain the filter `"$CommandLineFilter`"" -Category Warning
+                        $win32Proc.Dispose()
+                        return
+                    }
+                }
+
+                $_
             }
-        )
-    }
+        })
 
     $selectedProcess = $null
 
@@ -12622,8 +12631,9 @@ function Get-SingleProcess {
         if ($selectedProcess) {
             # Return an object with minimal info so that the caller does not need to dispose the object
             [PSCustomObject]@{
-                Id   = $selectedProcess.ProcessId
-                Name = $selectedProcess.Name
+                Id          = $selectedProcess.ProcessId
+                Name        = $selectedProcess.Name
+                CommandLine = $selectedProcess.CommandLine
             }
         }
     }
@@ -13324,7 +13334,7 @@ function Collect-OutlookInfo {
             }
 
             # If the target process (Outlook, olk, etc) is already running, attach to it. Otherwise, start monitoring
-            $process = Get-SingleProcess -Name $TargetProcessName -User $targetUser
+            $process = Get-SingleProcess -Name $TargetProcessName -User $targetUser -CommandLineFilter $TTDCommandlineFilter
 
             if ($process) {
                 $logMsg = "Attaching TTD to $($process.Name) (PID:$($process.Id))"
