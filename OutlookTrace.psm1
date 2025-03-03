@@ -3531,10 +3531,12 @@ function Save-OSConfiguration {
 
         $userArg = @{ User = $User }
         @{ScriptBlock = { param($User) Get-WebView2 @PSBoundParameters }; ArgumentList = $userArg }
-        @{ScriptBlock = { param($User) Get-WinInetProxy @PSBoundParameters }; ArgumentList = $userArg }
-        @{ScriptBlock = { param($User) Get-ProxyAutoConfig @PSBoundParameters }; ArgumentList = $userArg }
         @{ScriptBlock = { param($User) Get-AppContainerRegistryAcl @PSBoundParameters }; ArgumentList = $userArg }
         @{ScriptBlock = { param($User) Get-StructuredQuerySchema @PSBoundParameters }; ArgumentList = $userArg }
+
+        # These are moved to Collect-OutlookInfo so that they run before Fiddler is started
+        # @{ScriptBlock = { param($User) Get-WinInetProxy @PSBoundParameters }; ArgumentList = $userArg }
+        # @{ScriptBlock = { param($User) Get-ProxyAutoConfig @PSBoundParameters }; ArgumentList = $userArg }
 
         @{ScriptBlock = { Get-AppxPackage -AllUsers } }
         @{ScriptBlock = { Get-AppxProvisionedPackage -Online } }
@@ -13100,6 +13102,10 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($User, $Path) Save-PolicyNudge @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'PolicyNudge' }
             Invoke-ScriptBlock { param($User, $Path) Save-DLP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'DLP' }
             Invoke-ScriptBlock { param($User, $Path) Save-CLP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'CLP' }
+
+            # Gather WinINet related data in case Fiddler is started later.
+            Invoke-ScriptBlock { param($User) Get-WinInetProxy @PSBoundParameters } -ArgumentList @{ User = $targetUser } -Path $OSDir
+            Invoke-ScriptBlock { param($User) Get-ProxyAutoConfig @PSBoundParameters } -ArgumentList @{ User = $targetUser } -Path $OSDir
 
             Write-Progress -Completed
         }
