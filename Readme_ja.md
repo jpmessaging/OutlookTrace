@@ -19,7 +19,7 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 - [Fiddler Everywhere Reporter](https://api.getfiddler.com/reporter/win/latest)
 - [Process Monitor](https://download.sysinternals.com/files/ProcessMonitor.zip)
 - [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)
-- [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-429-0/TTD.msixbundle)
+- [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-481-0/TTD.msixbundle)
 
 いずれも `Collect-OutlookInfo` の `-Path` パラメータで指定するフォルダ配下に配置ください。  
 

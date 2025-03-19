@@ -7686,13 +7686,14 @@ function Get-OfficeInfo {
 
                     if (($displayName -like "Microsoft Office*" -or $displayName -like "Microsoft 365 Apps*") -and $displayIcon -and $modifyPath -notlike "*MUI*") {
                         [PSCustomObject]@{
+                            DisplayName = $displayName
                             Version     = $subKey.GetValue('DisplayVersion')
                             Location    = $subKey.GetValue('InstallLocation')
-                            DisplayName = $displayName
                             ModifyPath  = $modifyPath
                             DisplayIcon = $displayIcon
                         }
                     }
+
                     $subKey.Close()
                 }
 
