@@ -11929,7 +11929,8 @@ function Enable-WebView2Netlog {
         [string]$Path,
         [string]$FileName = "netlog_$(Get-DateTimeString).json",
         [ValidateSet('Default', 'IncludeSensitive', 'Everything')]
-        [string]$CaptureMode = 'Everything'
+        [string]$CaptureMode = 'Everything',
+        [UInt32]$MaxFileSizeMB
     )
 
     if (-not (Test-Path $Path)) {
@@ -11938,10 +11939,16 @@ function Enable-WebView2Netlog {
 
     $Path = Convert-Path -LiteralPath $Path
 
-    Add-WebView2Flags -ExecutableName $ExecutableName -User $User -FlagNameAndValues @{
+    $flags = @{
         'log-net-log' = Join-Path $Path $FileName
         'net-log-capture-mode' = $CaptureMode
     }
+
+    if ($PSBoundParameters.ContainsKey('MaxFileSizeMB')) {
+        $flags.Add('net-log-max-size-mb', $MaxFileSizeMB.ToString())
+    }
+
+    Add-WebView2Flags -ExecutableName $ExecutableName -User $User -FlagNameAndValues $flags
 }
 
 function Disable-WebView2NetLog {
@@ -11953,7 +11960,7 @@ function Disable-WebView2NetLog {
         $User
     )
 
-    Remove-WebView2Flags -ExecutableName $ExecutableName -User $User -FlagNames 'log-net-log', 'net-log-capture-mode'
+    Remove-WebView2Flags -ExecutableName $ExecutableName -User $User -FlagNames 'log-net-log', 'net-log-capture-mode', 'net-log-max-size-mb'
 }
 
 function Get-WebView2Flags {
@@ -12068,7 +12075,7 @@ function Add-WebView2Flags {
     )
 
     # For now, support only the following flags:
-    $validFlags = @('auto-open-devtools-for-tabs', 'disable-background-timer-throttling', 'log-net-log', 'net-log-capture-mode')
+    $validFlags = @('auto-open-devtools-for-tabs', 'disable-background-timer-throttling', 'log-net-log', 'net-log-capture-mode', 'net-log-max-size-mb')
 
     foreach ($flagName in $FlagNameAndValues.Keys) {
         if ($flagName -notin $validFlags) {
@@ -12132,7 +12139,6 @@ function Remove-WebView2Flags {
         [Parameter(Mandatory)]
         [string]$ExecutableName,
         [Parameter(Mandatory)]
-        [ValidateSet('auto-open-devtools-for-tabs', 'disable-background-timer-throttling', 'log-net-log', 'net-log-capture-mode')]
         [string[]]$FlagNames,
         $User
     )
@@ -13303,7 +13309,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'WebView2') {
-            Enable-WebView2Netlog -ExecutableName $TargetProcessName -User $targetUser -Path (Join-Path $tempPath 'WebView2') -ErrorAction Stop
+            Enable-WebView2Netlog -ExecutableName $TargetProcessName -User $targetUser -Path (Join-Path $tempPath 'WebView2') -MaxFileSizeMB 2048 -ErrorAction Stop
             $webView2TraceStarted = $true
         }
 
@@ -13617,6 +13623,19 @@ function Collect-OutlookInfo {
 
         if ($webView2TraceStarted) {
             Disable-WebView2Netlog -ExecutableName $TargetProcessName -User $targetUser -ErrorAction Stop
+
+            # The target process (and its WebView2 instances) must be shutdown so that the netlog will be written to the file.
+            $processes = @(Get-Process -Name $TargetProcessName -ErrorAction SilentlyContinue)
+
+            if ($processes.Count -gt 0) {
+                Write-Host "Please shutdown $TargetProcessName (PID:$($processes.Id -join ','))" -ForegroundColor Yellow
+
+                foreach ($proc in $processes) {
+                    Write-Host "Waiting for $($proc.Name) (PID:$($proc.Id)) to shutdown ..." -ForegroundColor Yellow
+                    $proc.WaitForExit()
+                    $proc.Dispose()
+                }
+            }
         }
 
         if ($ldapTraceStarted) {
