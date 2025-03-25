@@ -11925,14 +11925,23 @@ function Enable-WebView2Netlog {
         [string]$ExecutableName,
         $User,
         [Parameter(Mandatory)]
-        # Log file path
+        # Folder file path
         [string]$Path,
-        [Parameter(Mandatory)]
+        [string]$FileName = "netlog_$(Get-DateTimeString).json",
         [ValidateSet('Default', 'IncludeSensitive', 'Everything')]
-        [string]$CaptureMode
+        [string]$CaptureMode = 'Everything'
     )
 
-    Add-WebView2Flags -ExecutableName $ExecutableName -User $User -FlagNameAndValues @{ 'log-net-log' = $Path; 'net-log-capture-mode' = $CaptureMode }
+    if (-not (Test-Path $Path)) {
+        $null = New-Item -Path $Path -ItemType Directory -ErrorAction Stop
+    }
+
+    $Path = Convert-Path -LiteralPath $Path
+
+    Add-WebView2Flags -ExecutableName $ExecutableName -User $User -FlagNameAndValues @{
+        'log-net-log' = Join-Path $Path $FileName
+        'net-log-capture-mode' = $CaptureMode
+    }
 }
 
 function Disable-WebView2NetLog {
@@ -12828,7 +12837,7 @@ function Collect-OutlookInfo {
         $Path,
         # What to collect
         [Parameter(Mandatory = $true)]
-        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'HungDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance', 'WPR', 'Recording', 'NewOutlook')]
+        [ValidateSet('Outlook', 'Netsh', 'PSR', 'LDAP', 'CAPI', 'Configuration', 'Fiddler', 'TCO', 'Dump', 'CrashDump', 'HungDump', 'Procmon', 'WAM', 'WFP', 'TTD', 'Performance', 'WPR', 'Recording', 'NewOutlook', 'WebView2')]
         [array]$Component,
         # This controls the level of netsh trace report
         [ValidateSet('None', 'Mini', 'Full')]
@@ -13293,6 +13302,11 @@ function Collect-OutlookInfo {
             $newOutlookTraceStarted = $true
         }
 
+        if ($Component -contains 'WebView2') {
+            Enable-WebView2Netlog -ExecutableName $TargetProcessName -User $targetUser -Path (Join-Path $tempPath 'WebView2') -ErrorAction Stop
+            $webView2TraceStarted = $true
+        }
+
         if ($Component -contains 'PSR') {
             Write-Progress -Status 'Starting PSR'
 
@@ -13509,7 +13523,7 @@ function Collect-OutlookInfo {
         $waitStart = Get-Timestamp
         $waitResult = $null
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted -or $newOutlookTraceStarted) {
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hungDumpStarted -or $wprStarted -or $recordingStarted -or $newOutlookTraceStarted -or $webView2TraceStarted) {
             Write-Log "Waiting for the user to stop"
             $ScriptInfo.WaitStart = [DateTimeOffset]::Now
 
@@ -13599,6 +13613,10 @@ function Collect-OutlookInfo {
             Disable-EdgeDevTools -ExecutableName 'olk.exe' -User $targetUser 2>&1 | Write-Log -Category Error -PassThru
             Save-MonarchLog -User $targetUser -Path (Join-Path $tempPath 'Monarch')  2>&1 | Write-Log -Category Error -PassThru
             Save-MonarchSetupLog -User $targetUser -Path (Join-Path $tempPath 'MonarchSetup')  2>&1 | Write-Log -Category Error -PassThru
+        }
+
+        if ($webView2TraceStarted) {
+            Disable-WebView2Netlog -ExecutableName $TargetProcessName -User $targetUser -ErrorAction Stop
         }
 
         if ($ldapTraceStarted) {
