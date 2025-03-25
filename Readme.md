@@ -4,9 +4,9 @@
 
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2025-02-20/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2025-03-25/OutlookTrace.psm1)
 
-SHA256: `8523AA541D528892C0F49741A945099F6409A8B8C2804209F2142A8499691058`
+SHA256: `277D95750FB241E7BF762ED57AF9B6B1D42679D7C5185B10AF42695DABEC3492`
 
 You can get the file hash with `Get-FileHash`:
 
@@ -162,6 +162,7 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 | TTD           | Time Travel Debugging trace (OS must be Windows 10 or above)                                                       |
 | Recording     | Screen recording by [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)                                   |
 | NewOutlook    | New Outlook for Windows logs                                                                                       |
+| WebView2      | WebView2 NetLog                                                                                                    |
 
 >[!IMPORTANT]
 >`Collect-OutlookInfo` tries to download Fiddler Everywhere Reporter, Procmon, TTD, and ZoomIt when `Component` parameter includes `Fiddler`, `Procmon`, `TTD` and `Recording` respectively.  
