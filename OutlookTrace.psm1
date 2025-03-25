@@ -11902,7 +11902,7 @@ function Enable-EdgeDevTools {
         $User
     )
 
-    Add-WebView2Flags @PSBoundParameters -FlagNames 'auto-open-devtools-for-tabs'
+    Add-WebView2Flags @PSBoundParameters -FlagNameAndValues @{ 'auto-open-devtools-for-tabs' = $null }
 }
 
 function Disable-EdgeDevTools {
@@ -11914,7 +11914,37 @@ function Disable-EdgeDevTools {
         $User
     )
 
-    Remove-WebView2Flags -ExecutableName $ExecutableName -User $User -FlagNames 'auto-open-devtools-for-tabs'
+    Remove-WebView2Flags @PSBoundParameters -FlagNames 'auto-open-devtools-for-tabs'
+}
+
+function Enable-WebView2Netlog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        # Target executable name, such as "olk.exe"
+        [string]$ExecutableName,
+        $User,
+        [Parameter(Mandatory)]
+        # Log file path
+        [string]$Path,
+        [Parameter(Mandatory)]
+        [ValidateSet('Default', 'IncludeSensitive', 'Everything')]
+        [string]$CaptureMode
+    )
+
+    Add-WebView2Flags -ExecutableName $ExecutableName -User $User -FlagNameAndValues @{ 'log-net-log' = $Path; 'net-log-capture-mode' = $CaptureMode }
+}
+
+function Disable-WebView2NetLog {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        # Target executable name, such as "olk.exe"
+        [string]$ExecutableName,
+        $User
+    )
+
+    Remove-WebView2Flags -ExecutableName $ExecutableName -User $User -FlagNames 'log-net-log', 'net-log-capture-mode'
 }
 
 function Get-WebView2Flags {
@@ -11934,16 +11964,47 @@ function Get-WebView2Flags {
     $ExecutableName = [IO.Path]::ChangeExtension($ExecutableName, 'exe')
 
     $keyPath = Join-Path $userRegRoot 'SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
-    $flagSet = New-Object System.Collections.Generic.HashSet[string]
+    $flags = @{}
 
     if (Test-Path $keyPath) {
-        $currentFlags = Get-ItemProperty $keyPath -Name $ExecutableName -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $ExecutableName
+        $flagsString = Get-ItemProperty $keyPath -Name $ExecutableName -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $ExecutableName
 
-        if ($currentFlags) {
-            foreach ($entry in $currentFlags.Split(' ')) {
-                if ($entry) {
-                    $null = $flagSet.Add($entry)
+        if ($flagsString) {
+            # sample: --auto-open-devtools-for-tabs --log-net-log="C:\users\admin\desktop\netlog\net log.json" --net-log-capture-mode=Everything
+
+            $current = -1
+            $entries = New-Object System.Collections.Generic.List[[string]]
+
+            # First extract entries "--***"
+            while ($true) {
+                $next = $flagsString.IndexOf('--', <# startIndex #> $current + 1)
+
+                if ($next -eq -1) {
+                    if ($current -ne -1) {
+                        $entries.Add($flagsString.Substring($current + 2).Trim())
+                    }
+
+                    break
                 }
+
+                if ($current -ne -1) {
+                    $entries.Add($flagsString.Substring($current + 2, $next - $current - 2).Trim())
+                }
+
+                $current = $next
+            }
+
+            # Next, split each with "name=value" pair. note: "=value" may be missing
+            foreach ($entry in $entries) {
+                $nameAndValue = $entry.Split('=')
+                $name = $nameAndValue[0]
+                $value = $null
+
+                if ($nameAndValue.Count -gt 1) {
+                    $value = $nameAndValue[1]
+                }
+
+                $flags.Add($name, $value)
             }
         }
     }
@@ -11951,9 +12012,41 @@ function Get-WebView2Flags {
     [PSCustomObject]@{
         Path  = $keyPath # Make sure to keep "Registry::" prefix here because Add-WebView2Flags uses it with Test-Path
         Name  = $ExecutableName
-        Flags = $flagSet
+        Flags = $flags
     }
 }
+
+<#
+.SYNOPSIS
+    Helper function for Add/Remove-WebView2Flags
+#>
+function Format-WebView2Flags {
+    param(
+        [Hashtable]$Flags
+    )
+
+    $sb = New-Object System.Text.StringBuilder
+
+    foreach ($entry in $Flags.GetEnumerator()) {
+        $null = $sb.Append("--$($entry.Key)")
+
+        if ($entry.Value) {
+            $value = $entry.Value
+
+            # If there is a space in value, surround by double-quotations
+            if ($value.IndexOf(' ') -ge 0) {
+                $value = "`"$value`""
+            }
+
+            $null = $sb.Append("=$value")
+        }
+
+        $null = $sb.Append(' ')
+    }
+
+    $sb.ToString()
+}
+
 
 function Add-WebView2Flags {
     [CmdletBinding()]
@@ -11961,10 +12054,19 @@ function Add-WebView2Flags {
         [Parameter(Mandatory)]
         [string]$ExecutableName,
         [Parameter(Mandatory)]
-        [ValidateSet('auto-open-devtools-for-tabs', 'disable-background-timer-throttling')]
-        [string[]]$FlagNames,
+        [Hashtable]$FlagNameAndValues,
         $User
     )
+
+    # For now, support only the following flags:
+    $validFlags = @('auto-open-devtools-for-tabs', 'disable-background-timer-throttling', 'log-net-log', 'net-log-capture-mode')
+
+    foreach ($flagName in $FlagNameAndValues.Keys) {
+        if ($flagName -notin $validFlags) {
+            Write-Error "Flag '$flagName' is not supported. Supported Flags: $($validFlags -join ',')"
+            return
+        }
+    }
 
     $wv2Flags = Get-WebView2Flags -ExecutableName $ExecutableName -User $User
 
@@ -11987,11 +12089,12 @@ function Add-WebView2Flags {
     # Consolidate current & new flags
     $isAdded = $false
 
-    foreach ($flagName in $FlagNames) {
-        $flagEntry = "--$flagName"
-
-        if (-not $flags.Contains($flagEntry)) {
-            $isAdded = $flags.Add($flagEntry)
+    foreach ($entry in $FlagNameAndValues.GetEnumerator()) {
+        # Add it if the flag does not exist or its value is different
+        if (-not $flags.ContainsKey($entry.Key) -or $flags[$entry.Key] -ne $entry.Value) {
+            $flags.Remove($entry.Key)
+            $flags.Add($entry.Key, $entry.Value)
+            $isAdded = $true
         }
     }
 
@@ -11999,14 +12102,18 @@ function Add-WebView2Flags {
         return
     }
 
+    # Format flags to a string
+    # e.g. "--auto-open-devtools-for-tabs --net-log-capture-mode=Everything"
+    $flagsString = Format-WebView2Flags $flags
+
     # Set-ItemProperty either creates a new value or overwrites the existing value.
-    $err = Set-ItemProperty $keyPath -Name $regValueName -Value ($flags -join ' ') 2>&1 | Select-Object -First 1
+    $err = Set-ItemProperty $keyPath -Name $regValueName -Value $flagsString 2>&1 | Select-Object -First 1
 
     if ($err) {
         Write-Error -Message "Failed to set '$regValueName' in $keyPath. $err" -Exception $err.Exception
     }
     else {
-        Write-Log "Flags set for $($regValueName): $($flags -join ' ')"
+        Write-Log "Flags set for $($regValueName): $flagsString"
     }
 }
 
@@ -12016,7 +12123,7 @@ function Remove-WebView2Flags {
         [Parameter(Mandatory)]
         [string]$ExecutableName,
         [Parameter(Mandatory)]
-        [ValidateSet('auto-open-devtools-for-tabs', 'disable-background-timer-throttling')]
+        [ValidateSet('auto-open-devtools-for-tabs', 'disable-background-timer-throttling', 'log-net-log', 'net-log-capture-mode')]
         [string[]]$FlagNames,
         $User
     )
@@ -12025,25 +12132,29 @@ function Remove-WebView2Flags {
 
     $regValueName = $wv2Flags.Name
     $keyPath = $wv2Flags.Path
-    [System.Collections.Generic.HashSet[string]]$flags = $wv2Flags.Flags
+    $flags = $wv2Flags.Flags
     $originalFlagCount = $flags.Count
 
     foreach ($flagName in $FlagNames) {
-        $null = $flags.Remove("--$flagName")
+        $flags.Remove("$flagName")
     }
 
     if ($flags.Count -eq $originalFlagCount) {
+        Write-Log "No flags is removed"
         return
     }
 
     if ($flags.Count) {
-        $err = Set-ItemProperty $keyPath -Name $regValueName -Value ($flags -join ' ') 2>&1 | Select-Object -First 1
+        # Format flags to a string
+        $flagsString = Format-WebView2Flags $flags
+
+        $err = Set-ItemProperty $keyPath -Name $regValueName -Value $flagsString 2>&1 | Select-Object -First 1
 
         if ($err) {
             Write-Error -Message "Failed to set '$regValueName' in $keyPath. $err" -Exception $err.Exception
         }
         else {
-            Write-Log "Flags set: $($flags -join ' ')"
+            Write-Log "Flags set: $flagsString"
         }
     }
     else {
@@ -13744,4 +13855,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-FiddlerEverywhereReporter, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Save-USOSharedLog, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-FiddlerEverywhereReporter, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-EdgeDevTools, Disable-EdgeDevTools, Enable-WebView2Netlog, Disable-WebView2Netlog, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Save-USOSharedLog, Collect-OutlookInfo
