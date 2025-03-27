@@ -2889,7 +2889,7 @@ function Start-PSR {
     $processes = @(Get-Process psr -ErrorAction SilentlyContinue)
 
     if ($processes.Count -gt 0) {
-        Write-Error "PSR is already running. ($($processes.ID -join ','))"
+        Write-Error "PSR is already running (PID:$($processes.ID -join ','))"
         return
     }
 
@@ -2993,16 +2993,16 @@ function Stop-PSR {
     }
 
     # "psr /stop" creates a new instance of psr.exe and it stops the instance currently running.
-    $err = $($stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru) | Select-Object -First 1
+    $err = $($stopInstance = Start-Process 'psr' -ArgumentList '/stop' -PassThru) 2>&1 | Select-Object -First 1
 
     if (-not $stopInstance) {
         Write-Error -Message "Failed to run psr.exe /stop. $err" -Exception $err.Exception
         return
     }
 
-    # Do not use Wait-Process here because it can fail with Access denied when running as non-admin
+    # Do not use Wait-Process here because it can fail with Access Denied when running as non-admin
     $currentInstance.WaitForExit()
-    Write-Log "PSR (PID:$($currentInstance.Id)) is stopped. ExitCode:$($currentInstance.ExitCode)"
+    Write-Log "PSR (PID:$($currentInstance.Id)) stopped. ExitCode:$($currentInstance.ExitCode)"
 
     if ($currentInstance.Dispose) {
         $currentInstance.Dispose()
@@ -9755,7 +9755,30 @@ function Start-PsrMonitor {
     }
 
     while ($true) {
-        $startResult = Start-PSR -Path $Path -FileName "PSR_$(Get-DateTimeString)"
+        $retry = 0
+        $maxRetry = 3
+        $retryInterval = [TimeSpan]::FromSeconds(1)
+        $startResult = $null
+
+        while ($true) {
+            $err = $($startResult = Start-PSR -Path $Path -FileName "PSR_$(Get-DateTimeString)") 2>&1 | Select-Object -First 1
+
+            if ($startResult) {
+                break
+            }
+
+            # PSR failed to start. Maybe an instance is already running? Retry up to maxRetry times.
+            if ($retry -ge $maxRetry) {
+                Write-Log -Message "PSR failed to start after $retry retries" -ErrorRecord $err -Category Error
+                return
+            }
+
+            $retry++
+            Write-Log -Message "PSR failed to start. $err. Retrying ($retry/$maxRetry)" -Category Warning
+            Stop-PSR -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds $retryInterval.TotalSeconds
+        }
+
         $canceled = $CancellationToken.WaitHandle.WaitOne($WaitInterval)
         Stop-PSR -StartResult $startResult
 
