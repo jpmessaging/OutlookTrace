@@ -6462,9 +6462,6 @@ function Start-FiddlerEverywhereReporter {
     # Start exe file.
     $activity = "Starting $fiddlerName"
     $status = "This may take a while. Please wait"
-    $waitCount = 0
-    $waitInterval = [TimeSpan]::FromSeconds(1)
-
     $process = $null
 
     try {
@@ -6487,7 +6484,9 @@ function Start-FiddlerEverywhereReporter {
         }
 
         # Wait for the UI.
-        Write-Log "Waiting $fiddlerName's UI to show up"
+        Write-Log "Waiting for $fiddlerName's UI to show up"
+        $waitCount = 0
+        $waitInterval = [TimeSpan]::FromSeconds(1)
 
         while ($true) {
             Write-Progress -Activity $activity -Status ($status + '.' * $waitCount)
