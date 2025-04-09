@@ -10294,17 +10294,14 @@ function Invoke-WamSignOut {
     foreach ($account in $accounts.Accounts) {
         $accountId = "UserName:$($account.UserName), Id:$($account.Id)"
         $state = $account.State
-
-        if ($state -ne [Windows.Security.Credentials.WebAccountState]::Connected) {
-            Write-Log "Skipping $accountId because its State is $state"
-            continue
-        }
+        Write-Log "Account $accountId's State is $state"
 
         $signOutMsg = "Signing out an account; $accountId"
 
         # If Force is not specified, ask the user
         if (-not $Force) {
             $ans = Read-Host "Do you want to sign out the following account? (Y|N)`n  $accountId"
+
             if ($ans -like 'Y*') {
                 Write-Host $signOutMsg -ForegroundColor Green
             }
@@ -10511,7 +10508,7 @@ function Get-ConnectedExperience {
     | Join-Path -ChildPath $Identity | Join-Path -ChildPath 'Settings\1272\{00000000-0000-0000-0000-000000000000}'
 
     if (-not (Test-Path $roamingSettingsPath)) {
-        Write-Log "Cannot find roaming settings for $Identity"
+        Write-Log "Cannot find roaming settings for $Identity" -Category Warning
         return
     }
 
