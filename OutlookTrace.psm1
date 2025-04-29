@@ -4327,6 +4327,8 @@ $PropTags = @{
     PR_EMSMDB_SECTION_UID                = '01023d15'
     PR_CACHE_SYNC_MODE                   = '0003041f'
     PR_PROFILE_OFFLINE_STORE_PATH        = '001f6610'
+    PR_EMSMDB_CRED_USERNAME              = '001f3d16'
+    PR_EMSMDB_CRED_DOMAINNAME            = '001f3d17'
     PR_EMSMDB_IDENTITY_UNIQUEID          = '001f3d1d'
     PR_PROFILE_CONFIG_FLAGS              = '00036601'
     PR_PROFILE_CONFIG_FLAGS_EX           = '1003666e'
@@ -4860,6 +4862,8 @@ function Get-MapiAccount {
     # Get EMSMDB section properties
     $emsmdbProperties = @(
         $PropTags.PR_DISPLAY_NAME
+        $PropTags.PR_EMSMDB_CRED_DOMAINNAME
+        $PropTags.PR_EMSMDB_CRED_USERNAME
         $PropTags.PR_EMSMDB_IDENTITY_UNIQUEID
         $PropTags.PR_PROFILE_USER_FULL_NAME
         $PropTags.PR_PROFILE_OFFLINE_STORE_PATH
@@ -4887,6 +4891,14 @@ function Get-MapiAccount {
 
     if ($displayNameBin = $emsmdb.$($PropTags.PR_DISPLAY_NAME)) {
         $props.DisplayName = Get-MapiString $displayNameBin
+    }
+
+    if ($credDomainName = $emsmdb.$($PropTags.PR_EMSMDB_CRED_DOMAINNAME)) {
+        $props.CredentialDomainName = Get-MapiString $credDomainName
+    }
+
+    if ($credUserName = $emsmdb.$($PropTags.PR_EMSMDB_CRED_USERNAME)) {
+        $props.CredentialUserName = Get-MapiString $credUserName
     }
 
     if ($identityUniqueIdBin = $emsmdb.$($PropTags.PR_EMSMDB_IDENTITY_UNIQUEID)) {
@@ -12426,7 +12438,7 @@ function Get-ExperimentConfigs {
     )
 
     # Parse FCGroupMap
-    # It's an object with properties called "FCGroupMap_1", "FCGroupMap_2" etc. and each group is an array of kvp, where Key is "F" and Value is "V")
+    # It's an object with properties called "FCGroupMap_1", "FCGroupMap_2" etc. and each group is an array of kvp, where Key is "F" and Value is "V".
     $fcGroupMap = @{}
 
     $config.FCGroupMap | Get-Member -MemberType Properties | & {
