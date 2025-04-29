@@ -13337,8 +13337,6 @@ function Collect-OutlookInfo {
         $($brokerPlugin = Get-AADBrokerPlugin) 2>&1 | Write-Log -Category Warning
 
         # Add Microsoft.AAD.BrokerPlugin to Loopback Exempt list if that's appropriate. If it is already added, Add-LoopbackExempt does nothing.
-        $loopbackExemptAdded = $false
-
         if ($brokerPlugin -and ($EnableLoopbackExempt -or $Component -contains 'Fiddler' -or $Component -contains 'Netsh')) {
             $($loopbackExemptAdded = Add-LoopbackExempt $brokerPlugin.PackageFamilyName) 2>&1 | Write-Log -Category Warning
 
@@ -13658,7 +13656,7 @@ function Collect-OutlookInfo {
 
         $PSDefaultParameterValues['Write-Progress:Activity'] = 'Stopping traces'
 
-        if ($recordingStarted) {
+        if ($Local:recordingStarted) {
             # This will show the user a Save As dialog
             Stop-Recording
             Write-Host "Please save the recording (Save As dialog should appear). Then press enter to continue:" -ForegroundColor Yellow -NoNewline
@@ -13676,7 +13674,7 @@ function Collect-OutlookInfo {
             }
         }
 
-        if ($ttdStarted) {
+        if ($Local:ttdStarted) {
             Write-Progress -Status 'Stopping TTD trace'
 
             if ($ttdProcess.IsAttached) {
@@ -13705,24 +13703,24 @@ function Collect-OutlookInfo {
             $ttdProcess | Cleanup-TTD
         }
 
-        if ($netshTraceStarted) {
+        if ($Local:netshTraceStarted) {
             Write-Progress -Status 'Stopping Netsh trace'
             Stop-NetshTrace 2>&1 | Write-Log -Category Error -PassThru
         }
 
-        if ($outlookTraceStarted) {
+        if ($Local:outlookTraceStarted) {
             Write-Progress -Status 'Stopping Outlook trace'
             Stop-OutlookTrace 2>&1 | Write-Log -Category Error -PassThru
             Disable-DrmExtendedLogging -User $targetUser
         }
 
-        if ($newOutlookTraceStarted) {
+        if ($Local:newOutlookTraceStarted) {
             Disable-WebView2DevTools -ExecutableName 'olk.exe' -User $targetUser 2>&1 | Write-Log -Category Error -PassThru
             Save-MonarchLog -User $targetUser -Path (Join-Path $tempPath 'Monarch')  2>&1 | Write-Log -Category Error -PassThru
             Save-MonarchSetupLog -User $targetUser -Path (Join-Path $tempPath 'MonarchSetup')  2>&1 | Write-Log -Category Error -PassThru
         }
 
-        if ($webView2TraceStarted) {
+        if ($Local:webView2TraceStarted) {
             Disable-WebView2Netlog -ExecutableName $TargetProcessName -User $targetUser -ErrorAction Stop
 
             # The target process (and its WebView2 instances) must be shutdown so that the netlog will be written to the file.
@@ -13739,60 +13737,60 @@ function Collect-OutlookInfo {
             }
         }
 
-        if ($ldapTraceStarted) {
+        if ($Local:ldapTraceStarted) {
             Write-Progress -Status 'Stopping LDAP trace'
             Stop-LDAPTrace -TargetExecutable $TargetProcessName 2>&1 | Write-Log -Category Error -PassThru
         }
 
-        if ($capiTraceStarted) {
+        if ($Local:capiTraceStarted) {
             Write-Progress -Status 'Stopping CAPI trace'
             Stop-CAPITrace
         }
 
-        if ($tcoTraceStarted) {
+        if ($Local:tcoTraceStarted) {
             Stop-TcoTrace -Path (Join-Path $tempPath 'TCO')
         }
 
-        if ($wamTraceStarted) {
+        if ($Local:wamTraceStarted) {
             Write-Progress -Status 'Stopping WAM trace'
             Stop-WamTrace
         }
 
-        if ($procmonStared) {
+        if ($Local:procmonStared) {
             Write-Progress -Status 'Stopping Procmon'
             Stop-Procmon 2>&1 | Write-Log -Category Error -PassThru
         }
 
-        if ($wfpStarted) {
+        if ($Local:wfpStarted) {
             Write-Progress -Status 'Stopping WFP trace'
             Stop-WfpTrace $wfpJob
         }
 
-        if ($perfStarted) {
+        if ($Local:perfStarted) {
             Stop-PerfTrace 2>&1 | Write-Log -Category Error -PassThru
         }
 
-        if ($wprStarted) {
+        if ($Local:wprStarted) {
             Write-Progress -Status 'Stopping WPR trace'
             Stop-Wpr -Path (Join-Path $tempPath 'WPR') | Write-Log -Category Error -PassThru
         }
 
-        if ($hungDumpStarted) {
+        if ($Local:hungDumpStarted) {
             $hungDumpCts.Cancel()
             Receive-Task $hungMonitorTask -AutoRemoveTask 2>&1 | Write-Log -Category Error
             $hungDumpCts.Dispose()
         }
 
-        if ($crashDumpStarted) {
+        if ($Local:crashDumpStarted) {
             $CrashDumpTargets | Remove-WerDumpKey
         }
 
-        if ($fiddlerStarted) {
+        if ($Local:fiddlerStarted) {
             # Write-Warning "Please stop FiddlerCap and save the capture manually"
             Write-Warning "Please stop Fiddler Everywhere Reporter and save the capture manually"
         }
 
-        if ($psrStarted) {
+        if ($Local:psrStarted) {
             Write-Progress -Status "Stopping PSR"
             $psrCts.Cancel()
             Receive-Task $psrTask -AutoRemoveTask 2>&1 | Write-Log -Category Error -PassThru
@@ -13805,7 +13803,7 @@ function Collect-OutlookInfo {
 
         # Wait for the tasks started earlier and save the event logs
         if ($Component -contains 'Configuration') {
-            if ($processCaptureTask) {
+            if ($Local:processCaptureTask) {
                 Write-Progress -Status 'Stopping Process capture task'
                 $processCaptureTaskCts.Cancel()
                 $processCaptureTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
@@ -13817,7 +13815,7 @@ function Collect-OutlookInfo {
             Invoke-ScriptBlock { param($User) Get-OneAuthAccount @PSBoundParameters } -ArgumentList @{ User = $targetUser } -Path $OfficeDir
             Invoke-ScriptBlock { param($Path, $User) Save-OneAuthAccount @PSBoundParameters } -ArgumentList @{ Path = Join-Path $OfficeDir 'OneAuthAccount'; User = $targetUser }
 
-            if ($startSuccess) {
+            if ($Local:startSuccess) {
                 Write-Progress -Status 'Saving Event logs'
                 Save-EventLog -Path $EventDir 2>&1 | Write-Log -Category Error
 
@@ -13826,10 +13824,10 @@ function Collect-OutlookInfo {
                 Invoke-ScriptBlock { param($Path, $User) Save-MIP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'MIP' }
             }
 
-            if ($osConfigurationTask) {
+            if ($Local:osConfigurationTask) {
                 Write-Progress -Status 'Saving OS configuration'
 
-                if (-not $startSuccess) {
+                if (-not $Local:startSuccess) {
                     Write-Log "Canceling osConfigurationTask because startSuccess is false"
                     $osConfigurationTaskCts.Cancel()
                 }
@@ -13839,16 +13837,16 @@ function Collect-OutlookInfo {
                 Write-Log "$($osConfigurationTask.Name) is complete"
             }
 
-            if ($officeRegistryTask) {
+            if ($Local:officeRegistryTask) {
                 Write-Progress -Status 'Saving Office Registry'
                 $officeRegistryTask | Receive-Task -AutoRemoveTask 2>&1 | Write-Log -Category Error
                 Write-Log "$($officeRegistryTask.Name) is complete"
             }
 
-            if ($networkInfoTask) {
+            if ($Local:networkInfoTask) {
                 Write-Progress -Status 'Saving Network info'
 
-                if (-not $startSuccess) {
+                if (-not $Local:startSuccess) {
                     Write-Log "Canceling networkInfoTask because startSuccess is false"
                     $networkInfoTaskCts.Cancel()
                 }
@@ -13858,10 +13856,10 @@ function Collect-OutlookInfo {
                 Write-Log "$($networkInfoTask.Name) is complete"
             }
 
-            if ($officeModuleInfoTask) {
+            if ($Local:officeModuleInfoTask) {
                 Write-Progress -Status "Saving Office module info"
 
-                if ($startSuccess) {
+                if ($Local:startSuccess) {
                     $timeout = [TimeSpan]::FromSeconds(30)
 
                     if (Wait-Task $officeModuleInfoTask -Timeout $timeout) {
@@ -13882,10 +13880,10 @@ function Collect-OutlookInfo {
                 Write-Log "$($officeModuleInfoTask.Name) is complete"
             }
 
-            if ($gpresultTask) {
+            if ($Local:gpresultTask) {
                 Write-Progress -Status 'Saving Group Policy'
 
-                if ($startSuccess) {
+                if ($Local:startSuccess) {
                     # If collecting only Configuration, then do not timeout.
                     if ($Component.Count -eq 1) {
                         $timeout = [System.Threading.Timeout]::InfiniteTimeSpan
@@ -13926,15 +13924,15 @@ function Collect-OutlookInfo {
             }
         }
 
-        if ($pageHeapEnabled) {
+        if ($Local:pageHeapEnabled) {
             Disable-PageHeap -ProcessName $TargetProcessName 2>&1 | Write-Log -Category Error -PassThru
         }
 
-        if ($loopbackExemptAdded) {
+        if ($Local:loopbackExemptAdded) {
             Remove-LoopbackExempt $brokerPlugin.PackageFamilyName 2>&1 | Write-Log -Category Error -PassThru
         }
 
-        if ($debugPrivilegeEnabled) {
+        if ($Local:debugPrivilegeEnabled) {
             Disable-DebugPrivilege 2>&1 | Write-Log -Category Error
         }
 
@@ -13943,7 +13941,7 @@ function Collect-OutlookInfo {
         Close-TaskRunspace 2>&1 | Write-Log -Category Error
         Close-Log
 
-        if ($ctrlCDisabled) {
+        if ($Local:ctrlCDisabled) {
             $null = Enable-CtrlC
         }
 
@@ -13952,7 +13950,7 @@ function Collect-OutlookInfo {
     }
 
     # Bail if something failed or user interruped with Ctrl+C.
-    if (-not $startSuccess) {
+    if (-not $Local:startSuccess) {
         Write-Warning "Temporary folder is `"$tempPath`""
         return
     }
