@@ -6810,6 +6810,71 @@ function Get-DateTimeString {
     $DateTime.ToUniversalTime().ToString('yyyy-MM-ddTHHmmssZ')
 }
 
+function Get-ConnTimeout {
+    [CmdletBinding()]
+    param (
+        $User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    $path = Join-Path $userRegRoot 'Software\Microsoft\Exchange\'
+    $name = 'ConnTimeout'
+
+    $prop = Get-ItemProperty $path -Name $name -ErrorAction SilentlyContinue
+
+    [PSCustomObject]@{
+        ConnTimeout = if ($prop) { [TimeSpan]::FromMilliseconds($prop.ConnTimeout) } else { $null }
+    }
+}
+
+function Set-ConnTimeout {
+    [CmdletBinding()]
+    param(
+        $User,
+        [Parameter(Mandatory = $true)]
+        [TimeSpan]$Value
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    $path = Join-Path $userRegRoot 'Software\Microsoft\Exchange\'
+    $name = 'ConnTimeout'
+
+    if (-not (Test-Path $path)) {
+        $null = New-Item -Path $path -Force -ErrorAction Stop
+    }
+
+    $null = Set-ItemProperty -Path $path -Name $name -Value $Value.TotalMilliseconds -Type ([Microsoft.Win32.RegistryValueKind]::DWord)
+    Get-ConnTimeout
+}
+
+function Remove-ConnTimeout {
+    [CmdletBinding()]
+    param(
+        $User
+    )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
+
+    $path = Join-Path $userRegRoot 'Software\Microsoft\Exchange\'
+    $name = 'ConnTimeout'
+
+    Remove-ItemProperty -Path $path -Name $name -ErrorAction SilentlyContinue
+}
+
 <#
 .SYNOPSIS
 There are 2 modes of execution:
@@ -13538,6 +13603,11 @@ function Collect-OutlookInfo {
 
             $ttdProcess | Add-Member -MemberType NoteProperty -Name 'TargetProcessName' -Value $TargetProcessName
             $ttdStarted = $true
+
+            # Set ConnTimeout registry value
+            $savedConnTimeout = Get-ConnTimeout
+            $connTimeout = Set-ConnTimeout -User $targetUser -Value ([TimeSpan]::FromMinutes(5))
+            Write-Log "ConnTimeout is set to $($connTimeout.ConnTimeout). Original value is $(if ($null -eq $savedConnTimeout.ConnTimeout) { "null" } else { $savedConnTimeout.ConnTimeout })"
         }
 
         if ($Component -contains 'Recording') {
@@ -13843,6 +13913,19 @@ function Collect-OutlookInfo {
             }
         }
 
+        # Restore ConnTimeout
+        if ($Local:savedConnTimeout) {
+            # null value indicates the registry value did not exist
+            if ($null -eq $savedConnTimeout.ConnTimeout) {
+                Remove-ConnTimeout -User $targetUser
+                Write-Log "ConnTimeout is removed"
+            }
+            else {
+                $null = Set-ConnTimeout -User $targetUser -Value $savedConnTimeout.ConnTimeout
+                Write-Log "ConnTimeout is restored to $($savedConnTimeout.ConnTimeout)"
+            }
+        }
+
         if ($pageHeapEnabled) {
             Disable-PageHeap -ProcessName $TargetProcessName 2>&1 | Write-Log -Category Error -PassThru
         }
@@ -13923,4 +14006,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-FiddlerEverywhereReporter, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-WebView2DevTools, Disable-WebView2DevTools, Enable-WebView2Netlog, Disable-WebView2Netlog, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Save-USOSharedLog, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-FiddlerEverywhereReporter, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-ConnTimeout, Set-ConnTimeout, Remove-ConnTimeout, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-WebView2DevTools, Disable-WebView2DevTools, Enable-WebView2Netlog, Disable-WebView2Netlog, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Save-USOSharedLog, Collect-OutlookInfo
