@@ -10294,6 +10294,55 @@ function Get-IMProvider {
 }
 
 <#
+WinRT helper functions
+#>
+function AwaitAction($WinRtAction) {
+    # WindowsRuntimeSystemExtensions.AsTask() creates a Task from WinRT future.
+    # https://devblogs.microsoft.com/dotnet/asynchronous-programming-for-windows-store-apps-net-is-up-to-the-task/
+    $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and !$_.IsGenericMethod })[0]
+    $netTask = $asTask.Invoke($null, @($WinRtAction))
+    $null = $netTask.Wait(-1)
+}
+
+function Await($WinRtTask, $ResultType) {
+    # https://fleexlab.blogspot.com/2018/02/using-winrts-iasyncoperation-in.html
+    $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
+    $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
+    $netTask = $asTask.Invoke($null, @($WinRtTask))
+    $null = $netTask.Wait(-1)
+    $netTask.Result
+}
+
+# WAM related constants
+$WAM = @{
+    ProviderId = @{
+        # https://learn.microsoft.com/en-us/windows/uwp/security/web-account-manager
+        AAD       = 'https://login.windows.net'
+        Microsoft = 'https://login.microsoft.com'
+        Local     = 'https://login.windows.local'
+    }
+
+    Authority  = @{
+        Consumer      = 'consumers'
+        Organizations = 'organizations'
+    }
+
+    ClientId   = @{
+        MSOffice = 'd3590ed6-52b3-4102-aeff-aad2292ab01c'
+    }
+
+    Resource   = @{
+        Outlook = 'https://outlook.office365.com/'
+    }
+
+    Scopes     = @{
+        # Note: scopes are space-delimited strings:
+        # https://datatracker.ietf.org/doc/html/rfc6749#section-3.3
+        Default = 'https://outlook.office365.com//.default offline_access openid profile'
+    }
+}
+
+<#
 .SYNOPSIS
 Sign out of accounts persisted in WAM (Web Account Manager).
 .DESCRIPTION
@@ -10336,30 +10385,13 @@ function Invoke-WamSignOut {
         $ClientId = $MS_OFFICE_CLIENTID
     }
 
-    function AwaitAction($WinRtAction) {
-        # WindowsRuntimeSystemExtensions.AsTask() creates a Task from WinRT future.
-        # https://devblogs.microsoft.com/dotnet/asynchronous-programming-for-windows-store-apps-net-is-up-to-the-task/
-        $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and !$_.IsGenericMethod })[0]
-        $netTask = $asTask.Invoke($null, @($WinRtAction))
-        $null = $netTask.Wait(-1)
-    }
-
-    function Await($WinRtTask, $ResultType) {
-        # https://fleexlab.blogspot.com/2018/02/using-winrts-iasyncoperation-in.html
-        $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
-        $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
-        $netTask = $asTask.Invoke($null, @($WinRtTask))
-        $null = $netTask.Wait(-1)
-        $netTask.Result
-    }
-
     # https://docs.microsoft.com/en-us/uwp/api/windows.security.authentication.web.core.webauthenticationcoremanager.findaccountproviderasync?view=winrt-20348#Windows_Security_Authentication_Web_Core_WebAuthenticationCoreManager_FindAccountProviderAsync_System_String_
     $provider = Await ([Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::FindAccountProviderAsync('https://login.microsoft.com', 'organizations')) ([Windows.Security.Credentials.WebAccountProvider, Windows, ContentType = WindowsRuntime])
 
     # https://docs.microsoft.com/en-us/uwp/api/windows.security.authentication.web.core.webauthenticationcoremanager.findallaccountsasync?view=winrt-20348
-    $accounts = Await ([Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::FindAllAccountsAsync($provider, $ClientId)) ([Windows.Security.Authentication.Web.Core.FindAllAccountsResult, Windows, ContentType = WindowsRuntime])
+    $findAllAccountsResult = Await ([Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::FindAllAccountsAsync($provider, $ClientId)) ([Windows.Security.Authentication.Web.Core.FindAllAccountsResult, Windows, ContentType = WindowsRuntime])
 
-    $count = $accounts.Accounts | Measure-Object | Select-Object -ExpandProperty Count
+    $count = $findAllAccountsResult.Accounts | Measure-Object | Select-Object -ExpandProperty Count
 
     if ($count -eq 0) {
         Write-Log "No account found"
@@ -10368,7 +10400,7 @@ function Invoke-WamSignOut {
 
     Write-Log "$count account$(if ($count -gt 1) {'s'}) found"
 
-    foreach ($account in $accounts.Accounts) {
+    foreach ($account in $findAllAccountsResult.Accounts) {
         $accountId = "UserName:$($account.UserName), Id:$($account.Id)"
         $state = $account.State
         Write-Log "Account $accountId's State is $state"
@@ -10390,6 +10422,177 @@ function Invoke-WamSignOut {
 
         Write-Log $signOutMsg
         AwaitAction ($account.SignOutAsync($ClientId))
+    }
+}
+
+<#
+.SYNOPSIS
+    Get a Web Account Provider.
+.DESCRIPTION
+    Get a Web Account Providerusing WebAuthenticationCoreManager.FindAccountProviderAsync:
+.NOTES
+    Information or caveats about the function e.g. 'This function is not supported in Linux'
+.LINK
+    WebAuthenticationCoreManager.FindAccountProviderAsync
+    https://learn.microsoft.com/en-us/uwp/api/windows.security.authentication.web.core.webauthenticationcoremanager.findaccountproviderasync?view=winrt-26100
+#>
+function Get-WebAccountProvider {
+    [CmdletBinding()]
+    param(
+        # The Id of the web account provider to find.
+        [ValidateSet('https://login.microsoft.com', 'https://login.windows.local')]
+        [string]$ProviderId = 'https://login.microsoft.com',
+        # The authority of the web account provider to find.
+        [ValidateSet('organizations', 'consumers')]
+        [string]$Authority = 'organizations'
+    )
+
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    Await ([Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::FindAccountProviderAsync('https://login.microsoft.com', 'organizations')) ([Windows.Security.Credentials.WebAccountProvider, Windows, ContentType = WindowsRuntime])
+}
+
+function Get-WebAccount {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [string]$ClientId = $WAM.ClientId.MSOffice
+    )
+
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+
+    # https://docs.microsoft.com/en-us/uwp/api/windows.security.authentication.web.core.webauthenticationcoremanager.findaccountproviderasync?view=winrt-20348#Windows_Security_Authentication_Web_Core_WebAuthenticationCoreManager_FindAccountProviderAsync_System_String_
+    # $provider = Get-WebAccountProvider -ProviderId 'https://login.microsoft.com' -Authority 'organizations'
+    $provider = Get-WebAccountProvider -ProviderId $WAM.ProviderId.Microsoft -Authority $WAM.Authority.Organizations
+
+    # https://docs.microsoft.com/en-us/uwp/api/windows.security.authentication.web.core.webauthenticationcoremanager.findallaccountsasync?view=winrt-20348
+    $findAllAccountsResult = Await ([Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::FindAllAccountsAsync($provider, $ClientId)) ([Windows.Security.Authentication.Web.Core.FindAllAccountsResult, Windows, ContentType = WindowsRuntime])
+
+    if ($findAllAccountsResult.Status -ne [Windows.Security.Authentication.Web.Core.FindAllWebAccountsStatus]::Success) {
+        Write-Error "FindAllAccountsAsync() failed. ErrorCode:$($findAllAccountsResult.ProviderError.ErrorCode), ErrorMessage:$($findAllAccountsResult.ProviderError.ErrorMessage)"
+        return
+    }
+
+    $count = $findAllAccountsResult.Accounts | Measure-Object | Select-Object -ExpandProperty Count
+    Write-Log "$count Web Account$(if ($count -gt 1) {'s'}) found"
+
+    $findAllAccountsResult.Accounts
+}
+
+function Get-TokenSilently {
+    [CmdletBinding()]
+    param(
+        # The Id of the web account provider to find.
+        [ValidateSet('https://login.microsoft.com', 'https://login.windows.local')]
+        [string]$ProviderId = $WAM.ProviderId.Microsoft,
+        # The authority of the web account provider to find.
+        [ValidateSet('organizations', 'consumers')]
+        [string]$Authority = $WAM.Authority.Organizations,
+        [string]$ClientId = $WAM.ClientId.MSOffice,
+        # scopes are space-delimited strings:
+        # https://datatracker.ietf.org/doc/html/rfc6749#section-3.3
+        # e.g. "https://outlook.office365.com//.default offline_access openid profile"
+        [string]$Scopes,
+        # e.g. 'https://outlook.office365.com', 'https://graph.windows.net'
+        [string]$Resource,
+        # Add "wam_compat=2.0" to request
+        [Switch]$AddWamCompat,
+        # Add "claim={"access_token":{"xms_cc":{"values":["CP1"]}}}" to request
+        [Switch]$AddClaimCapability,
+        $WebAccount
+    )
+
+    # Help class to expose IDictionary<string, string> from a WinRT object
+    $helperType = @'
+namespace WinRT
+{
+    using System;
+    using System.Collections.Generic;
+
+    public class DictionaryWrapper
+    {
+        public DictionaryWrapper(object dictionary)
+        {
+            if (dictionary == null)
+            {
+                throw new ArgumentNullException("dictionary");
+            }
+
+            _dictionary = dictionary as IDictionary<string, string>;
+
+            if (_dictionary == null)
+            {
+                throw new ArgumentException("argument is not IDictionary<string, string>");
+            }
+        }
+
+        public void Add(string key, string value)
+        {
+            _dictionary.Add(key, value);
+        }
+
+        private IDictionary<string, string> _dictionary;
+    }
+}
+'@
+
+    if (-not ('WinRT.DictionaryWrapper' -as [type])) {
+        Add-Type -TypeDefinition $helperType
+    }
+
+    $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
+
+    $promptType = [Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]::Default
+    $request = [Windows.Security.Authentication.Web.Core.WebTokenRequest, Windows, ContentType = WindowsRuntime]::new($provider, $Scopes, $ClientId, $promptType)
+
+    if ($null -eq $request.Properties) {
+        Write-Error "request.Properties is null. Why?"
+        return
+    }
+
+    $properties = [WinRT.DictionaryWrapper]::new($request.Properties)
+
+    If ($AddWamCompat) {
+        $properties.Add('wam_compat', "2.0");
+    }
+
+    if ($Resource) {
+        $properties.Add('resource', $Resource)
+    }
+
+    if ($AddClaimCapability) {
+        $properties.Add('claims', '{"access_token":{"xms_cc":{"values":["CP1"]}}}')
+    }
+
+    Write-Log "request.Properties: $($request.Properties)"
+
+    if ($WebAccount) {
+        Write-Log "Using WebAccount:$($WebAccount.Id)"
+        $requestResult = Await ([Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::GetTokenSilentlyAsync($request, $WebAccount)) `
+            -ResultType ([Windows.Security.Authentication.Web.Core.WebTokenRequestResult, Windows, ContentType = WindowsRuntime])
+    }
+    else {
+        $requestResult = Await ([Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::GetTokenSilentlyAsync($request)) `
+            -ResultType ([Windows.Security.Authentication.Web.Core.WebTokenRequestResult, Windows, ContentType = WindowsRuntime])
+    }
+
+    if ($requestResult.ResponseStatus -ne [Windows.Security.Authentication.Web.Core.WebTokenRequestStatus]::Success) {
+        Write-Error "GetTokenSilentlyAsync() failed with `"$($requestResult.ResponseStatus)`". ErrorCode:0x$("{0:x8}" -f $requestResult.ResponseError.ErrorCode), ErrorMessage:$($requestResult.ResponseError.ErrorMessage)"
+        return
+    }
+
+    # Note: Do not use "$requestResult.ResponseData.Properties". It'd cause request.Properties to be null in the next invocation.
+    foreach ($_ in $requestResult.ResponseData) {
+        # Sice Properties is a System.__COMObject, pack them into a hash table
+        $props = @{}
+
+        foreach ($prop in $_.Properties) {
+            $props.Add($prop.Key, $prop.Value)
+        }
+
+        [PSCustomObject]@{
+            WebAccount = $_.WebAccount
+            Token      = $_.Token
+            Properties = [PSCustomObject]$props
+        }
     }
 }
 
@@ -14004,4 +14207,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-FiddlerEverywhereReporter, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-ConnTimeout, Set-ConnTimeout, Remove-ConnTimeout, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-WebView2DevTools, Disable-WebView2DevTools, Enable-WebView2Netlog, Disable-WebView2Netlog, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Save-USOSharedLog, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-FiddlerEverywhereReporter, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-ConnTimeout, Set-ConnTimeout, Remove-ConnTimeout, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-WebView2DevTools, Disable-WebView2DevTools, Enable-WebView2Netlog, Disable-WebView2Netlog, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Save-USOSharedLog, Get-WebAccount, Get-WebAccountProvider, Get-TokenSilently, wam-test, Collect-OutlookInfo
