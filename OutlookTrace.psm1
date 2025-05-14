@@ -416,6 +416,9 @@ namespace Win32
             [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle,
             int dwProcessId);
 
+        [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+        public static extern IntPtr GetConsoleWindow();
+
         public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
         public const uint PROCESS_QUERY_INFORMATION = 0x0400;
     }
@@ -949,6 +952,15 @@ namespace Win32
         // https://docs.microsoft.com/en-us/windows/win32/api/wscapi/nf-wscapi-wscgetsecurityproviderhealth
         [DllImport("Wscapi.dll", SetLastError = true)]
         public static extern int WscGetSecurityProviderHealth(uint Providers, out int pHealth);
+    }
+
+    public static class WamInterop
+    {
+        [DllImport("WamInterop.dll")]
+        public static extern int RequestToken(IntPtr hwnd, IntPtr request, out IntPtr result);
+
+        [DllImport("WamInterop.dll")]
+        public static extern IntPtr CreateAnchorWindow();
     }
 }
 '@
@@ -10330,10 +10342,10 @@ function Receive-WinRTAsyncResult {
                         -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1'
                 } | Select-Object -First 1
 
-                # Create AsTask<TResult> method & cache the result
                 $Script:AsTaskOfIAsyncOperation = $methodInfo
             }
 
+            # Create AsTask<TResult> method
             $asTask = $Script:AsTaskOfIAsyncOperation.MakeGenericMethod($TResult)
         }
         else {
@@ -10697,6 +10709,193 @@ function Get-TokenSilently {
 
         [PSCustomObject]$result
     }
+}
+
+function Invoke-RequestToken {
+    [CmdletBinding()]
+    param(
+        # Web Account Provider ID
+        [ValidateSet('https://login.windows.net', 'https://login.microsoft.com', 'https://login.windows.local')]
+        [string]$ProviderId = $WAM.ProviderId.Microsoft,
+        # The authority of the web account provider
+        [ValidateSet('organizations', 'consumers')]
+        [string]$Authority = $WAM.Authority.Organizations,
+        # Application/Cliend ID (By default, MSOffice 'd3590ed6-52b3-4102-aeff-aad2292ab01c')
+        [string]$ClientId = $WAM.ClientId.MSOffice,
+        # Scopes are space-delimited strings:
+        # https://datatracker.ietf.org/doc/html/rfc6749#section-3.3
+        # e.g. "https://outlook.office365.com//.default offline_access openid profile"
+        [string]$Scopes,
+        # e.g. 'https://outlook.office365.com', 'https://graph.windows.net'
+        [string]$Resource,
+        # Add "wam_compat=2.0" to request
+        [Switch]$AddWamCompat,
+        # Add "claim={"access_token":{"xms_cc":{"values":["CP1"]}}}" to request
+        [Switch]$AddClaimCapability,
+        # You can use Get-WebAccount command to get a web account
+        $WebAccount,
+        # Include raw token in the output
+        $IncludeRawToken
+    )
+
+    # Make sure that interop DLL is located at $PSScriptRoot
+    $WamInteropDllName = 'WamInterop.dll'
+    $interopDll = Get-ChildItem -Path $PSScriptRoot -Filter $WamInteropDllName -ErrorAction SilentlyContinue
+
+    if (-not $interopDll) {
+        Write-Error "$WamInteropDllName is not found at $PSScriptRoot"
+        return
+    }
+
+    $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
+    $promptType = [Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]::ForceAuthentication
+    $request = [Windows.Security.Authentication.Web.Core.WebTokenRequest, Windows, ContentType = WindowsRuntime]::new($provider, $Scopes, $ClientId, $promptType)
+
+    if ($null -eq $request.Properties) {
+        Write-Error "WebTokenRequest.Properties is null. Why?"
+        return
+    }
+
+    # IDictionary<string, string>'s Add() method for request.Properties (exposed as System.__ComObject)
+    $addMethod = [System.Collections.Generic.IDictionary[string, string]].GetMethods() | Where-Object { $_.Name -eq 'Add' } | Select-Object -First 1
+
+    If ($AddWamCompat) {
+        $null = $addMethod.Invoke($request.Properties, @('wam_compat', '2.0'))
+    }
+
+    if ($Resource) {
+        $null = $addMethod.Invoke($request.Properties, @('resource', $Resource))
+    }
+
+    if ($AddClaimCapability) {
+        $null = $addMethod.Invoke($request.Properties, @('claims', '{"access_token":{"xms_cc":{"values":["CP1"]}}}'))
+    }
+
+    $runSpaceOpened = $false
+    $requestResult = $null
+
+    try {
+        if (-not $Script:RunspacePool) {
+            Open-TaskRunspace
+            $runSpaceOpened = $true
+        }
+
+        Add-EnvPath $PSScriptRoot
+
+        [IntPtr]$hwnd = [Win32.WamInterop]::CreateAnchorWindow()
+
+        if ($hwnd -eq [IntPtr]::Zero) {
+            Write-Error "CreateAnchorWindow failed"
+            return
+        }
+
+        # RequestToken must be invoked on a different thread. This thread needs to process the anchor window msg loop.
+        $task = Start-Task {
+            param ($hwnd, $request)
+            $ptr = [IntPtr]::Zero
+            $requestPtr = [System.Runtime.InteropServices.Marshal]::GetIUnknownForObject($request)
+
+            $hr = [Win32.WamInterop]::RequestToken($hwnd, $requestPtr, [ref]$ptr)
+
+            $null = [System.Runtime.InteropServices.Marshal]::Release($requestPtr)
+
+            if ($hr -ne 0 <# S_OK #>) {
+                Write-Error "RequestToken() failed with 0x$("{0:x}" -f $hr)"
+                return
+            }
+
+            [System.Runtime.InteropServices.Marshal]::GetObjectForIUnknown($ptr)
+            $null = [System.Runtime.InteropServices.Marshal]::Release($ptr)
+        } -ArgumentList $hwnd, $request
+
+        $requestResult = $task | Receive-Task -AutoRemoveTask
+
+    }
+    catch {
+        Write-Error -ErrorRecord $_
+    }
+    finally {
+        if ($hwnd) {
+            # Destroy anchor window
+            $WM_DESTROY = 2
+            $SMTO_ABORTIFHUNG = 2
+            $Timeout = [TimeSpan]::FromSeconds(5)
+            $result = [IntPtr]::Zero
+            $ret = [Win32.User32]::SendMessageTimeoutW($hWnd, $WM_DESTROY, [IntPtr]::Zero, [IntPtr]::Zero, $SMTO_ABORTIFHUNG, $Timeout.TotalMilliseconds, [ref]$result)
+
+            # > If the function succeeds, the return value is nonzero.
+            if ($ret -ne 0) {
+                Write-Log "Anchor Window is closed successfully"
+            }
+        }
+
+        if ($runSpaceOpened) {
+            Close-TaskRunspace
+        }
+    }
+
+    if (-not $requestResult) {
+        return
+    }
+
+    if ($requestResult.ResponseStatus -ne [Windows.Security.Authentication.Web.Core.WebTokenRequestStatus]::Success) {
+        Write-Error "RequestTokenAsync() failed with `"$($requestResult.ResponseStatus)`". $(if ($requestResult.ResponseError) { "ErrorCode:0x$("{0:x8}" -f $requestResult.ResponseError.ErrorCode), ErrorMessage:$($requestResult.ResponseError.ErrorMessage)"})"
+        return
+    }
+
+
+    foreach ($_ in $requestResult.ResponseData) {
+        $result = [ordered]@{
+            WebAccount = $_.WebAccount
+        }
+
+        if ($IncludeRawToken) {
+            $result.Token = $_.Token
+        }
+
+        # If token is a JSON Web Token (JWT), decode it.
+        $tokenParts = $_.Token.Split('.')
+
+        if ($tokenParts.Count -eq 3) {
+            $header = $tokenParts[0]
+            $payload = $tokenParts[1]
+            $result.JwtHeader = [System.Text.Encoding]::UTF8.GetString((Convert-Base64Url $header))
+            $result.JwtPayload = [System.Text.Encoding]::UTF8.GetString((Convert-Base64Url $payload))
+        }
+
+        # Sice Properties is a System.__COMObject, pack them into a hash table
+        $props = @{}
+
+        foreach ($prop in $_.Properties) {
+            $props.Add($prop.Key, $prop.Value)
+        }
+
+        $result.Properties = [PSCustomObject]$props
+
+        [PSCustomObject]$result
+    }
+}
+
+function Add-EnvPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $found = $env:Path -split ';' | Where-Object { $_.TrimEnd() -eq $Path } | Select-Object -First 1
+
+    if ($found) {
+        return
+    }
+
+    $sb = New-Object System.Text.StringBuilder -ArgumentList $Path
+
+    if (-not $env:Path.EndsWith(';')) {
+        $null = $sb.Insert(0, ';')
+    }
+
+    $env:Path += $sb.ToString()
 }
 
 function Convert-Base64Url {
@@ -14333,4 +14532,4 @@ $Script:MyModulePath = $PSCommandPath
 
 $Script:ValidTimeSpan = [TimeSpan]::FromDays(90)
 
-Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-FiddlerEverywhereReporter, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-ConnTimeout, Set-ConnTimeout, Remove-ConnTimeout, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-WebView2DevTools, Disable-WebView2DevTools, Enable-WebView2Netlog, Disable-WebView2Netlog, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Save-USOSharedLog, Receive-WinRTAsyncResult, Get-WebAccount, Get-WebAccountProvider, Get-TokenSilently, Invoke-WebAccountSignOut, Collect-OutlookInfo
+Export-ModuleMember -Function Test-ProcessElevated, Get-Privilege, Test-DebugPrivilege, Enable-DebugPrivilege, Disable-DebugPrivilege, Start-WamTrace, Stop-WamTrace, Start-OutlookTrace, Stop-OutlookTrace, Start-NetshTrace, Stop-NetshTrace, Start-PSR, Stop-PSR, Save-EventLog, Get-InstalledUpdate, Save-OfficeRegistry, Get-ProxySetting, Get-WinInetProxy, Get-WinHttpDefaultProxy, Get-ProxyAutoConfig, Save-OSConfiguration, Get-NLMConnectivity, Get-WSCAntivirus, Save-CachedAutodiscover, Remove-CachedAutodiscover, Save-CachedOutlookConfig, Remove-CachedOutlookConfig, Remove-IdentityCache, Start-LdapTrace, Stop-LdapTrace, Get-OfficeModuleInfo, Save-OfficeModuleInfo, Start-CAPITrace, Stop-CapiTrace, Start-FiddlerCap, Start-FiddlerEverywhereReporter, Start-Procmon, Stop-Procmon, Start-TcoTrace, Stop-TcoTrace, Get-ConnTimeout, Set-ConnTimeout, Remove-ConnTimeout, Get-OfficeInfo, Add-WerDumpKey, Remove-WerDumpKey, Start-WfpTrace, Stop-WfpTrace, Save-Dump, Save-HungDump, Save-MSIPC, Save-MIP, Enable-DrmExtendedLogging, Disable-DrmExtendedLogging, Get-DRMConfig, Get-EtwSession, Stop-EtwSession, Get-Token, Test-Autodiscover, Get-LogonUser, Get-JoinInformation, Get-OutlookProfile, Get-OutlookAddin, Get-ClickToRunConfiguration, Get-WebView2, Get-DeviceJoinStatus, Save-NetworkInfo, Download-TTD, Expand-TTDMsixBundle, Install-TTD, Uninstall-TTD, Start-TTDMonitor, Stop-TTDMonitor, Cleanup-TTD, Attach-TTD, Detach-TTD, Start-PerfTrace, Stop-PerfTrace, Start-Wpr, Stop-Wpr, Get-IMProvider, Get-MeteredNetworkCost, Save-PolicyNudge, Save-CLP, Save-DLP, Invoke-WamSignOut, Enable-PageHeap, Disable-PageHeap, Get-OfficeIdentityConfig, Get-OfficeIdentity, Get-OneAuthAccount, Remove-OneAuthAccount, Get-AlternateId, Get-UseOnlineContent, Get-AutodiscoverConfig, Get-SocialConnectorConfig, Get-ImageFileExecutionOptions, Start-Recording, Stop-Recording, Get-OutlookOption, Get-WordMailOption, Get-ImageInfo, Get-PresentationMode, Get-AnsiCodePage, Get-PrivacyPolicy, Save-GPResult, Get-AppContainerRegistryAcl, Get-StructuredQuerySchema, Get-NetFrameworkVersion, Get-MapiCorruptFiles, Save-MonarchLog, Save-MonarchSetupLog, Enable-WebView2DevTools, Disable-WebView2DevTools, Enable-WebView2Netlog, Disable-WebView2Netlog, Get-WebView2Flags, Add-WebView2Flags, Remove-WebView2Flags, Get-FileExtEditFlags, Get-ExperimentConfigs, Get-CloudSettings, Get-ProcessWithModule, Get-PickLogonProfile, Enable-PickLogonProfile, Disable-PickLogonProfile, Enable-AccountSetupV2, Disable-AccountSetupV2, Save-USOSharedLog, Receive-WinRTAsyncResult, Get-WebAccount, Get-WebAccountProvider, Get-TokenSilently, Invoke-WebAccountSignOut, Invoke-RequestToken, Collect-OutlookInfo
