@@ -10328,7 +10328,7 @@ function Receive-WinRTAsyncResult {
     [CmdletBinding(PositionalBinding = $false)]
     param(
         [Parameter(Mandatory, Position = 0, ValueFromPipeline)]
-        # COM object representing WinRT IAsyncInfo or its derived types (e.g. IAsyncOperation<TResult>, IAsyncAction)
+        # COM object/RCW (RunTime Callable Wrapper) representing WinRT IAsyncInfo or its derived types (e.g. IAsyncOperation<TResult>, IAsyncAction)
         [System.__ComObject]$IAsyncInfo,
         # TResult of Async Operation
         [System.Reflection.TypeInfo]$TResult
@@ -10505,6 +10505,20 @@ function Invoke-WamSignOut {
 
 <#
 .SYNOPSIS
+    Test if WAM API is available.
+#>
+function Test-WamAPI {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    # Check if WebAuthenticationCoreManager is available.
+    'Windows.Foundation.Metadata.ApiInformation' -as [type] `
+        -and [Windows.Foundation.Metadata.ApiInformation, Windows, ContentType = WindowsRuntime]::IsMethodPresent('Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager', 'GetTokenSilentlyAsync')
+}
+
+<#
+.SYNOPSIS
     Get a Web Account Provider.
 .DESCRIPTION
     Get a Web Account Provider using WebAuthenticationCoreManager.FindAccountProviderAsync:
@@ -10537,10 +10551,6 @@ function Get-WebAccountProvider {
 .LINK
     WebAuthenticationCoreManager.FindAllAccountsAsync Method
     https://learn.microsoft.com/en-us/uwp/api/windows.security.authentication.web.core.webauthenticationcoremanager.findallaccountsasync
-
-.EXAMPLE
-    Test-MyTestFunction -Verbose
-    Explanation of the function or its result. You can include multiple examples with additional .EXAMPLE lines
 #>
 function Get-WebAccount {
     [CmdletBinding(PositionalBinding = $false)]
@@ -10567,6 +10577,44 @@ function Get-WebAccount {
     }
 
     $findAllAccountsResult.Accounts
+}
+
+function Get-WebTokenRequest {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        $Provider,
+        [string]$Scopes,
+        [string]$ClientId,
+        [Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]$PromptType = [Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]::Default,
+        [string]$Resource,
+        [switch]$AddWamCompat,
+        [switch]$AddClaimCapability
+    )
+
+    $request = [Windows.Security.Authentication.Web.Core.WebTokenRequest, Windows, ContentType = WindowsRuntime]::new($Provider, $Scopes, $ClientId, $PromptType)
+
+    if ($null -eq $request.Properties) {
+        Write-Error "WebTokenRequest.Properties is null"
+        return
+    }
+
+    # IDictionary<string, string>'s Add() method for request.Properties (exposed as RCW/System.__ComObject)
+    $addMethod = [System.Collections.Generic.IDictionary[string, string]].GetMethods() | Where-Object { $_.Name -eq 'Add' } | Select-Object -First 1
+
+    If ($AddWamCompat) {
+        $null = $addMethod.Invoke($request.Properties, @('wam_compat', '2.0'))
+    }
+
+    if ($Resource) {
+        $null = $addMethod.Invoke($request.Properties, @('resource', $Resource))
+    }
+
+    if ($AddClaimCapability) {
+        $null = $addMethod.Invoke($request.Properties, @('claims', '{"access_token":{"xms_cc":{"values":["CP1"]}}}'))
+    }
+
+    Write-Log "WebTokenRequest.Properties: $($request.Properties)"
+    $request
 }
 
 <#
@@ -10605,9 +10653,9 @@ function Invoke-WebAccountSignOut {
 .EXAMPLE
     Get-TokenSilently
 .EXAMPLE
-    Get-TokenSilently -Resource 'https://outlook.office365.com' -AddClaimCapability
+    Get-TokenSilently -Resource 'https://outlook.office365.com/' -AddClaimCapability
 .EXAMPLE
-    Get-TokenSilently -Resource 'https://outlook.office365.com' -IncludeRawToken
+    Get-TokenSilently -Resource 'https://outlook.office365.com/' -IncludeRawToken
 #>
 function Get-TokenSilently {
     [CmdletBinding()]
@@ -10636,34 +10684,15 @@ function Get-TokenSilently {
         [Switch]$IncludeRawToken
     )
 
-    Write-Log "Get-TokenSilently() called with ProviderId:$ProviderId, Authority:$Authority, ClientId:$ClientId, Scopes:$Scopes, Resource:$Resource, AddWamCompat:$AddWamCompat, AddClaimCapability:$AddClaimCapability, IncludeRawToken:$IncludeRawToken, WebAccount:$($WebAccount.Id)"
-
-    $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
-
-    $promptType = [Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]::Default
-    $request = [Windows.Security.Authentication.Web.Core.WebTokenRequest, Windows, ContentType = WindowsRuntime]::new($provider, $Scopes, $ClientId, $promptType)
-
-    if ($null -eq $request.Properties) {
-        Write-Error "WebTokenRequest.Properties is null. Why?"
+    if (-not (Test-WamAPI)) {
+        Write-Error "This Windows version does not support Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager"
         return
     }
 
-    # IDictionary<string, string>'s Add() method for request.Properties (exposed as System.__ComObject)
-    $addMethod = [System.Collections.Generic.IDictionary[string, string]].GetMethods() | Where-Object { $_.Name -eq 'Add' } | Select-Object -First 1
+    Write-Log "Get-TokenSilently() called with ProviderId:$ProviderId, Authority:$Authority, ClientId:$ClientId, Scopes:$Scopes, Resource:$Resource, AddWamCompat:$AddWamCompat, AddClaimCapability:$AddClaimCapability, IncludeRawToken:$IncludeRawToken, WebAccount:$($WebAccount.Id)"
 
-    If ($AddWamCompat) {
-        $null = $addMethod.Invoke($request.Properties, @('wam_compat', '2.0'))
-    }
-
-    if ($Resource) {
-        $null = $addMethod.Invoke($request.Properties, @('resource', $Resource))
-    }
-
-    if ($AddClaimCapability) {
-        $null = $addMethod.Invoke($request.Properties, @('claims', '{"access_token":{"xms_cc":{"values":["CP1"]}}}'))
-    }
-
-    Write-Log "WebTokenRequest.Properties: $($request.Properties)"
+    $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
+    $request = Get-WebTokenRequest -Provider $provider -Scopes $Scopes -ClientId $ClientId -Resource $Resource -AddWamCompat:$AddWamCompat -AddClaimCapability:$AddClaimCapability
 
     if ($WebAccount) {
         Write-Log "Invoking GetTokenSilentlyAsync() with WebAccount:$($WebAccount.Id)"
@@ -10683,40 +10712,25 @@ function Get-TokenSilently {
         return
     }
 
-    # Note: Do not use "$requestResult.ResponseData.Properties". It'd cause request.Properties to be null in the next invocation.
-    foreach ($_ in $requestResult.ResponseData) {
-        $result = [ordered]@{
-            WebAccount = $_.WebAccount
-            # Properties = [PSCustomObject]$props
-        }
-
-        if ($IncludeRawToken) {
-            $result.Token = $_.Token
-        }
-
-        # If token is a JSON Web Token (JWT), decode it.
-        $tokenParts = $_.Token.Split('.')
-
-        if ($tokenParts.Count -eq 3) {
-            $header = $tokenParts[0]
-            $payload = $tokenParts[1]
-            $result.JwtHeader = [System.Text.Encoding]::UTF8.GetString((Convert-Base64Url $header))
-            $result.JwtPayload = [System.Text.Encoding]::UTF8.GetString((Convert-Base64Url $payload))
-        }
-
-        # Sice Properties is a System.__COMObject, pack them into a hash table
-        $props = @{}
-
-        foreach ($prop in $_.Properties) {
-            $props.Add($prop.Key, $prop.Value)
-        }
-
-        $result.Properties = [PSCustomObject]$props
-
-        [PSCustomObject]$result
-    }
+    $requestResult | Format-WebTokenRequestResult -IncludeRawToken:$IncludeRawToken
 }
 
+<#
+.SYNOPSIS
+    Get a token using IWebAuthenticationCoreManagerInterop.RequestTokenForWindowAsync()
+.DESCRIPTION
+    Get a token using IWebAuthenticationCoreManagerInterop.RequestTokenForWindowAsync()
+    If the Token is a JSON Web Token (JWT), its decoded Header & Payload are included in the output.
+.LINK
+    IWebAuthenticationCoreManagerInterop::RequestTokenForWindowAsync method (webauthenticationcoremanagerinterop.h)
+    https://learn.microsoft.com/en-us/windows/win32/api/webauthenticationcoremanagerinterop/nf-webauthenticationcoremanagerinterop-iwebauthenticationcoremanagerinterop-requesttokenforwindowasync
+.EXAMPLE
+    Invoke-RequestToken
+.EXAMPLE
+    Invoke-RequestToken -Resource 'https://outlook.office365.com/' -AddClaimCapability
+.EXAMPLE
+    Invoke-RequestToken -Resource 'https://outlook.office365.com/' -IncludeRawToken
+#>
 function Invoke-RequestToken {
     [CmdletBinding()]
     param(
@@ -10738,11 +10752,14 @@ function Invoke-RequestToken {
         [Switch]$AddWamCompat,
         # Add "claim={"access_token":{"xms_cc":{"values":["CP1"]}}}" to request
         [Switch]$AddClaimCapability,
-        # You can use Get-WebAccount command to get a web account
-        $WebAccount,
         # Include raw token in the output
-        $IncludeRawToken
+        [switch]$IncludeRawToken
     )
+
+    if (-not (Test-WamAPI)) {
+        Write-Error "This Windows version does not support Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager"
+        return
+    }
 
     $interopDllPath = Join-Path $env:TEMP 'WamInterop.dll'
     $hModule = [IntPtr]::Zero
@@ -10769,38 +10786,9 @@ function Invoke-RequestToken {
         }
     }
 
-    # Make sure that interop DLL is located at $PSScriptRoot
-    # $WamInteropDllName = 'WamInterop.dll'
-    # $interopDll = Get-ChildItem -Path $PSScriptRoot -Filter $WamInteropDllName -ErrorAction SilentlyContinue
-
-    # if (-not $interopDll) {
-    #     Write-Error "$WamInteropDllName is not found at $PSScriptRoot"
-    #     return
-    # }
-
     $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
-    $promptType = [Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]::ForceAuthentication
-    $request = [Windows.Security.Authentication.Web.Core.WebTokenRequest, Windows, ContentType = WindowsRuntime]::new($provider, $Scopes, $ClientId, $promptType)
-
-    if ($null -eq $request.Properties) {
-        Write-Error "WebTokenRequest.Properties is null. Why?"
-        return
-    }
-
-    # IDictionary<string, string>'s Add() method for request.Properties (exposed as System.__ComObject)
-    $addMethod = [System.Collections.Generic.IDictionary[string, string]].GetMethods() | Where-Object { $_.Name -eq 'Add' } | Select-Object -First 1
-
-    If ($AddWamCompat) {
-        $null = $addMethod.Invoke($request.Properties, @('wam_compat', '2.0'))
-    }
-
-    if ($Resource) {
-        $null = $addMethod.Invoke($request.Properties, @('resource', $Resource))
-    }
-
-    if ($AddClaimCapability) {
-        $null = $addMethod.Invoke($request.Properties, @('claims', '{"access_token":{"xms_cc":{"values":["CP1"]}}}'))
-    }
+    $request = Get-WebTokenRequest -Provider $provider -Scopes $Scopes -ClientId $ClientId -Resource $Resource -AddWamCompat:$AddWamCompat -AddClaimCapability:$AddClaimCapability `
+        -PromptType ([Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]::ForceAuthentication)
 
     $runSpaceOpened = $false
     $requestResult = $null
@@ -10810,8 +10798,6 @@ function Invoke-RequestToken {
             Open-TaskRunspace
             $runSpaceOpened = $true
         }
-
-        # Add-EnvPath $PSScriptRoot
 
         [IntPtr]$hwnd = [Win32.WamInterop]::CreateAnchorWindow()
 
@@ -10846,7 +10832,7 @@ function Invoke-RequestToken {
         Write-Error -ErrorRecord $_
     }
     finally {
-        if ($hwnd) {
+        if ($hwnd -ne [IntPtr]::Zero) {
             # Destroy anchor window
             $WM_DESTROY = 2
             $SMTO_ABORTIFHUNG = 2
@@ -10865,7 +10851,7 @@ function Invoke-RequestToken {
         }
 
         # Note that even if the interop DLL is unloaded here, C# interop will keep the module loaded.
-        if ($hMdoule -ne [IntPtr]::Zero) {
+        if ($hModule -ne [IntPtr]::Zero) {
             $null = [Win32.Kernel32]::FreeLibrary($hModule)
         }
     }
@@ -10879,36 +10865,50 @@ function Invoke-RequestToken {
         return
     }
 
+    $requestResult | Format-WebTokenRequestResult -IncludeRawToken:$IncludeRawToken
+}
 
-    foreach ($_ in $requestResult.ResponseData) {
-        $result = [ordered]@{
-            WebAccount = $_.WebAccount
+function Format-WebTokenRequestResult {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        $WebTokenRequestResult,
+        # Include raw token in the output
+        [Switch]$IncludeRawToken
+    )
+
+    process {
+        # Note: Do not use "$WebTokenRequestResult.ResponseData.Properties". It'd cause request.Properties to be null in the next invocation.
+        foreach ($_ in $WebTokenRequestResult.ResponseData) {
+            $result = [ordered]@{
+                WebAccount = $_.WebAccount
+            }
+
+            if ($IncludeRawToken) {
+                $result.Token = $_.Token
+            }
+
+            # If token is a JSON Web Token (JWT), decode it.
+            $tokenParts = $_.Token.Split('.')
+
+            if ($tokenParts.Count -eq 3) {
+                $header = $tokenParts[0]
+                $payload = $tokenParts[1]
+                $result.JwtHeader = [System.Text.Encoding]::UTF8.GetString((Convert-Base64Url $header))
+                $result.JwtPayload = [System.Text.Encoding]::UTF8.GetString((Convert-Base64Url $payload))
+            }
+
+            # Since Properties is a RCW (Runtime Callable Wrapper), pack them into a hash table
+            $props = @{}
+
+            foreach ($prop in $_.Properties) {
+                $props.Add($prop.Key, $prop.Value)
+            }
+
+            $result.Properties = [PSCustomObject]$props
+
+            [PSCustomObject]$result
         }
-
-        if ($IncludeRawToken) {
-            $result.Token = $_.Token
-        }
-
-        # If token is a JSON Web Token (JWT), decode it.
-        $tokenParts = $_.Token.Split('.')
-
-        if ($tokenParts.Count -eq 3) {
-            $header = $tokenParts[0]
-            $payload = $tokenParts[1]
-            $result.JwtHeader = [System.Text.Encoding]::UTF8.GetString((Convert-Base64Url $header))
-            $result.JwtPayload = [System.Text.Encoding]::UTF8.GetString((Convert-Base64Url $payload))
-        }
-
-        # Sice Properties is a System.__COMObject, pack them into a hash table
-        $props = @{}
-
-        foreach ($prop in $_.Properties) {
-            $props.Add($prop.Key, $prop.Value)
-        }
-
-        $result.Properties = [PSCustomObject]$props
-
-        [PSCustomObject]$result
     }
 }
 
