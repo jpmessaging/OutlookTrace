@@ -10537,6 +10537,11 @@ function Get-WebAccountProvider {
         [string]$Authority = $WAM.Authority.Organizations
     )
 
+    if (-not (Test-WamAPI)) {
+        Write-Error "This Windows version does not support Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager"
+        return
+    }
+
     Add-Type -AssemblyName System.Runtime.WindowsRuntime
 
     [Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::FindAccountProviderAsync($ProviderId, $Authority) `
@@ -10564,7 +10569,10 @@ function Get-WebAccount {
         [string]$ClientId = $WAM.ClientId.MSOffice
     )
 
-    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    if (-not (Test-WamAPI)) {
+        Write-Error "This Windows version does not support Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager"
+        return
+    }
 
     $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
 
