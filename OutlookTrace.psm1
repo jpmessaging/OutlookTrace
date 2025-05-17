@@ -10579,16 +10579,20 @@ function Get-WebAccount {
     $findAllAccountsResult.Accounts
 }
 
-function Get-WebTokenRequest {
+function New-WebTokenRequest {
     [CmdletBinding(PositionalBinding = $false)]
     param(
+        [Parameter(Mandatory)]
         $Provider,
         [string]$Scopes,
+        [Parameter(Mandatory)]
         [string]$ClientId,
         [Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]$PromptType = [Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]::Default,
         [string]$Resource,
         [switch]$AddWamCompat,
-        [switch]$AddClaimCapability
+        [switch]$AddClaimCapability,
+        # Arbitrary properties to add to the request
+        [System.Collections.IDictionary]$Properties
     )
 
     $request = [Windows.Security.Authentication.Web.Core.WebTokenRequest, Windows, ContentType = WindowsRuntime]::new($Provider, $Scopes, $ClientId, $PromptType)
@@ -10611,6 +10615,12 @@ function Get-WebTokenRequest {
 
     if ($AddClaimCapability) {
         $null = $addMethod.Invoke($request.Properties, @('claims', '{"access_token":{"xms_cc":{"values":["CP1"]}}}'))
+    }
+
+    if ($null -ne $Properties) {
+        foreach ($kvp in $Properties.GetEnumerator()) {
+            $null = $addMethod.Invoke($request.Properties, @($kvp.Key, $kvp.Value))
+        }
     }
 
     Write-Log "WebTokenRequest.Properties: $($request.Properties)"
@@ -10675,13 +10685,15 @@ function Get-TokenSilently {
         # e.g. 'https://outlook.office365.com', 'https://graph.windows.net'
         [string]$Resource,
         # Add "wam_compat=2.0" to request
-        [Switch]$AddWamCompat,
+        [switch]$AddWamCompat,
         # Add "claim={"access_token":{"xms_cc":{"values":["CP1"]}}}" to request
-        [Switch]$AddClaimCapability,
+        [switch]$AddClaimCapability,
+        # HashTable for arbitrary Request properties (e.g. @{ 'login_hint' = 'user01@contoso.com' })
+        [System.Collections.IDictionary]$RequestProperties,
         # You can use Get-WebAccount command to get a web account
         $WebAccount,
         # Include raw token in the output
-        [Switch]$IncludeRawToken
+        [switch]$IncludeRawToken
     )
 
     if (-not (Test-WamAPI)) {
@@ -10692,7 +10704,7 @@ function Get-TokenSilently {
     Write-Log "Get-TokenSilently() called with ProviderId:$ProviderId, Authority:$Authority, ClientId:$ClientId, Scopes:$Scopes, Resource:$Resource, AddWamCompat:$AddWamCompat, AddClaimCapability:$AddClaimCapability, IncludeRawToken:$IncludeRawToken, WebAccount:$($WebAccount.Id)"
 
     $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
-    $request = Get-WebTokenRequest -Provider $provider -Scopes $Scopes -ClientId $ClientId -Resource $Resource -AddWamCompat:$AddWamCompat -AddClaimCapability:$AddClaimCapability
+    $request = New-WebTokenRequest -Provider $provider -Scopes $Scopes -ClientId $ClientId -Resource $Resource -AddWamCompat:$AddWamCompat -AddClaimCapability:$AddClaimCapability -Properties $RequestProperties
 
     if ($WebAccount) {
         Write-Log "Invoking GetTokenSilentlyAsync() with WebAccount:$($WebAccount.Id)"
@@ -10752,6 +10764,8 @@ function Invoke-RequestToken {
         [Switch]$AddWamCompat,
         # Add "claim={"access_token":{"xms_cc":{"values":["CP1"]}}}" to request
         [Switch]$AddClaimCapability,
+        # HashTable for arbitrary Request properties (e.g. @{ 'login_hint' = 'user01@contoso.com' })
+        [System.Collections.IDictionary]$RequestProperties,
         # Include raw token in the output
         [switch]$IncludeRawToken
     )
@@ -10798,7 +10812,7 @@ function Invoke-RequestToken {
     }
 
     $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
-    $request = Get-WebTokenRequest -Provider $provider -Scopes $Scopes -ClientId $ClientId -Resource $Resource -AddWamCompat:$AddWamCompat -AddClaimCapability:$AddClaimCapability `
+    $request = New-WebTokenRequest -Provider $provider -Scopes $Scopes -ClientId $ClientId -Resource $Resource -AddWamCompat:$AddWamCompat -AddClaimCapability:$AddClaimCapability -Properties $RequestProperties `
         -PromptType ([Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]::ForceAuthentication)
 
     $hwnd = [IntPtr]::Zero
