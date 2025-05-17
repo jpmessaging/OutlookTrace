@@ -10792,22 +10792,28 @@ function Invoke-RequestToken {
     $currentProc.Dispose()
 
     if (-not $wamInteropDll) {
+        # Even if it already exists, try to overwrite it
+        $err = Save-WamInteropDll -Path $interopDllPath 2>&1
+
         if (-not (Test-Path $interopDllPath)) {
-            # Write WamInterop.dll
-            $err = Save-WamInteropDll -Path $interopDllPath 2>&1
-
-            if ($err) {
-                Write-Error "Failed to save WamInterop.dll to $interopDllPath. $err"
-                return
-            }
-
-            Write-Log "$interopDllPath is saved"
+            Write-Error "Failed to save WamInterop.dll to $interopDllPath. $err"
+            return
+        }
+        elseif ($err) {
+            Write-Log "WamInterop.dll is already in use. Failed to overwrite it. $err" -Category Warning
+            # Even when failed to overwrite, load the existing one if & only if the hash matches.
+            # This happens when interop DLL is updated and old one is still in use (thus cannot be overridden)
+        }
+        else {
+            Write-Log "WamInterop.dll is successfully written to $interopDllPath"
         }
 
         if (-not (Test-WamInteropDllHash -Path $interopDllPath)) {
-            Write-Error "WamInterop.dll's SH256 does not match the expected value: $Script:WamInteropSHA256"
+            Write-Error "WamInterop.dll's SHA256 does not match the expected value: $Script:WamInteropSHA256"
             return
         }
+
+        Write-Log "WamInterop.dll's hash check passed. Loading from $interopDllPath"
 
         # I could add to $env:PATH but let's explicitly load it
         $hModule = [Win32.Kernel32]::LoadLibraryW($interopDllPath)
@@ -10827,6 +10833,9 @@ function Invoke-RequestToken {
             Write-Error $sb.ToString()
             return
         }
+    }
+    else {
+        Write-Log "WamInterop.dll is already loaded"
     }
 
     $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
