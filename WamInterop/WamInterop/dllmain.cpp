@@ -32,9 +32,14 @@ extern "C"
 __declspec(dllexport)
 HRESULT RequestToken(
     const HWND hwnd,
-    IInspectable* request,
-    void** result)
+    IInspectable* const request,
+    void** const result)
 {
+    if (result != nullptr)
+    {
+        *result = nullptr;
+    }
+
     if (hwnd == nullptr || request == nullptr || result == nullptr)
     {
         return E_INVALIDARG;
@@ -43,22 +48,19 @@ HRESULT RequestToken(
     auto webAuthCoreMgrInterop = winrt::get_activation_factory<winrt::WebAuthenticationCoreManager, IWebAuthenticationCoreManagerInterop>();
     auto asyncOp = winrt::IAsyncOperation<winrt::WebTokenRequestResult>{};
 
-    auto hr = webAuthCoreMgrInterop->RequestTokenForWindowAsync(
+    HRESULT hr = webAuthCoreMgrInterop->RequestTokenForWindowAsync(
         hwnd,
         request,
         winrt::guid_of<decltype(asyncOp)>(),
-        winrt::put_abi(asyncOp)
-    );
+        winrt::put_abi(asyncOp));
 
-    if (FAILED(hr))
+    if (SUCCEEDED(hr))
     {
-        return hr;
+        auto asyncResult = asyncOp.get();
+        *result = winrt::detach_abi(asyncResult);
     }
 
-    auto asyncResult = asyncOp.get();
-    *result = winrt::detach_abi(asyncResult);
-
-    return S_OK;
+    return hr;
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
