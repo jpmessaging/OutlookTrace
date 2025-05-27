@@ -10504,7 +10504,8 @@ function Invoke-WamSignOut {
 <#
 .SYNOPSIS
     Test if WAM API is available.
-    Note that WinRT API is not available in PowerShell Core (pwsh.exe).
+.NOTES
+    WinRT API is not available in PowerShell Core (pwsh.exe).
 
     Announcing .NET 5.0 Preview 6
     https://devblogs.microsoft.com/dotnet/announcing-net-5-0-preview-6/
@@ -10521,8 +10522,19 @@ function Test-WamAPI {
     param()
 
     # Check if WebAuthenticationCoreManager is available.
-    'Windows.Foundation.Metadata.ApiInformation' -as [type] `
+    $result = 'Windows.Foundation.Metadata.ApiInformation' -as [type] `
         -and [Windows.Foundation.Metadata.ApiInformation, Windows, ContentType = WindowsRuntime]::IsMethodPresent('Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager', 'GetTokenSilentlyAsync')
+
+    if (-not $result) {
+        if ($PSVersionTable.PSEdition -eq 'Core') {
+            Write-Error "WinRT API is not supported on PowerShell Core (pwsh.exe). Please use Windows PowerShell"
+        }
+        else {
+            Write-Error "This Windows version does not support Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager"
+        }
+    }
+
+    $result
 }
 
 <#
@@ -10546,7 +10558,6 @@ function Get-WebAccountProvider {
     )
 
     if (-not (Test-WamAPI)) {
-        Write-Error "This Windows version does not support Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager"
         return
     }
 
@@ -10578,7 +10589,6 @@ function Get-WebAccount {
     )
 
     if (-not (Test-WamAPI)) {
-        Write-Error "This Windows version does not support Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager"
         return
     }
 
@@ -10720,7 +10730,6 @@ function Get-TokenSilently {
     )
 
     if (-not (Test-WamAPI)) {
-        Write-Error "This Windows version does not support Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager"
         return
     }
 
@@ -10798,7 +10807,6 @@ function Invoke-RequestToken {
     )
 
     if (-not (Test-WamAPI)) {
-        Write-Error "This Windows version does not support Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager"
         return
     }
 
