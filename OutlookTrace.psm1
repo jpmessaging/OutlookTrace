@@ -8590,7 +8590,6 @@ function Enable-DrmExtendedLogging {
     $userRegRoot = Get-UserRegistryRoot -User $User
 
     if (-not $userRegRoot) {
-        Write-Error "Cannot find user registry root for $User"
         return
     }
 
@@ -8612,7 +8611,6 @@ function Disable-DrmExtendedLogging {
     $userRegRoot = Get-UserRegistryRoot -User $User
 
     if (-not $userRegRoot) {
-        Write-Error "Cannot find user registry root for $User"
         return
     }
 
@@ -10506,6 +10504,16 @@ function Invoke-WamSignOut {
 <#
 .SYNOPSIS
     Test if WAM API is available.
+    Note that WinRT API is not available in PowerShell Core (pwsh.exe).
+
+    Announcing .NET 5.0 Preview 6
+    https://devblogs.microsoft.com/dotnet/announcing-net-5-0-preview-6/
+
+    [Breaking change] Removal of built-in WinRT support in .NET 5.0 #37672
+    https://github.com/dotnet/runtime/issues/37672
+
+    Built-in support for WinRT is removed from .NET 5.0 #18875
+    https://github.com/dotnet/docs/issues/18875
 #>
 function Test-WamAPI {
     [CmdletBinding()]
@@ -14106,7 +14114,7 @@ function Collect-OutlookInfo {
             # Stop a lingering session if any.
             Stop-OutlookTrace -ErrorAction SilentlyContinue
 
-            $err = Enable-DrmExtendedLogging -User $targetUser 2>&1
+            $err = Enable-DrmExtendedLogging -User $targetUser 2>&1 | Select-Object -First 1
 
             if ($err) {
                 Write-Log -Message "Enable-DrmExtendedLogging failed. $err" -ErrorRecord $err -Category Error
