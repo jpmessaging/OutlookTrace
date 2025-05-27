@@ -24,8 +24,8 @@ SHA256: `72B585D1D5A0453E181C7751F2C456C3858BD697D4ECC09449AEF68AC9C78F42`
 3. ダウンロードしたファイルをログの出力先フォルダーにコピーします。
 4. Outlook を実行している場合には終了します。
 5. OutlookTrace.psm1 をダウンロードして対象のマシン上にコピーします。
-6. 管理者権限で Windows PowerShell を起動します。
-7. PowerShell で以下を実行して OutlookTrace.psm1 のブロックを解除します
+6. 管理者権限で Windows PowerShell を起動します ([管理者として実行] で開始します)。
+7. PowerShell で以下を実行して OutlookTrace.psm1 のブロックを解除します。
 
     ```PowerShell
     Unblock-File <OutlookTrace.psm1 のパス>

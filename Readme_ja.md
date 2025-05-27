@@ -27,8 +27,8 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 
 1. Outlook を実行している場合には終了します。
 2. OutlookTrace.psm1 をダウンロードして対象のマシン上にコピーします。
-3. 管理者権限で Windows PowerShell を起動します。
-4. PowerShell で以下を実行して OutlookTrace.psm1 のブロックを解除します
+3. 管理者権限で Windows PowerShell を起動します ([管理者として実行] で開始します)。
+4. PowerShell で以下を実行して OutlookTrace.psm1 のブロックを解除します。
 
     ```PowerShell
     Unblock-File <OutlookTrace.psm1 のパス>
@@ -39,7 +39,7 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
     Unblock-File C:\temp\OutlookTrace.psm1
     ```
 
-5. 一時的に ExecutionPolicy を `RemoteSigned` へ変更します
+5. 一時的に ExecutionPolicy を `RemoteSigned` へ変更します。
 
    ```PowerShell
    Set-ExecutionPolicy RemoteSigned -Scope Process
