@@ -106,7 +106,7 @@ SHA256: `5AA66F14325C80FECEEE2A1E538604F13C85F9AE5F56CBCACDF6A54DC063433D`
 
     ⚠️ パスワードの長さは 8 文字以上にする必要があります。
 
-21. メニュー アイテムの  [Certificate]-[Remove Root Certificate] をクリックします。
+21. 左上の [...] から [Certificate]-[Remove CA Certificate] をクリックします。
 
     この時以下の内容が表示されたら、[はい] をクリックします。
 

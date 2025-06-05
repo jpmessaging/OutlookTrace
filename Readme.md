@@ -107,7 +107,7 @@ You can get the file hash with `Get-FileHash`:
     2. Click [3. Save Capture].
     3. Save the capture in the folder with GUID name created under "Path" parameter you specified in Collect-OutloookInfo.  
        ⚠️ Password must be at least 8 characters.
-    4. Click a menu item [Certificate]-[Remove Root Certificate]  
+    4. Click [...] at the top-left corner and click [Certificate]-[Remove CA Certificate]  
 
         In the following dialog, click [Yes].
 
