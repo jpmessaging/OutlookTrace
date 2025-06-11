@@ -192,12 +192,13 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 | CrashDumpTargets     | Names of the target processes for crash dumps. When not specified, all processes are the targets                                               |
 | RemoveIdentityCache  | Switch to remove identity cache                                                                                                                |
 | EnablePageHeap       | Switch to enable full page heap for Outlook.exe (With page heap, Outlook will consume a lot of memory and slow down)                           |
-| EnableLoopbackExempt | Switch to add Microsoft.AAD.BrokerPlugin to Loopback Exempt                                                                                    |
 | SkipVersionCheck     | Switch to skip script version check                                                                                                            |
 | TTDCommandlineFilter | Command line filter for TTD monitor                                                                                                            |
 | TTDModules           | Restrict TTD trace to specified modules                                                                                                        |
 | TTDShowUI            | Switch to show TTD UI                                                                                                                          |
 | WprProfiles          | WPR profiles to capture (Default: `GeneralProfile`, `CPU`, `DiskIO`, `FileIO`, `Registry`, `Network`)                                          |
+| RemoveIdentityCache  | Switch to remove cached identites & authentication tokens                                                                                      |
+| SkipLoopbackExempt   | Switch to skip adding Microsoft.AAD.BrokerPlugin to LoopbackExempt                                                                             |
 
 ## License
 
