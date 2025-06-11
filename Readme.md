@@ -155,7 +155,7 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 | TCO           | TCO trace                                                                                                          |
 | Dump          | Outlook's process dump                                                                                             |
 | CrashDump     | Crash dump for any process (see `CrashDumpTargets` below)                                                          |
-| HungDump      | Outlook's hung dump (When a window hung is detected, a dump file is generated)                                     |
+| HangDump      | Outlook's hang dump (When a window hang is detected, a dump file is generated)                                     |
 | WPR           | WPR (Windows Performance Recorder) ETW (OS must be Windows 10 or above)                                            |
 | WFP           | Windows Firewall diagnostic log                                                                                    |
 | Performance   | Performance counter log (Process, Memory, LogicalDisk etc.)                                                        |
@@ -186,8 +186,8 @@ If you captured a Fiddler trace, send the password used in step 9 too.
 | SkipAutoUpdate       | Switch to skip auto update                                                                                                                     |
 | AutoFlush            | Switch to flush log data every time it's written (This is just for troubleshooting the script)                                                 |
 | PsrRecycleInterval   | PSR recycle interval. A new instance of PSR is created after this interval (Default: `00:10:00`, Min: `00:01:00`, Max: `01:00:00`)             |
-| HungTimeout          | TimeSpan used to detect a hung window when `HungDump` is in `Component` parameter (Default: `00:00:05`, Min: `00:00:01`, Max: `00:01:00`)      |
-| MaxHungDumpCount     | Max number of hung dump files to be saved per process instance (Default: `3`, Min: `1`, Max: `10`)                                             |
+| HangTimeout          | TimeSpan used to detect a hang window when `HangDump` is in `Component` parameter (Default: `00:00:05`, Min: `00:00:01`, Max: `00:01:00`)      |
+| MaxHangDumpCount     | Max number of hang dump files to be saved per process instance (Default: `3`, Min: `1`, Max: `10`)                                             |
 | TargetProcessName    | Target process name (such as `Outlook` or `olk`). By default `Outlook`. `olk` when `NewOutlook` is in `Component` parameter                    |
 | CrashDumpTargets     | Names of the target processes for crash dumps. When not specified, all processes are the targets                                               |
 | RemoveIdentityCache  | Switch to remove identity cache                                                                                                                |
