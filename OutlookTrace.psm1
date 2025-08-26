@@ -6633,7 +6633,7 @@ function Start-FiddlerEverywhereReporter {
     $fiddlerExe = Get-ChildItem -Path $Path -Filter "$fiddlerName*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 | Select-Object -ExpandProperty FullName
 
     if ($fiddlerExe) {
-        Write-Log "Skip downloading because $fiddlerExe is found"
+        Write-Log "Skip downloading because '$fiddlerExe' is found"
         $version = (Get-ItemProperty $fiddlerExe).VersionInfo.ProductVersion
     }
     else {
@@ -7055,7 +7055,7 @@ function Set-ConnTimeout {
     }
 
     $null = Set-ItemProperty -Path $path -Name $name -Value $Value.TotalMilliseconds -Type ([Microsoft.Win32.RegistryValueKind]::DWord)
-    Get-ConnTimeout
+    Get-ConnTimeout -User $User
 }
 
 function Remove-ConnTimeout {
@@ -14564,7 +14564,7 @@ function Collect-OutlookInfo {
             $ttdStarted = $true
 
             # Set ConnTimeout registry value
-            $savedConnTimeout = Get-ConnTimeout
+            $savedConnTimeout = Get-ConnTimeout -User $targetUser
             $connTimeout = Set-ConnTimeout -User $targetUser -Value ([TimeSpan]::FromMinutes(5))
             Write-Log "ConnTimeout is set to $($connTimeout.ConnTimeout). Original value is $(if ($null -eq $savedConnTimeout.ConnTimeout) { "null" } else { $savedConnTimeout.ConnTimeout })"
         }
