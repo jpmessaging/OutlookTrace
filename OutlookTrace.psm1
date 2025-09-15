@@ -4997,7 +4997,8 @@ function Get-StoreProvider {
             }
 
             if ($emsmdbUidBin = $store.$($PropTags.PR_EMSMDB_SECTION_UID)) {
-                $props.EmsmdbUid = [BitConverter]::ToString($emsmdbUidBin).Replace('-', [String]::Empty).ToLowerInvariant()
+                $props.EmsmdbUid = New-Object System.Guid -ArgumentList (,$emsmdbUidBin)
+                # $props.EmsmdbUid = [BitConverter]::ToString($emsmdbUidBin).Replace('-', [String]::Empty).ToLowerInvariant()
             }
 
             [PSCustomObject]$props
