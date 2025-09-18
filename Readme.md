@@ -128,7 +128,7 @@ You can get the file hash with `Get-FileHash`:
 11. Press enter key in the console to stop.
 
 Send the zip file `"Outlook_<MachineName>_<DateTime>.zip"` in the output folder specified in step 7.  
-If you captured a Fiddler trace, send the password used in step 9 too.
+If you captured a Fiddler trace, send the password used in step 10 too.
 
 ## Parameters
 
