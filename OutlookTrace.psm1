@@ -1233,8 +1233,8 @@ function Open-TaskRunspace {
     }
 
     # Import given variables
-    foreach ($_ in $Variables) {
-        $initialSessionState.Variables.Add((New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $_.Name, $_.Value, <# description #> $null))
+    foreach ($var in $Variables) {
+        $initialSessionState.Variables.Add((New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList $var.Name, $var.Value, <# description #> $null))
     }
 
     $Script:RunspacePool = [runspacefactory]::CreateRunspacePool($MinRunspaces, $MaxRunspaces, $initialSessionState, $Host)
@@ -1439,9 +1439,9 @@ function Receive-Task {
                 Write-Error -Message $errorMessage -Exception $_.Exception
             }
 
-            foreach ($_ in $ps.Streams.Error) {
-                $errorMessage = Format-TaskError -Task $t -ErrorRecord $_
-                Write-Error -Message $errorMessage -Exception $_.Exception
+            foreach ($err in $ps.Streams.Error) {
+                $errorMessage = Format-TaskError -Task $t -ErrorRecord $err
+                Write-Error -Message $errorMessage -Exception $err.Exception
             }
 
             if ($TaskErrorVariable -and $ps.Streams.Error.Count -gt 0) {
@@ -2550,9 +2550,9 @@ function Compress-Folder {
 
     $params = @{}
 
-    foreach ($_ in $PSBoundParameters.GetEnumerator()) {
-        if ($compressCmd.Parameters.ContainsKey($_.Key)) {
-            $params.Add($_.Key, $_.Value)
+    foreach ($paramKvp in $PSBoundParameters.GetEnumerator()) {
+        if ($compressCmd.Parameters.ContainsKey($paramKvp.Key)) {
+            $params.Add($paramKvp.Key, $paramKvp.Value)
         }
     }
 
@@ -3904,9 +3904,9 @@ function Invoke-ScriptBlock {
     }
 
     # Dispose if necessary
-    foreach ($_ in $result) {
-        if ($_.Dispose) {
-            $_.Dispose()
+    foreach ($item in $result) {
+        if ($item.Dispose) {
+            $item.Dispose()
         }
     }
 }
@@ -4999,7 +4999,6 @@ function Get-StoreProvider {
 
             if ($emsmdbUidBin = $store.$($PropTags.PR_EMSMDB_SECTION_UID)) {
                 $props.EmsmdbUid = New-Object System.Guid -ArgumentList (,$emsmdbUidBin)
-                # $props.EmsmdbUid = [BitConverter]::ToString($emsmdbUidBin).Replace('-', [String]::Empty).ToLowerInvariant()
             }
 
             [PSCustomObject]$props
@@ -8123,18 +8122,20 @@ function Add-WerDumpKey {
         }
 
         # Rename DW Installed keys to "_Installed" in order to disable it temporarily
-        foreach ($_ in @(
-                # For C2R
-                'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
-                'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+        & {
+            # For C2R
+            'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+            'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
 
-                # For MSI
-                'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
-                'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
-            )) {
-            if (Test-Path $_) {
-                Write-Log "Temporarily renaming $_ to `"_Installed`""
-                Rename-Item $_ -NewName '_Installed'
+            # For MSI
+            'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+            'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\Installed'
+        } | & {
+            process {
+                if (Test-Path $_) {
+                    Write-Log "Temporarily renaming $_ to `"_Installed`""
+                    Rename-Item $_ -NewName '_Installed'
+                }
             }
         }
 
@@ -8189,18 +8190,20 @@ function Remove-WerDumpKey {
 
     end {
         # Rename DW "_Installed" keys back to "Installed"
-        foreach ($_ in @(
-                # For C2R
-                'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
-                'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
+        &{
+            # For C2R
+            'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
+            'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
 
-                # For MSI
-                'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
-                'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
-            )) {
-            if (Test-Path $_) {
-                Write-Log "Renaming $_ back to `"Installed`""
-                Rename-Item $_ -NewName 'Installed'
+            # For MSI
+            'HKLM:\Software\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
+            'HKLM:\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
+        } | & {
+            process {
+                if (Test-Path $_) {
+                    Write-Log "Renaming $_ back to `"Installed`""
+                    Rename-Item $_ -NewName 'Installed'
+                }
             }
         }
 
@@ -11159,17 +11162,17 @@ function Format-WebTokenRequestResult {
 
     process {
         # Note: Do not use "$WebTokenRequestResult.ResponseData.Properties". It'd cause request.Properties to be null in the next invocation.
-        foreach ($_ in $WebTokenRequestResult.ResponseData) {
+        foreach ($webTokenResponse in $WebTokenRequestResult.ResponseData) {
             $result = [ordered]@{
-                WebAccount = $_.WebAccount
+                WebAccount = $webTokenResponse.WebAccount
             }
 
             if ($IncludeRawToken) {
-                $result.Token = $_.Token
+                $result.Token = $webTokenResponse.Token
             }
 
             # If token is a JSON Web Token (JWT), decode it.
-            $tokenParts = $_.Token.Split('.')
+            $tokenParts = $webTokenResponse.Token.Split('.')
 
             if ($tokenParts.Count -eq 3) {
                 $header = $tokenParts[0]
@@ -11181,7 +11184,7 @@ function Format-WebTokenRequestResult {
             # Since Properties is a RCW (Runtime Callable Wrapper), pack them into a hash table
             $props = @{}
 
-            foreach ($prop in $_.Properties) {
+            foreach ($prop in $webTokenResponse.Properties) {
                 $props.Add($prop.Key, $prop.Value)
             }
 
@@ -14581,9 +14584,9 @@ function Collect-OutlookInfo {
             Write-Progress -Status "Waiting for all tasks to start"
             Write-Log "Waiting for all tasks to start"
 
-            foreach ($event in $startedEventList) {
-                $null = $event.WaitOne()
-                $event.Dispose()
+            foreach ($evt in $startedEventList) {
+                $null = $evt.WaitOne()
+                $evt.Dispose()
             }
         }
 
