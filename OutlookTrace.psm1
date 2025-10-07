@@ -14005,6 +14005,14 @@ function Collect-OutlookInfo {
         if (-not $targetUser) {
             return
         }
+
+        # Make sure the target user is signed in to Windows (otherwise the user registry won't be available)
+        $logonUser = Get-LogonUser | Where-Object { $_.Sid -eq $targetUser.Sid } | Select-Object -First 1
+
+        if (-not $logonUser) {
+            Write-Error "The target user `"$targetUser`" is not signed in to Windows. Please make sure that the user is signed in and try again."
+            return
+        }
     }
     else {
         # Get logon users
