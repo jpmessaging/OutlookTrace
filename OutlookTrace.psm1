@@ -3687,7 +3687,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-Volume } }
         @{ScriptBlock = { Get-NetFrameworkVersion } }
         @{ScriptBlock = { cmdkey /list }; FileName = 'cmdkey.txt' }
-        @{ScriptBlock = { Get-StoredCredential -All} }
+        @{ScriptBlock = { Get-StoredCredential -All } }
 
         $userArg = @{ User = $User }
         @{ScriptBlock = { param($User) Get-WebView2 @PSBoundParameters }; ArgumentList = $userArg }
@@ -4998,7 +4998,7 @@ function Get-StoreProvider {
             }
 
             if ($emsmdbUidBin = $store.$($PropTags.PR_EMSMDB_SECTION_UID)) {
-                $props.EmsmdbUid = New-Object System.Guid -ArgumentList (,$emsmdbUidBin)
+                $props.EmsmdbUid = New-Object System.Guid -ArgumentList (, $emsmdbUidBin)
             }
 
             [PSCustomObject]$props
@@ -8190,7 +8190,7 @@ function Remove-WerDumpKey {
 
     end {
         # Rename DW "_Installed" keys back to "Installed"
-        &{
+        & {
             # For C2R
             'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
             'HKLM:\Software\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Wow6432Node\Microsoft\PCHealth\ErrorReporting\DW\_Installed'
@@ -12008,48 +12008,56 @@ function Start-Recording {
         $started = $true
 
         # Wait a little;otherwise zoomIt does not handle Ctrl+5
-        # Start-Sleep -Seconds 1
+        # Inherent race condition here because I don't know when ZoomIt becomes ready to accept Ctrl+5. But I cannot send Ctrl+5 multiple times because it will toggle recording on/off.
+        # For now, 3 seconds seems to be long enough.
+        Start-Sleep -Seconds 3
     }
 
-    # Send Ctrl+5 keybord input to start recording
-    $success = $false
-    $maxRetry = 5
-    $interval = [TimeSpan]::FromMilliseconds(200)
+    # Send Ctrl+5 keyboard input to start recording
+    $ctrl5Sent = $false
 
-    for ($i = 0; $i -lt $maxRetry; ++$i) {
-        try {
-            Write-Log "Sending Ctrl+5"
-            [Win32.User32]::SendCtrl5()
-        }
-        catch {
-            Write-Error -Message "Win32.User32.SendCtrl5 failed" -Exception $_.Exception
-            break
-        }
+    try {
+        Write-Log "Sending Ctrl+5 to start recording"
+        [Win32.User32]::SendCtrl5()
+        $ctrl5Sent = $true
+    }
+    catch {
+        Write-Error -Message "Win32.User32.SendCtrl5 failed" -Exception $_.Exception
+    }
 
-        Start-Sleep -Milliseconds $interval.TotalMilliseconds
+    # Wait for ZoomIt to start writing to %TEMP%\ZoomIt\zoomit.mp4
+    if ($ctrl5Sent) {
+        $tempPath = Join-Path $env:TEMP 'ZoomIt\zoomit.mp4'
+        $interval = [TimeSpan]::FromMilliseconds(500)
+        $maxRetry = 6
+        $recordingStarted = $false
 
-        # Check if ZoomIt has started writing to %TEMP%\ZoomIt\zoomit.mp4. This file will be removed by ZoomIt when recording is stopped.
-        if (Test-Path (Join-Path $env:TEMP 'ZoomIt\zoomit.mp4')) {
-            $success = $true
+        for ($i = 0; $i -lt $maxRetry; ++$i) {
+            Start-Sleep -Milliseconds $interval.TotalMilliseconds
 
-            [PSCustomObject]@{
-                Downloaded = $downloaded
-                Started    = $started
+            # Check if ZoomIt has started writing to %TEMP%\ZoomIt\zoomit.mp4. This file will be removed by ZoomIt when recording is stopped.
+            if (Test-Path $tempPath) {
+                $recordingStarted = $true
+
+                [PSCustomObject]@{
+                    Downloaded = $downloaded
+                    Started    = $started
+                }
+
+                break
             }
+        }
 
-            break
+        if (-not $recordingStarted) {
+            Write-Error "Failed to start recording"
+
+            if ($started -and -not $zoomIt.HasExited) {
+                $zoomIt.Kill()
+            }
         }
     }
 
     if ($zoomIt) {
-        if (-not $success) {
-            Write-Error "Failed to start recording"
-
-            if ($started) {
-                $zoomIt.Kill()
-            }
-        }
-
         $zoomIt.Dispose()
     }
 }
