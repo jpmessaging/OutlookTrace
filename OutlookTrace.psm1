@@ -3587,6 +3587,7 @@ function Save-OfficeRegistry {
         'HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols'
         'HKLM\SOFTWARE\Microsoft\WindowsUpdate\Orchestrator'
         'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Orchestrator'
+        'HKLM\SOFTWARE\Classes\Installer\Components'
 
         # Policies
         'HKCU\Software\Policies'
@@ -7934,7 +7935,7 @@ function Get-OfficeInfo {
                 $hklm = [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [string]::Empty);
             }
             else {
-                # This is the case where registry rediction takes place (32bit PowerShell on 64bit OS). Bail.
+                # This is the case where registry redirection takes place (32bit PowerShell on 64bit OS). Bail.
                 Write-Error "32bit PowerShell 2.0 is running on 64bit OS. Please run 64bit PowerShell"
                 return
             }
@@ -7994,6 +7995,14 @@ function Get-OfficeInfo {
         $displayName = $latestOffice.DisplayName
         $version = $latestOffice.Version
         $installPath = $latestOffice.Location
+
+        if ($officeInstallations.Count -gt 1) {
+            Write-Log "Multiple Office installations found:"
+
+            foreach ($office in $officeInstallations) {
+                Write-Log "$($office.DisplayName), Version: $($office.Version), InstallPath: $($office.Location)"
+            }
+        }
     }
     else {
         Write-Log "Cannot find the Office installation from HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall. Fall back to HKLM:\SOFTWARE\Microsoft\Office"
@@ -12403,7 +12412,7 @@ function Get-AppContainerRegistryAcl {
 
     $appContainerAcl = Get-Acl $appContainerPath
 
-    # Includde "Mappings" key's ACL if avaialble.
+    # Include "Mappings" key's ACL if avaialble.
     $mappingsPath = Join-Path $appContainerPath 'Mappings'
 
     if (Test-Path $mappingsPath) {
