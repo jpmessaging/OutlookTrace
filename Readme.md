@@ -170,7 +170,7 @@ If you captured a Fiddler trace, send the password used in step 10 too.
 > 
 > - [Fiddler Everywhere Reporter](https://api.getfiddler.com/reporter/win/latest)
 > - [Procmon](https://download.sysinternals.com/files/ProcessMonitor.zip)
-> - [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-532-0/TTD.msixbundle)
+> - [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-553-0/TTD.msixbundle)
 > - [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)
 
 ### Optional parameters
