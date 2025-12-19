@@ -8506,7 +8506,8 @@ function Save-Dump {
         $Path,
         [Parameter(Mandatory = $true)]
         [ValidateRange(1, [int]::MaxValue)]
-        [int]$ProcessId
+        [int]$ProcessId,
+        [switch]$SkipWow64Check
     )
 
     # Get the target process.
@@ -8530,11 +8531,13 @@ function Save-Dump {
 
     $Path = Convert-Path -LiteralPath $Path
 
-    # If the target is a WOW64 process and current instance of PowerShell is not WOW64, use 32bit PowerShell to write a dump.
-    if ((Test-Wow64Process -Process $process) -and -not (Test-Wow64Process (Get-Process -Id $PID))) {
-        Write-Log "The target process $($process.Name) (PID:$($process.Id)) is a WOW64 process. Writing a 32bit process dump."
-        Start-Wow64Dump -Path $Path -ProcessId $ProcessId | Complete-Wow64Dump
-        return
+    if (-not $SkipWow64Check) {
+        # If the target is a WOW64 process and current instance of PowerShell is not WOW64, use 32bit PowerShell to write a dump.
+        if ((Test-Wow64Process -Process $process) -and -not (Test-Wow64Process (Get-Process -Id $PID))) {
+            Write-Log "The target process $($process.Name) (PID:$($process.Id)) is a WOW64 process. Writing a 32bit process dump."
+            Start-Wow64Dump -Path $Path -ProcessId $ProcessId | Complete-Wow64Dump
+            return
+        }
     }
 
     $dumpType = [Win32.Dbghelp+MINIDUMP_TYPE]'MiniDumpWithIptTrace, MiniDumpWithTokenInformation, MiniDumpIgnoreInaccessibleMemory, MiniDumpWithThreadInfo, MiniDumpWithFullMemoryInfo, MiniDumpWithUnloadedModules, MiniDumpWithHandleData, MiniDumpWithFullMemory'
@@ -8685,7 +8688,8 @@ function Save-HangDump {
         [TimeSpan]$Timeout = [TimeSpan]::FromSeconds(5),
         [int]$DumpCount = 1,
         [Threading.CancellationToken]$CancellationToken,
-        [TimeSpan]$DumpInterval = [TimeSpan]::FromSeconds(10)
+        [TimeSpan]$DumpInterval = [TimeSpan]::FromSeconds(10),
+        [switch]$SkipWow64Check
     )
 
     if (-not ($process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
@@ -8736,7 +8740,8 @@ function Save-HangDump {
                 return
             }
 
-            if (-not $wow64Dump -and (Test-Wow64Process $process)) {
+            # Check if WOW64 dump is needed.
+            if (-not $SkipWow64Check -and -not $wow64Dump -and (Test-Wow64Process $process)) {
                 Write-Log "The target process $($process.Name) (PID:$($process.Id)) is a WOW64 process. Preparing WOW64 dump"
                 $wow64Dump = Start-Wow64Dump -Path $Path -ProcessId $process.Id
             }
@@ -8757,11 +8762,12 @@ function Save-HangDump {
             Write-Log "SendMessageTimeoutW() detected a hang window with $($process.Name) (PID:$ProcessId, hWnd:$hWnd). $($savedDumpCount+1)/$DumpCount" -Category Warning
 
             if ($wow64Dump) {
+                Write-Log "Signaling 32bit PowerShell process to write a dump file"
                 $dumpResult = $wow64Dump | Complete-Wow64Dump
                 $wow64Dump = $null
             }
             else {
-                $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId
+                $dumpResult = Save-Dump -Path $Path -ProcessId $ProcessId -SkipWow64Check:$SkipWow64Check
             }
 
             if ($dumpResult) {
@@ -10306,8 +10312,9 @@ function Start-HangMonitor {
         Write-Log "Found $Name (PID:$($target.Id), CreationDate:$($target.CreationDate.ToString('o'))). Starting hang window monitoring"
 
         $hangDumpArgs = @{
-            Path      = $Path
-            ProcessId = $target.Id
+            Path           = $Path
+            ProcessId      = $target.Id
+            SkipWow64Check = $SkipWow64Check
         }
 
         if ($DumpCount) {
@@ -14605,7 +14612,7 @@ function Collect-OutlookInfo {
                 $activity = "Saving a process dump of $TargetProcessName"
                 Write-Progress -Activity $activity -Status "Please wait" -PercentComplete -1
 
-                $err = $($dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump' -SkipWow64Check:$SkipWow64Check) -ProcessId $process.Id) 2>&1
+                $err = $($dumpResult = Save-Dump -Path (Join-Path $tempPath 'Dump') -ProcessId $process.Id -SkipWow64Check:$SkipWow64Check) 2>&1
 
                 Write-Progress -Activity $activity -Status "Done" -Completed
 
@@ -14638,7 +14645,7 @@ function Collect-OutlookInfo {
             }
 
             Write-Log "Starting hangMonitorTask. TargetProcessName:$($hangMonitorArgs.Name), HangTimeout:$($hangMonitorArgs.Timeout), User:$targetUser"
-            $hangMonitorTask = Start-Task -Name 'HangMonitorTask' -ScriptBlock { param($Path, $Name, $User, $Timeout, $DumpCount, $CancellationToken, $StartedEvent) Start-HangMonitor @PSBoundParameters } -ArgumentList $hangMonitorArgs
+            $hangMonitorTask = Start-Task -Name 'HangMonitorTask' -ScriptBlock { param($Path, $Name, $User, $Timeout, $DumpCount, $CancellationToken, $StartedEvent, $SkipWow64Check) Start-HangMonitor @PSBoundParameters } -ArgumentList $hangMonitorArgs
             $hangDumpStarted = $true
         }
 
