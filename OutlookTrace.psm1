@@ -14082,7 +14082,9 @@ function Collect-OutlookInfo {
         # Switch to remove cached identites & authentication tokens
         [switch]$RemoveIdentityCache,
         # Switch to skip adding Microsoft.AAD.BrokerPlugin to LoopbackExempt
-        [switch]$SkipLoopbackExempt
+        [switch]$SkipLoopbackExempt,
+        # Enable WebView2 DevTools for the target process
+        [switch]$EnableWebView2DevTools
     )
 
     $runAsAdmin = Test-RunAsAdministrator
@@ -14498,8 +14500,12 @@ function Collect-OutlookInfo {
             $outlookTraceStarted = $true
         }
 
+        if ($EnableWebView2DevTools) {
+            Enable-WebView2DevTools -ExecutableName $TargetProcessName -User $targetUser -ErrorAction Stop
+            $webView2DevToolsEnabled = $true
+        }
+
         if ($Component -contains 'NewOutlook') {
-            Enable-WebView2DevTools -ExecutableName 'olk.exe' -User $targetUser -ErrorAction Stop
             $newOutlookTraceStarted = $true
         }
 
@@ -14816,8 +14822,11 @@ function Collect-OutlookInfo {
             Disable-DrmExtendedLogging -User $targetUser
         }
 
+        if ($Local:webView2DevToolsEnabled) {
+            Disable-WebView2DevTools -ExecutableName $TargetProcessName -User $targetUser 2>&1 | Write-Log -Category Error -PassThru
+        }
+
         if ($Local:newOutlookTraceStarted) {
-            Disable-WebView2DevTools -ExecutableName 'olk.exe' -User $targetUser 2>&1 | Write-Log -Category Error -PassThru
             Save-MonarchLog -User $targetUser -Path (Join-Path $tempPath 'Monarch')  2>&1 | Write-Log -Category Error -PassThru
             Save-MonarchSetupLog -User $targetUser -Path (Join-Path $tempPath 'MonarchSetup')  2>&1 | Write-Log -Category Error -PassThru
         }
