@@ -8068,21 +8068,29 @@ function Get-OfficeInfo {
     }
 
     # Get Outlook MAPI DLL path.
-    $outlookPath = $null
+    $olmapi32 = $null
+    $arch = 'Unknown'
 
     foreach ($cat in $OfficeCategoryMap.Keys) {
-        if ($outlookPath) {
-            break
-        }
-
         foreach ($qualifier in @('outlook.x64.exe', 'outlook.exe')) {
             $($outlookPath = Get-OutlookInstallPath -Category $cat -Qualifier $qualifier) 2>&1 | Write-Log -Category Error
 
             if ($outlookPath) {
                 $olmapi32 = Join-Path (Split-Path $outlookPath -Parent) 'olmapi32.dll'
-                $arch = Get-ImageInfo -Path $olmapi32 | Select-Object -ExpandProperty Architecture
-                break
+
+                if (Test-Path $olmapi32) {
+                    $($arch = Get-ImageInfo -Path $olmapi32 | Select-Object -ExpandProperty Architecture) 2>&1 | Write-Log -Category Error
+                    break
+                }
+                else {
+                    Write-Log -Message "Failed to find $olmapi32" -Category Error
+                    $olmapi32 = $null
+                }
             }
+        }
+
+        if ($olmapi32) {
+            break
         }
     }
 
