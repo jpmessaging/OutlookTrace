@@ -11133,11 +11133,14 @@ function Get-TokenSilently {
     IWebAuthenticationCoreManagerInterop::RequestTokenForWindowAsync method (webauthenticationcoremanagerinterop.h)
     https://learn.microsoft.com/en-us/windows/win32/api/webauthenticationcoremanagerinterop/nf-webauthenticationcoremanagerinterop-iwebauthenticationcoremanagerinterop-requesttokenforwindowasync
 .EXAMPLE
-    Invoke-RequestToken
-.EXAMPLE
     Invoke-RequestToken -Resource 'https://outlook.office365.com/' -AddClaimCapability
+    Request a token for 'https://outlook.office365.com/' with claim capability (i.e. claim to support "Continuous Access Evaluation" (CAE)).
 .EXAMPLE
-    Invoke-RequestToken -Resource 'https://outlook.office365.com/' -IncludeRawToken
+    Invoke-RequestToken -Resource 'https://outlook.office365.com/' -AddClaimCapability -IncludeRawToken
+    Same as above, but the output includes the raw token.
+.EXAMPLE
+    Invoke-RequestToken -Resource 'https://outlook.office365.com/' -AddClaimCapability -IncludeRawToken -RequestProperties @{ 'login_hint' = 'user01@contoso.com' }
+    Same as above, but use "login_hint" to skip entering user name.
 #>
 function Invoke-RequestToken {
     [CmdletBinding()]
