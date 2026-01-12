@@ -1040,6 +1040,7 @@ namespace Win32
         ERROR_INVALID_HANDLE,
         ERROR_ARENA_TRASHED,
         ERROR_NOT_ENOUGH_MEMORY,
+        ERROR_MOD_NOT_FOUND = 126,
         ERROR_MORE_DATA = 234
     }
 }
@@ -11211,9 +11212,9 @@ function Invoke-RequestToken {
         if ($hModule -eq [IntPtr]::Zero) {
             # LoadLibraryW() failed. Bail with an error message.
             $ec = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            $sb = New-Object System.Text.StringBuilder -ArgumentList "Failed to load $interopDllPath. "
+            $sb = New-Object System.Text.StringBuilder -ArgumentList "Failed to load $interopDllPath."
 
-            if ($ec -eq 0x7e <#ERROR_MOD_NOT_FOUND#>) {
+            if ($ec -eq [Win32.WinError]::ERROR_MOD_NOT_FOUND) {
                 $null = $sb.AppendLine("LoadLibraryW() failed with ERROR_MOD_NOT_FOUND.`nProbably MSVC runtime is not installed. Please install the latest from https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist")
             }
             else {
