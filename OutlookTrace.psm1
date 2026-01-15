@@ -4537,6 +4537,7 @@ $PropTags = @{
     PR_PROFILE_OFFICE365_MAILBOX         = '000b6659'
     PR_PROFILE_EXCHANGE_CONSUMER_ACCOUNT = '000b665e'
     PR_PROFILE_USER_EMAIL_ADDRESSES      = '101f6637'
+    PR_PROFILE_ACCT_NAME_W               = '001f6620'
     PR_AB_SEARCH_PATH_CUSTOMIZATION      = '00033d1b'
 }
 
@@ -5052,6 +5053,7 @@ function Get-MapiAccount {
     # Get Profile root path
     $profRoot = $Account.PSPath.SubString(0, $Account.PSPath.IndexOf($KnownSections.AccountManager))
 
+    $accountName = $Account.'Account Name'
     $serviceUid = [BitConverter]::ToString($Account.'Service UID').Replace('-', [String]::Empty)
     $service = Join-Path $profRoot $serviceUid | Get-ItemProperty -Name $PropTags.PR_EMSMDB_SECTION_UID -ErrorAction SilentlyContinue
     $emsmdbUid = [BitConverter]::ToString($service.$($PropTags.PR_EMSMDB_SECTION_UID)).Replace('-', '').ToLowerInvariant()
@@ -5071,6 +5073,7 @@ function Get-MapiAccount {
         $PropTags.PR_PROFILE_OFFICE365_MAILBOX
         $PropTags.PR_PROFILE_EXCHANGE_CONSUMER_ACCOUNT
         $PropTags.PR_PROFILE_USER_EMAIL_ADDRESSES
+        $PropTags.PR_PROFILE_ACCT_NAME_W
     )
 
     $emsmdb = Join-Path $profRoot $emsmdbUid | Get-ItemProperty -Name $emsmdbProperties -ErrorAction SilentlyContinue
@@ -5079,6 +5082,7 @@ function Get-MapiAccount {
         Path             = Convert-Path -LiteralPath $Account.PSPath
         Profile          = $null
         AccountType      = 'MAPI'
+        AccountName      = $accountName
         IsDefaultAccount = $false
         EmsmdbUid        = $emsmdbUid
     }
@@ -5144,6 +5148,10 @@ function Get-MapiAccount {
         catch {
             Write-Error -Message "Convert-MVUnicode failed. $_" -Exception $_.Exception
         }
+    }
+ 
+    if ($profAccountNameBin = $emsmdb.$($PropTags.PR_PROFILE_ACCT_NAME_W)) {
+        $props.ProfileAccountName = Get-MapiString $profAccountNameBin
     }
 
     # Get Sync Window
