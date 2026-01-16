@@ -4998,7 +4998,7 @@ function Get-StoreProvider {
             $props = [ordered]@{}
 
             if ($displayNameBin = $store.$($PropTags.PR_DISPLAY_NAME)) {
-                $props.DisplayName = Get-MapiString $displayNameBin
+                $props.DisplayName = ConvertFrom-CString $displayNameBin
             }
 
             if ($resourceFlagsBin = $store.$($PropTags.PR_RESOURCE_FLAGS)) {
@@ -5006,11 +5006,11 @@ function Get-StoreProvider {
             }
 
             if ($alternateStoreTypeBin = $store.$($PropTags.PR_PROFILE_ALTERNATE_STORE_TYPE)) {
-                $props.AlternateStoreType = Get-MapiString $alternateStoreTypeBin
+                $props.AlternateStoreType = ConvertFrom-CString $alternateStoreTypeBin
             }
 
             if ($pstPath = $store.$($PropTags.PR_PROFILE_PST_PATH)) {
-                $props.PstPath = Get-MapiString $pstPath
+                $props.PstPath = ConvertFrom-CString $pstPath
                 $props.PstSize = 'Unknown'
 
                 if ($props.PstPath -and (Test-Path $props.PstPath)) {
@@ -5024,11 +5024,11 @@ function Get-StoreProvider {
             }
 
             if ($userSmtpEmailAddressBin = $store.$($PropTags.PR_PROFILE_USER_SMTP_EMAIL_ADDRESS)) {
-                $props.UserSmtpEmailAddress = Get-MapiString $userSmtpEmailAddressBin
+                $props.UserSmtpEmailAddress = ConvertFrom-CString $userSmtpEmailAddressBin
             }
 
             if ($tenantIdBin = $store.$($PropTags.PR_PROFILE_TENANT_ID)) {
-                $props.TenantId = Get-MapiString $tenantIdBin
+                $props.TenantId = ConvertFrom-CString $tenantIdBin
             }
 
             if ($entryIdBin = $store.$($PropTags.PR_ENTRYID)) {
@@ -5093,27 +5093,27 @@ function Get-MapiAccount {
     }
 
     if ($displayNameBin = $emsmdb.$($PropTags.PR_DISPLAY_NAME)) {
-        $props.DisplayName = Get-MapiString $displayNameBin
+        $props.DisplayName = ConvertFrom-CString $displayNameBin
     }
 
     if ($credDomainName = $emsmdb.$($PropTags.PR_EMSMDB_CRED_DOMAINNAME)) {
-        $props.CredentialDomainName = Get-MapiString $credDomainName
+        $props.CredentialDomainName = ConvertFrom-CString $credDomainName
     }
 
     if ($credUserName = $emsmdb.$($PropTags.PR_EMSMDB_CRED_USERNAME)) {
-        $props.CredentialUserName = Get-MapiString $credUserName
+        $props.CredentialUserName = ConvertFrom-CString $credUserName
     }
 
     if ($identityUniqueIdBin = $emsmdb.$($PropTags.PR_EMSMDB_IDENTITY_UNIQUEID)) {
-        $props.IdentityUniqueId = Get-MapiString $identityUniqueIdBin
+        $props.IdentityUniqueId = ConvertFrom-CString $identityUniqueIdBin
     }
 
     if ($userFullNameBin = $emsmdb.$($PropTags.PR_PROFILE_USER_FULL_NAME)) {
-        $props.UserFullName = Get-MapiString $userFullNameBin
+        $props.UserFullName = ConvertFrom-CString $userFullNameBin
     }
 
     if ($ostPath = $emsmdb.$($PropTags.PR_PROFILE_OFFLINE_STORE_PATH)) {
-        $props.OstPath = Get-MapiString $ostPath
+        $props.OstPath = ConvertFrom-CString $ostPath
         $props.OstSize = 'Unknown'
 
         if ($props.OstPath -and (Test-Path $props.OstPath)) {
@@ -5152,7 +5152,7 @@ function Get-MapiAccount {
     }
 
     if ($profAccountNameBin = $emsmdb.$($PropTags.PR_PROFILE_ACCT_NAME_W)) {
-        $props.ProfileAccountName = Get-MapiString $profAccountNameBin
+        $props.ProfileAccountName = ConvertFrom-CString $profAccountNameBin
     }
 
     # Get Sync Window
@@ -5203,43 +5203,45 @@ function Format-ByteSize {
 
 <#
 .SYNOPSIS
-    Get a string from a byte array of PT_STRING8 or MAPI PT_UNICODE value.
-    The data is interpreted as PT_UNICODE by default. Use "Ascii" switch for PT_STRING8.
+    Get a string from a byte array of C String (i.e. null-terminated ASCII or UTF-16 char array).
+    The data is interpreted as a Unicode character (UTF-16) by default. Use "Ascii" switch for single-byte char.
 #>
-function Get-MapiString {
+function ConvertFrom-CString {
     [CmdletBinding()]
     [OutputType([string])]
     param(
         [Parameter(Mandatory)]
         [byte[]]$Bin,
-        # Interpret as PT_STRING8
+        # Interpret as single-byte char
         [switch]$Ascii
     )
 
-    if ($Ascii) {
-        # PT_STRING8 ends with a single NULL (0x00)
-        $terminatingNullCount = 1
-        [System.Text.Encoding]::ASCII.GetString($Bin, 0, $Bin.Length - $terminatingNullCount)
-    }
-    else {
-        # PT_UNICODE ends with a double-byte NULL (0x00 00)
-        $terminatingNullCount = 2
-        [System.Text.Encoding]::Unicode.GetString($Bin, 0, $Bin.Length - $terminatingNullCount)
+    process {
+        if ($Ascii) {
+            # ASCII char array ends with a single NULL (0x00)
+            $terminatingNullCount = 1
+            [System.Text.Encoding]::ASCII.GetString($Bin, 0, $Bin.Length - $terminatingNullCount)
+        }
+        else {
+            # Unicode char array ends with a double-byte NULL (0x00 00)
+            $terminatingNullCount = 2
+            [System.Text.Encoding]::Unicode.GetString($Bin, 0, $Bin.Length - $terminatingNullCount)
+        }
     }
 }
 
 <#
 .SYNOPSIS
-    Convert a string to a byte array of a MAPI string (i.e. null-terminated ASCII or UTF-16 string)
+    Convert a string to a byte array of a C string (i.e. null-terminated ASCII or UTF-16 char array)
 #>
-function ConvertTo-MapiString {
+function ConvertTo-CString {
     [CmdletBinding()]
     [OutputType([byte[]])]
     param(
+        [Parameter(Mandatory, ValueFromPipeline)]
         [string]$String,
         [switch]$Ascii
     )
-
 
     $encoding = if ($Ascii) {
         [System.Text.Encoding]::ASCII
@@ -5248,12 +5250,8 @@ function ConvertTo-MapiString {
         [System.Text.Encoding]::Unicode
     }
 
-    $bytes = $encoding.GetBytes($String)
-
     @(
-        foreach ($b in $bytes) {
-            $b
-        }
+        $encoding.GetBytes($String)
         if ($Ascii) { 0x00 } else { 0x00, 0x00 }
     )
 }
@@ -5393,7 +5391,7 @@ function Set-MapiAccountName {
     # Set PR_PROFILE_ACCT_NAME_W of EMSMDB section
     $emsmdbUid = [BitConverter]::ToString($account.EmsmdbUid.ToByteArray()).Replace('-', '').ToLowerInvariant()
     $emsmdbPath = Join-Path ('Registry::' + $prof.Path) $emsmdbUid
-    $mapiString = ConvertTo-MapiString -String $NewName
+    $mapiString = ConvertTo-CString -String $NewName
 
     $err = Set-ItemProperty -Path $emsmdbPath -Name $PropTags.PR_PROFILE_ACCT_NAME_W -Value $mapiString -Type Binary 2>&1
 
