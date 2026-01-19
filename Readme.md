@@ -4,9 +4,9 @@
 
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2026-01-12/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2026-01-19/OutlookTrace.psm1)
 
-SHA256: `F1790DFE4D25A3A65391461CC82C4DDD0CB8D09B9199F9E2D8B3E717D0400BC3`
+SHA256: `77DA505A88246EA2AB4CF4024134F6DCDCF461EE8799904E500A5EC9AB7D0D0C`
 
 You can get the file hash with `Get-FileHash`:
 
@@ -67,7 +67,8 @@ You can get the file hash with `Get-FileHash`:
 
 8.  When traces have started successfully, it shows `Press enter to stop`.
 
-    Note: When `Dump` is included in Component parameter, you are prompted with `Press enter to save a process dump of Outlook. To quit, enter q:`. Press enter key to save a dump file. For a hang issue, repeat the process to collect 3 dump files, with interval of about 30 seconds between saves. When finished, press `q`.
+    Note: When `Dump` is included in Component parameter, you are prompted with `Press enter to save a process dump of Outlook. To quit, enter q:`. Press enter key to save a dump file.  
+    For a hang issue, repeat the process to collect 3 dump files, with interval of about 30 seconds between saves. When finished, press `q`.
 
     Note: When `Fiddler` is included in Component parameter, an application called "Fiddler Everywhere Reporter" starts. Use the following instructions to start capture, and then reproduce the issue
 
