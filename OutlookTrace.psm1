@@ -15039,15 +15039,15 @@ function Collect-OutlookInfo {
                 $err = $($ttdProcess | Stop-TTDMonitor) 2>&1 | Write-Log -Category Error -PassThru
             }
 
-            # Stopping or detaching TTD might fail if TTD.exe died during tracing. In this case, ask the user to shutdown Outlook manually so that trace file is fully written.
+            # Stopping or detaching TTD might fail if TTD.exe died during tracing. In this case, ask the user to shutdown Outlook (or whatever TargetProcess is) manually so that trace file is fully written.
             if ($err) {
-                $outlookProcess = @(Get-Process -Name $ttdProcess.TargetProcessName -ErrorAction SilentlyContinue | `
+                $targetProcs = @(Get-Process -Name $ttdProcess.TargetProcessName -ErrorAction SilentlyContinue | `
                         Where-Object { $_.Modules | Where-Object { $_.ModuleName -match 'TTDRecordCPU' } })
 
-                if ($outlookProcess.Count) {
-                    Write-Host "Please shutdown $($outlookProcess[0].Name) (PID:$($outlookProcess.Id -join ','))" -ForegroundColor Yellow
+                if ($targetProcs.Count) {
+                    Write-Host "Please shutdown $($targetProcs[0].Name) (PID:$($targetProcs.Id -join ','))" -ForegroundColor Yellow
 
-                    foreach ($proc in $outlookProcess) {
+                    foreach ($proc in $targetProcs) {
                         Write-Host "Waiting for $($proc.Name) (PID:$($proc.Id)) to shutdown ..." -ForegroundColor Yellow
                         $proc.WaitForExit()
                         $proc.Dispose()
