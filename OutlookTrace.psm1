@@ -8658,7 +8658,7 @@ function Test-Wow64Process {
 
     process {
         $wow64 = $false
-        $null = [Win32.Kernel32]::IsWow64Process($process.SafeHandle, [ref]$wow64)
+        $null = [Win32.Kernel32]::IsWow64Process($Process.SafeHandle, [ref]$wow64)
         $wow64
     }
 }
