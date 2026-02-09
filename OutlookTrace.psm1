@@ -1029,7 +1029,7 @@ namespace Win32
         public static extern IntPtr CreateAnchorWindow();
     }
 
-    public enum WinError
+    public enum Error
     {
         ERROR_SUCCESS,
         ERROR_INVALID_FUNCTION,
@@ -11329,7 +11329,7 @@ function Invoke-RequestToken {
             $ec = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
             $sb = New-Object System.Text.StringBuilder -ArgumentList "Failed to load $interopDllPath."
 
-            if ($ec -eq [Win32.WinError]::ERROR_MOD_NOT_FOUND) {
+            if ($ec -eq [Win32.Error]::ERROR_MOD_NOT_FOUND) {
                 $null = $sb.AppendLine("LoadLibraryW() failed with ERROR_MOD_NOT_FOUND.`nProbably MSVC runtime is not installed. Please install the latest from https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist")
             }
             else {
@@ -13882,7 +13882,7 @@ function Get-OutlookInstallPath {
     Write-Log "Invoking MsiProvideQualifiedComponentW(Category:$cat, Qualifier:$Qualifier, Mode:$mode)"
     $ec = [Win32.Msi]::MsiProvideQualifiedComponentW($cat, $Qualifier, $mode, $null, [ref]$cch)
 
-    if ($ec -ne [Win32.WinError]::ERROR_SUCCESS) {
+    if ($ec -ne [Win32.Error]::ERROR_SUCCESS) {
         Write-Error ("MsiProvideQualifiedComponentW failed with 0x{0:x}" -f $ec)
         return
     }
@@ -13893,7 +13893,7 @@ function Get-OutlookInstallPath {
     Write-Log "Invoking MsiProvideQualifiedComponentW(Category:$cat, Qualifier:$Qualifier, Mode:$mode, cch: $cch)"
     $ec = [Win32.Msi]::MsiProvideQualifiedComponentW($cat, $Qualifier, $mode, $buffer, [ref]$cch)
 
-    if ($ec -ne [Win32.WinError]::ERROR_SUCCESS) {
+    if ($ec -ne [Win32.Error]::ERROR_SUCCESS) {
         Write-Error ("MsiProvideQualifiedComponentW failed with 0x{0:x}" -f $ec)
         return
     }
