@@ -14399,17 +14399,19 @@ function Collect-OutlookInfo {
             return
         }
 
-        if ($logonUsers.Count -eq 0) {
-            Write-Error "Cannot find any logon user"
-            return
-        }
-        elseif ($logonUsers.Count -eq 1) {
-            $targetUser = $logonUsers[0]
-        }
-        else {
-            # Multiple logon users are found. 'User' parameter needs to be used.
-            Write-Error "Found multiple logon users ($($logonUsers.Count) users$(if ($logonUsers.Count -le 3) { "; $($logonUsers.Name -join ',')" })). Please specify the target user by `"-User`" parameter"
-            return
+        $targetUser = switch ($logonUsers.Count) {
+            0 {
+                Write-Error "Cannot find any logon user"
+                return
+            }
+            1 {
+                $logonUsers[0]
+            }
+            default {
+                # Multiple logon users are found. 'User' parameter needs to be used.
+                Write-Error "Found multiple logon users ($($logonUsers.Count) users$(if ($logonUsers.Count -le 3) { "; $($logonUsers.Name -join ',')" })). Please specify the target user by `"-User`" parameter"
+                return
+            }
         }
     }
 
