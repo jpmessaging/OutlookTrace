@@ -14311,6 +14311,8 @@ function Collect-OutlookInfo {
         [switch]$SkipWow64Check,
         # Target process name (such as Outlook or olk). This is optional. 'Outlook' is used by default and 'olk' is used when 'NewOutlook' is specified in Component parameter.
         [string]$TargetProcessName,
+        # Target process ID. This takes precedence over TargetProcessName parameter.
+        [int]$TargetProcessId,
         # Names of the target processes for crash dumps. When not specified, all processes will be the targets.
         [string[]]$CrashDumpTargets,
         # Switch to enable full page heap for the target process (With page heap, Outlook will consume a lot of memory and slow down)
@@ -14494,15 +14496,28 @@ function Collect-OutlookInfo {
     }
 
     # Determine TargetProcessName (must be without extension)
-    if ($TargetProcessName) {
-        $TargetProcessName = [IO.Path]::GetFileNameWithoutExtension($TargetProcessName)
+    $TargetProcessName = if ($TargetProcessId) {
+        # If TargetProcessId is given, use it (Bail if the process with the given PID is not found)
+        $proc = Get-Process -Id $TargetProcessId -ErrorAction SilentlyContinue
+
+        if ($proc) {
+            $proc.Name
+            $proc.Dispose()
+        }
+        else {
+            Write-Error "Cannot find target process with PID $TargetProcessId"
+            return
+        }
+    }
+    elseif ($TargetProcessName) {
+        [IO.Path]::GetFileNameWithoutExtension($TargetProcessName)
     }
     else {
         if ($Component -contains 'NewOutlook') {
-            $TargetProcessName = 'olk'
+            'olk'
         }
         else {
-            $TargetProcessName = 'outlook'
+            'outlook'
         }
     }
 
@@ -14923,7 +14938,28 @@ function Collect-OutlookInfo {
             }
 
             # If the target process (Outlook, olk, etc) is already running, attach to it. Otherwise, start monitoring
-            $process = Get-SingleProcess -Name $TargetProcessName -User $targetUser -CommandLineFilter $TTDCommandlineFilter
+            $process = $null
+
+            if ($TargetProcessId) {
+                # If TargetProcessId is given, use it (Bail if not found).
+                $wi32_proc = Get-CimInstance Win32_Process -Filter "ProcessId = $TargetProcessId"
+
+                if (-not $wi32_proc) {
+                    Write-Error -Message "Canont find target process with PID $TargetProcessId"
+                    return
+                }
+
+                $process = [PSCustomObject]@{
+                    Id          = $wi32_proc.ProcessId
+                    Name        = $wi32_proc.Name
+                    CommandLine = $wi32_proc.CommandLine
+                }
+
+                $wi32_proc.Dispose()
+            }
+            else {
+                $process = Get-SingleProcess -Name $TargetProcessName -User $targetUser -CommandLineFilter $TTDCommandlineFilter
+            }
 
             if ($process) {
                 $logMsg = "Attaching TTD to $($process.Name) (PID:$($process.Id))"
@@ -14959,10 +14995,12 @@ function Collect-OutlookInfo {
             $ttdProcess | Add-Member -MemberType NoteProperty -Name 'TargetProcessName' -Value $TargetProcessName
             $ttdStarted = $true
 
-            # Set ConnTimeout registry value
-            $savedConnTimeout = Get-ConnTimeout -User $targetUser
-            $connTimeout = Set-ConnTimeout -User $targetUser -Value ([TimeSpan]::FromMinutes(5))
-            Write-Log "ConnTimeout is set to $($connTimeout.ConnTimeout). Original value is $(if ($null -eq $savedConnTimeout.ConnTimeout) { "null" } else { $savedConnTimeout.ConnTimeout })"
+            # Set ConnTimeout registry value if target is Outlook.
+            if ($TargetProcessName -eq 'Outlook') {
+                $savedConnTimeout = Get-ConnTimeout -User $targetUser
+                $connTimeout = Set-ConnTimeout -User $targetUser -Value ([TimeSpan]::FromMinutes(5))
+                Write-Log "ConnTimeout is set to $($connTimeout.ConnTimeout). Original value is $(if ($null -eq $savedConnTimeout.ConnTimeout) { "null" } else { $savedConnTimeout.ConnTimeout })"
+            }
         }
 
         if ($Component -contains 'Recording') {
