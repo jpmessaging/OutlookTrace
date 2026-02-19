@@ -1451,7 +1451,8 @@ function Receive-Task {
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
         $Task,
         [switch]$AutoRemoveTask,
-        [string]$TaskErrorVariable
+        [string]$TaskErrorVariable,
+        [switch]$SkipFormatError
     )
 
     process {
@@ -1471,13 +1472,23 @@ function Receive-Task {
             }
             catch {
                 # "Real" ErrorRecord is inside InnerException (The outermost exception points to EndInvoke() above)
-                $errorMessage = Format-TaskError -Task $t -ErrorRecord $_.Exception.InnerException.ErrorRecord -Terminating
-                Write-Error -Message $errorMessage -Exception $_.Exception
+                if ($SkipFormatError) {
+                    Write-Error -ErrorRecord $_.Exception.InnerException.ErrorRecord
+                }
+                else {
+                    $errorMessage = Format-TaskError -Task $t -ErrorRecord $_.Exception.InnerException.ErrorRecord -Terminating
+                    Write-Error -Message $errorMessage -Exception $_.Exception
+                }
             }
 
             foreach ($err in $ps.Streams.Error) {
-                $errorMessage = Format-TaskError -Task $t -ErrorRecord $err
-                Write-Error -Message $errorMessage -Exception $err.Exception
+                if ($SkipFormatError) {
+                    Write-Error -ErrorRecord $err
+                }
+                else {
+                    $errorMessage = Format-TaskError -Task $t -ErrorRecord $err
+                    Write-Error -Message $errorMessage -Exception $err.Exception
+                }
             }
 
             if ($TaskErrorVariable -and $ps.Streams.Error.Count -gt 0) {
@@ -7904,7 +7915,9 @@ function Attach-TTD {
         [int]$ProcessId,
         # Module names to trace. Must have extension.
         [string[]]$Modules,
-        [Switch]$ShowUI
+        [switch]$ShowUI,
+        # Fail if TTD was previously attached to this process
+        [switch]$NoReattach
     )
 
     # Validate input args
@@ -7914,7 +7927,20 @@ function Attach-TTD {
     }
 
     if ($process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
-        $process.Dispose()
+        try {
+            if ($NoReattach) {
+                # If TTD was previously attached to this process, bail because it holds on to the the trace file.
+                $ttdRecordDll = $process.Modules | Where-Object { $_.ModuleName -eq 'TTDRecordCPU.dll' } | Select-Object -First 1
+
+                if ($ttdRecordDll) {
+                    Write-Error "TTD was previously attached to process `"$($process.Name)`" (PID:$($process.Id)). Please restart this process to capture a TTD trace"
+                    return
+                }
+            }
+        }
+        finally {
+            $process.Dispose()
+        }
     }
     else {
         Write-Error "Cannot find a process with $ProcessId"
@@ -14967,8 +14993,11 @@ function Collect-OutlookInfo {
 
                 $ttdArgs.ProcessId = $process.Id
 
+                # Reattach is disabled for now (Consider exposing this as a parameter if necessary)
+                $ttdArgs.NoReattach = $true
+
                 # Attach TTD with a background task and asynchronously wait
-                $attachTask = Start-Task -Name 'AttachTTD' -ScriptBlock { param($TTDPath, $Path, $ProcessID, $Modules, $ShowUI) Attach-TTD @PSBoundParameters } -ArgumentList $ttdArgs
+                $attachTask = Start-Task -Name 'AttachTTD' -ScriptBlock { param($TTDPath, $Path, $ProcessID, $Modules, $ShowUI, $NoReattach) Attach-TTD @PSBoundParameters } -ArgumentList $ttdArgs
 
                 $waitMsg = "$logMsg. This might take a while. Please wait"
                 $waitCount = 0
@@ -14980,7 +15009,12 @@ function Collect-OutlookInfo {
                     $waitCount = ++$waitCount % 10
                 }
 
-                $ttdProcess = Receive-Task -Task $attachTask -AutoRemoveTask -ErrorAction Stop
+                $err = $($ttdProcess = Receive-Task -Task $attachTask -AutoRemoveTask -SkipFormatError) 2>&1
+
+                if ($err) {
+                    Write-Error -Message "Failed to attach TTD. $err" -Exception $err.Exception
+                    return
+                }
             }
             else {
                 $ttdArgs.ExecutableName = $TargetProcessName
