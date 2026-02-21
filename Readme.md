@@ -4,9 +4,9 @@
 
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2026-01-19/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2026-02-20/OutlookTrace.psm1)
 
-SHA256: `77DA505A88246EA2AB4CF4024134F6DCDCF461EE8799904E500A5EC9AB7D0D0C`
+SHA256: `87872904906AB977E736D53C74C9360D8D3E34DDCFF8DEB84D4745A41A0D4529`
 
 You can get the file hash with `Get-FileHash`:
 
@@ -171,7 +171,7 @@ If you captured a Fiddler trace, send the password used in step 10 too.
 > 
 > - [Fiddler Everywhere Reporter](https://api.getfiddler.com/reporter/win/latest)
 > - [Procmon](https://download.sysinternals.com/files/ProcessMonitor.zip)
-> - [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-553-0/TTD.msixbundle)
+> - [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-584-0/TTD.msixbundle)
 > - [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)
 
 ### Optional parameters
