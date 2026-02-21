@@ -12425,6 +12425,11 @@ function Stop-Recording {
     }
 
     if ($zoomIt) {
+        # There's a situation where ZoomIt consumes a lot of memory (> 1GB), and in this case Ctrl-5 does not show "Save As" dialog.
+        # * Usually ~400MB is Ok.
+        # No wordaround but memory usage is a hint. For now, just log the memory usage for a post-mortem analysis.
+        Write-Log "ZoomIt PrivateMemorySize64:$(Format-ByteSize $zoomIt.PrivateMemorySize64), WorkingSet64:$(Format-ByteSize $zoomIt.WorkingSet64)"
+
         $zoomIt.Dispose()
     }
 }
@@ -15119,12 +15124,13 @@ function Collect-OutlookInfo {
             # This will show the user a Save As dialog
             $err = Stop-Recording 2>&1 | Write-Log -Category Error -PassThru
 
-            if (-not $err) {
+            if ($startSuccess -and -not $err) {
+                Write-Log "Waiting for user to press enter key after saving a recording"
                 Write-Host "Please save the recording (Save As dialog should appear). Then press enter to continue:" -ForegroundColor Yellow -NoNewline
-                $null = $host.UI.ReadLine()
+                $waitResult = Wait-EnterOrControlC
             }
 
-            # If the zoomit was started above, then kill it.
+            # If zoomit was started above, then kill it.
             if ($recording.Started) {
                 $zoomIt = Get-Process -Name 'ZoomIt*' | Select-Object -First 1
 
