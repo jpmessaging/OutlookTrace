@@ -12231,18 +12231,15 @@ function Start-Recording {
         [string]$ZoomItSearchPath
     )
 
-    # OS version must be higher than Win10 1903 (Build 18362)
+    # To use ZoomIt's recording feature, OS version must be greater than Win10 1903 (Build 18362)
     $os = Get-CimInstance Win32_OperatingSystem
 
     try {
-        if ($os.Version -match '(?<Major>\d+)\.\d+\.(?<Build>\d+)') {
-            $major = $Matches.Major -as [int]
-            $build = $Matches.Build -as [int]
+        $version = [System.Version]$os.Version
 
-            if (-not ($major -ge 10 -and $build -ge 18362)) {
-                Write-Error "Windows version $($os.Version) is not supported"
-                return
-            }
+        if (-not ($version.Major -ge 10 -and $version.Build -ge 18362)) {
+            Write-Error "Windows version $($os.Version) is not supported"
+            return
         }
     }
     finally {
@@ -12252,22 +12249,18 @@ function Start-Recording {
     $zoomItExe = $null
 
     # Find the running instance of zoomit if exists and check if its version is >= 6 (Recording feature is available since version 6)
-    $running = Get-Process 'ZoomIt*' | Select-Object -First 1
+    $zoomIt = Get-Process 'ZoomIt*' | Select-Object -First 1
 
-    if ($running) {
-        $prop = Get-ItemProperty $running.Path -ErrorAction SilentlyContinue
+    if ($zoomIt) {
+        $prop = Get-ItemProperty $zoomIt.Path -ErrorAction SilentlyContinue
+        $version = [System.Version]$prop.VersionInfo.FileVersion
 
-        if ($prop.VersionInfo.FileVersion.ToString() -match '(?<Major>\d)\.') {
-            $major = $Matches.Major -as [int]
-
-            if ($major -ge 6) {
-                $zoomItExe = $running.Path
-                Write-Log "Found a running instance of $($running.Path) ($($prop.VersionInfo.FileVersion))"
-            }
+        if ($version.Major -ge 6) {
+            $zoomItExe = $zoomIt.Path
+            Write-Log "Found a running instance of $($zoomIt.Path) (version:$($prop.VersionInfo.FileVersion))"
         }
-
-        if (-not $zoomItExe) {
-            Write-Error "$($running.Name) is running, but it's version is older than 6"
+        else {
+            Write-Error "$($zoomIt.Name) is running, but its version is older than 6 (version found:$version)"
             return
         }
     }
@@ -12329,7 +12322,7 @@ function Start-Recording {
     $started = $false
 
     # If there was no running instance, start it.
-    if (-not $running) {
+    if (-not $zoomIt) {
         # Configure "OptionsShown" registry value so that zoomit's option won't be displayed.
         $zoomItPath = 'Registry::HKEY_CURRENT_USER\Software\Sysinternals\ZoomIt'
 
@@ -12344,6 +12337,7 @@ function Start-Recording {
         Write-Log "Starting $zoomItExe"
         $zoomIt = Start-Process $zoomItExe -ArgumentList '/AcceptEula' -PassThru
         $started = $true
+        Write-Log -Message "$($zoomIt.Name) (PID:$($zoomIt.Id)) has started"
 
         # Wait a little;otherwise zoomIt does not handle Ctrl+5
         # Inherent race condition here because I don't know when ZoomIt becomes ready to accept Ctrl+5. But I cannot send Ctrl+5 multiple times because it will toggle recording on/off.
@@ -12413,6 +12407,14 @@ function Stop-Recording {
 
     # Make sure zoomit is running.
     $zoomIt = Get-Process -Name 'ZoomIt*' | Select-Object -First 1
+
+    if ($zoomIt) {
+        Write-Log "$($zoomIt.Name) (PID:$($zoomIt.Id)) is found"
+    }
+    else {
+        Write-Error "Cannot find a running instance of ZoomIt"
+        return
+    }
 
     # Send Ctrl+5 to stop recording.
     try {
@@ -15065,6 +15067,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'Recording') {
+            Write-Progress -Status "Starting screen recording"
             $recording = Start-Recording -ZoomItDownloadPath (Join-Path $Path 'ZoomIt') -ZoomItSearchPath $Path -ErrorAction Stop
             $recordingStarted = $true
         }
@@ -15114,18 +15117,21 @@ function Collect-OutlookInfo {
 
         if ($Local:recordingStarted) {
             # This will show the user a Save As dialog
-            Stop-Recording
-            Write-Host "Please save the recording (Save As dialog should appear). Then press enter to continue:" -ForegroundColor Yellow -NoNewline
-            $null = $host.UI.ReadLine()
+            $err = Stop-Recording 2>&1 | Write-Log -Category Error -PassThru
 
-            # If the zoomit was started by above, then kill it.
+            if (-not $err) {
+                Write-Host "Please save the recording (Save As dialog should appear). Then press enter to continue:" -ForegroundColor Yellow -NoNewline
+                $null = $host.UI.ReadLine()
+            }
+
+            # If the zoomit was started above, then kill it.
             if ($recording.Started) {
                 $zoomIt = Get-Process -Name 'ZoomIt*' | Select-Object -First 1
 
                 if ($zoomIt) {
                     $zoomIt.Kill()
+                    Write-Log "$($zoomIt.Name) (PID:$($zoomIt.Id)) was killed"
                     $zoomIt.Dispose()
-                    Write-Log "ZoomIt instance was killed"
                 }
             }
         }
