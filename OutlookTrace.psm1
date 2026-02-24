@@ -1119,6 +1119,10 @@ function Write-Log {
             }
 
             $Message = "$Message; [ErrorRecord] $(if ($errorDetails) { "ErrorDetails:$errorDetails, " })ExceptionType:$($ErrorRecord.Exception.GetType().Name), Exception.Message:$($ErrorRecord.Exception.Message), InvocationInfo.Line:'$($ErrorRecord.InvocationInfo.Line.Trim())', ScriptStackTrace:$($ErrorRecord.ScriptStackTrace.Replace([Environment]::NewLine, ' '))"
+
+            if ($PassThru) {
+                $ErrorRecord
+            }
         }
 
         # Ignore null or an empty string.
@@ -1187,10 +1191,6 @@ function Write-Log {
 
         $sb = $null
         $Script:LastLogTime = $currentTime
-
-        if ($PassThru) {
-            $ErrorRecord
-        }
     }
 }
 
@@ -12220,6 +12220,38 @@ function Download-ZoomIt {
 
 <#
 .SYNOPSIS
+    Helper function to find a ZoomIt Executable from the given folder (including its subfolders)
+#>
+function Select-ZoomItExe {
+    [OutputType([string])]
+    param(
+       [string]$SearchPath
+    )
+
+    $zoomItExes = @(Join-Path $SearchPath 'ZoomIt*.exe' | Get-ChildItem -Recurse -ErrorAction SilentlyContinue | & {
+        process {
+            [PSCustomObject]@{
+                FullName     = $_.FullName
+                Architecture = $_ | Get-ImageInfo -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'Architecture'
+            }
+        }
+    })
+
+    # For x64, prefer ZoomIt64.exe
+    if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
+        $x64Exe = $zoomItExes | Where-Object { $_.Architecture -eq 'x64' } | Select-Object -First 1 -ExpandProperty 'FullName'
+
+        if ($x64Exe)  {
+            return $x64Exe
+        }
+    }
+
+    # Otherwise, select x86 version if any (ignore one for ARM)
+    $zoomItExes | Where-Object { $_.Architecture -eq 'x86' } | Select-Object -First 1 -ExpandProperty 'FullName'
+}
+
+<#
+.SYNOPSIS
     Start recording by using ZoomIt
 #>
 function Start-Recording {
@@ -12261,56 +12293,30 @@ function Start-Recording {
         }
         else {
             Write-Error "$($zoomIt.Name) is running, but its version is older than 6 (version found:$version)"
+            $zoomIt.Dispose()
             return
         }
     }
 
     # Next, look for zoomIt executable under the given path (including subfolders)
     if (-not $zoomItExe -and $ZoomItSearchPath) {
-        Get-ChildItem -Path (Join-Path $ZoomItSearchPath 'ZoomIt*.exe') -Recurse -ErrorAction SilentlyContinue | . {
-            process {
-                # Ignore one for ARM.
-                if ($_.Name -eq 'ZoomIt64a.exe') {
-                    return
-                }
-
-                if (-not $zoomItExe) {
-                    $zoomItExe = $_.FullName
-                }
-
-                # For x64, prefer ZoomIt64.exe
-                if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64' -and $_.Name -eq 'ZoomIt64.exe') {
-                    $zoomItExe = $_.FullName
-                }
-            }
-        }
+        $zoomItExe = Select-ZoomItExe $ZoomItSearchPath
     }
 
-    # Still not found. Try to download.
+    # If still not found, try to download.
     $downloaded = $false
 
     if (-not $zoomItExe -and $ZoomItDownloadPath) {
         Write-Log "Downloading ZoomIt"
-        Download-ZoomIt -Path $ZoomItDownloadPath
-        $downloaded = $true
+        $err = ($null = Download-ZoomIt -Path $ZoomItDownloadPath) 2>&1 | Select-Object -First 1
 
-        Get-ChildItem -Path (Join-Path $ZoomItDownloadPath 'ZoomIt*.exe') -ErrorAction SilentlyContinue | . {
-            process {
-                # Ignore one for ARM.
-                if ($_.Name -eq 'ZoomIt64a.exe') {
-                    return
-                }
-
-                if (-not $zoomItExe) {
-                    $zoomItExe = $_.FullName
-                }
-
-                # For x64, prefer ZoomIt64.exe
-                if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64' -and $_.Name -eq 'ZoomIt64.exe') {
-                    $zoomItExe = $_.FullName
-                }
-            }
+        if ($err) {
+            Write-Error -ErrorRecord $err
+            return
         }
+
+        $downloaded = $true
+        $zoomItExe = Select-ZoomItExe $ZoomItDownloadPath
     }
 
     if (-not $zoomItExe) {
@@ -12437,75 +12443,77 @@ function Stop-Recording {
 function Get-ImageInfo {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
         $Path
     )
 
-    try {
-        $stream = [System.IO.File]::OpenRead($Path)
+    process {
+        try {
+            $stream = [System.IO.File]::OpenRead($Path)
 
-        #  Bail if size is 0
-        if ($stream.Length -eq 0) {
-            Write-Error "The file size is 0"
-            return
+            #  Bail if size is 0
+            if ($stream.Length -eq 0) {
+                Write-Error "The file size is 0"
+                return
+            }
+
+            $reader = New-Object System.IO.BinaryReader $stream
+
+            # Read IMAGE_DOS_HEADER. The first 2 bytes is "MZ" (0x5a4d)
+            $magic = $reader.ReadUInt16()
+
+            if ($magic -ne 0x5a4d) {
+                Write-Error "This is not an executable image"
+                return
+            }
+
+            # Get NT header offset at 0x3c from the beginning.
+            $null = $reader.ReadBytes(0x3c - 2)
+            $offsetToNTHeader = $reader.ReadUInt32()
+
+            $reader.BaseStream.Position = $offsetToNTHeader
+
+            # Make sure the signature is 0x00004550
+            $signature = $reader.ReadUInt32()
+
+            if ($signature -ne 0x4550) {
+                Write-Error "Wrong signature for IMAGE_NT_HEADERS32"
+                return
+            }
+
+            # The first 2 bytes of IMAGE_FILE_HEADER is the machine architecture
+            # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-image_file_header
+            $machine = $reader.ReadUInt16()
+
+            $arch = switch ($machine) {
+                0x014c { 'x86'; break }
+                0x0200 { 'IA64'; break }
+                0x8664 { 'x64'; break }
+                0xaa64 { 'ARM64'; break }
+                default { 'Unknown'; break }
+            }
+
+            # Skip next 16 bytes: NumberOfSections (2 bytes), TimeDateStamp (4), PointerToSymbolTable (4), NumberOfSymbols (4), SizeOfOptionalHeader (2)
+            $null = $reader.ReadBytes(16)
+
+            $characteristics = $reader.ReadUInt16()
+
+            [PSCustomObject]@{
+                Architecture    = $arch
+                Characteristics = [Win32.IMAGE_FILE_HEADER]$characteristics
+            }
         }
-
-        $reader = New-Object System.IO.BinaryReader $stream
-
-        # Read IMAGE_DOS_HEADER. The first 2 bytes is "MZ" (0x5a4d)
-        $magic = $reader.ReadUInt16()
-
-        if ($magic -ne 0x5a4d) {
-            Write-Error "This is not an executable image"
-            return
+        catch {
+            Write-Error -ErrorRecord $_
         }
+        finally {
+            if ($reader) {
+                $reader.Close()
+            }
 
-        # Get NT header offset at 0x3c from the beginning.
-        $null = $reader.ReadBytes(0x3c - 2)
-        $offsetToNTHeader = $reader.ReadUInt32()
-
-        $reader.BaseStream.Position = $offsetToNTHeader
-
-        # Make sure the signature is 0x00004550
-        $signature = $reader.ReadUInt32()
-
-        if ($signature -ne 0x4550) {
-            Write-Error "Wrong signature for IMAGE_NT_HEADERS32"
-            return
-        }
-
-        # The first 2 bytes of IMAGE_FILE_HEADER is the machine architecture
-        # https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-image_file_header
-        $machine = $reader.ReadUInt16()
-
-        $arch = switch ($machine) {
-            0x014c { 'x86'; break }
-            0x0200 { 'IA64'; break }
-            0x8664 { 'x64'; break }
-            0xaa64 { 'ARM64'; break }
-            default { 'Unknown'; break }
-        }
-
-        # Skip next 16 bytes: NumberOfSections (2 bytes), TimeDateStamp (4), PointerToSymbolTable (4), NumberOfSymbols (4), SizeOfOptionalHeader (2)
-        $null = $reader.ReadBytes(16)
-
-        $characteristics = $reader.ReadUInt16()
-
-        [PSCustomObject]@{
-            Architecture    = $arch
-            Characteristics = [Win32.IMAGE_FILE_HEADER]$characteristics
-        }
-    }
-    catch {
-        Write-Error -ErrorRecord $_
-    }
-    finally {
-        if ($reader) {
-            $reader.Close()
-        }
-
-        if ($stream) {
-            $stream.Close()
+            if ($stream) {
+                $stream.Close()
+            }
         }
     }
 }
