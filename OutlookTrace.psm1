@@ -6248,7 +6248,7 @@ function Start-LdapTrace {
     $Path = Convert-Path -LiteralPath $Path
 
     # Process name must contain the extension such as "Outlook.exe", instead of "Outlook"
-    $TargetExecutable = [IO.Path]::ChangeExtension($TargetExecutable, 'exe')
+    $TargetExecutable = Get-ProcessNameWithExtension $TargetExecutable
 
     # Create a registry key under HKLM\SYSTEM\CurrentControlSet\Services\ldap\tracing
     $keypath = "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\ldap\tracing"
@@ -6330,7 +6330,7 @@ function Stop-LdapTrace {
 
     if ($TargetExecutable) {
         # Process name must contain the extension such as "outlook.exe", instead of "outlook"
-        $TargetExecutable = [IO.Path]::ChangeExtension($TargetExecutable, 'exe')
+        $TargetExecutable = Get-ProcessNameWithExtension $TargetExecutable
 
         $targetPath = Join-Path $tracingKey -ChildPath $TargetExecutable
     }
@@ -7760,7 +7760,7 @@ function Start-TTDMonitor {
     $Path = Convert-Path -LiteralPath $Path
 
     # Make sure extension is ".exe"
-    $ExecutableName = [IO.Path]::ChangeExtension($ExecutableName, 'exe')
+    $ExecutableName = Get-ProcessNameWithExtension $ExecutableName
 
     foreach ($module in $Modules) {
         if (-not [IO.Path]::GetExtension($module)) {
@@ -8318,7 +8318,7 @@ function Add-WerDumpKey {
         }
 
         if ($TargetProcess) {
-            $TargetProcess = [IO.Path]::ChangeExtension($TargetProcess, 'exe')
+            $TargetProcess = Get-ProcessNameWithExtension $TargetProcess
 
             # Create a ProcessName key under LocalDumps, if it doesn't exist.
             $targetKey = Join-Path $localDumpsKey $TargetProcess
@@ -8399,7 +8399,8 @@ function Remove-WerDumpKey {
         }
 
         if ($TargetProcess) {
-            $TargetProcess = [IO.Path]::ChangeExtension($TargetProcess, 'exe')
+            $TargetProcess = Get-ProcessNameWithExtension $TargetProcess
+
             $targetKey = Join-Path $localDumpsKey $TargetProcess
             Write-Log "Removing $targetKey"
             Remove-Item $targetKey
@@ -8527,7 +8528,7 @@ function Enable-PageHeap {
         return
     }
 
-    $ProcessName = [IO.Path]::ChangeExtension($ProcessName, 'exe')
+    $ProcessName = Get-ProcessNameWithExtension $ProcessName
 
     Disable-PageHeap -ProcessName $ProcessName -ErrorAction SilentlyContinue
 
@@ -8569,7 +8570,7 @@ function Disable-PageHeap {
         return
     }
 
-    $ProcessName = [IO.Path]::ChangeExtension($ProcessName, 'exe')
+    $ProcessName = Get-ProcessNameWithExtension $ProcessName
 
     $IFEO = 'Registry::HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
     $imageKeyPath = Join-Path $IFEO $ProcessName
@@ -10445,7 +10446,7 @@ function Start-HangMonitor {
     )
 
     # Remove the extension ".exe" if exits.
-    $Name = [IO.Path]::GetFileNameWithoutExtension($Name)
+    $Name = Get-ProcessNameWithoutExtension $Name
 
     if (-not $User.Sid) {
         $User = Resolve-User $User
@@ -12225,23 +12226,25 @@ function Download-ZoomIt {
 function Select-ZoomItExe {
     [OutputType([string])]
     param(
-       [string]$SearchPath
+        [string]$SearchPath
     )
 
-    $zoomItExes = @(Join-Path $SearchPath 'ZoomIt*.exe' | Get-ChildItem -Recurse -ErrorAction SilentlyContinue | & {
-        process {
-            [PSCustomObject]@{
-                FullName     = $_.FullName
-                Architecture = $_ | Get-ImageInfo -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'Architecture'
+    $zoomItExes = @(
+        Join-Path $SearchPath 'ZoomIt*.exe' | Get-ChildItem -Recurse -ErrorAction SilentlyContinue | & {
+            process {
+                [PSCustomObject]@{
+                    FullName     = $_.FullName
+                    Architecture = $_ | Get-ImageInfo -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'Architecture'
+                }
             }
         }
-    })
+    )
 
-    # For x64, prefer ZoomIt64.exe
+    # For x64, prefer 64-bit version of ZoomIt (ZoomIt64.exe)
     if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
         $x64Exe = $zoomItExes | Where-Object { $_.Architecture -eq 'x64' } | Select-Object -First 1 -ExpandProperty 'FullName'
 
-        if ($x64Exe)  {
+        if ($x64Exe) {
             return $x64Exe
         }
     }
@@ -13306,7 +13309,7 @@ function Get-WebView2Flags {
         return
     }
 
-    $ExecutableName = [IO.Path]::ChangeExtension($ExecutableName, 'exe')
+    $ExecutableName = Get-ProcessNameWithExtension $ExecutableName
 
     $keyPath = Join-Path $userRegRoot 'SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
     $flags = @{}
@@ -14174,6 +14177,42 @@ function ConvertFrom-ArgumentList {
 
 <#
 .SYNOPSIS
+    Helper function to add the given extension (default is ".exe") to the name
+#>
+function Get-ProcessNameWithExtension {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [string]$Name,
+        [string]$Extension = '.exe'
+    )
+
+    if ($Name.EndsWith($Extension)) {
+        $Name
+    }
+    else {
+        $Name + $Extension
+    }
+}
+
+function Get-ProcessNameWithoutExtension {
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [string]$Name,
+        [string]$Extension = '.exe'
+    )
+
+    if ($Name.EndsWith($Extension)) {
+        [IO.Path]::GetFileNameWithoutExtension($Name)
+    }
+    else {
+        $Name
+    }
+}
+
+<#
+.SYNOPSIS
     Helper function to select a single process instance (owner is also checked when User parameter is given)
     If there are multipile processes, ask the user.
 #>
@@ -14187,7 +14226,8 @@ function Get-SingleProcess {
         [string]$CommandLineFilter
     )
 
-    $processName = [IO.Path]::ChangeExtension($Name, 'exe')
+    # Do not use [IO.Path]::ChangeExtension() here. Name could be like "aaa.bbb" or "aaa.bbb.exe".
+    $processName = Get-ProcessNameWithExtension $Name
 
     $win32Processes = @(Get-CimInstance Win32_Process -Filter "Name = '$processName'" | & {
             param([Parameter(ValueFromPipeline)]$win32Proc)
@@ -14578,7 +14618,8 @@ function Collect-OutlookInfo {
         }
     }
     elseif ($TargetProcessName) {
-        [IO.Path]::GetFileNameWithoutExtension($TargetProcessName)
+        # Keep the name without extension in case the user provides something like "aaa.bbb.exe" (just keep "aaa.bbb")
+        Get-ProcessNameWithoutExtension $TargetProcessName
     }
     else {
         if ($Component -contains 'NewOutlook') {
