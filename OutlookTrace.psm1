@@ -8299,7 +8299,7 @@ function Add-WerDumpKey {
 
         $localDumpsKey = Join-Path $werKey 'LocalDumps'
 
-        # Remove global DumpCount if exits (If this is set to 0, no dumps generated)
+        # Remove global DumpCount if exists (If this is set to 0, no dumps generated)
         $DumpCount = 'DumpCount'
         $globalDumpCount = Get-ItemProperty $localDumpsKey -Name $DumpCount -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $DumpCount
 
@@ -10445,7 +10445,7 @@ function Start-HangMonitor {
         [switch]$SkipWow64Check
     )
 
-    # Remove the extension ".exe" if exits.
+    # Remove the extension ".exe" if exists.
     $Name = Get-ProcessNameWithoutExtension $Name
 
     if (-not $User.Sid) {
@@ -11648,7 +11648,7 @@ function Get-RegistryChildItem {
             Properties = $props
         }
 
-        # Connect to its parent if exits; otherwise this is the root.
+        # Connect to its parent if exists; otherwise this is the root.
         if ($parent) {
             $(Add-Member -InputObject $parent -MemberType NoteProperty -Name $key.PSChildName -Value $obj) 2>&1 | Write-Log
         }
@@ -14177,7 +14177,8 @@ function ConvertFrom-ArgumentList {
 
 <#
 .SYNOPSIS
-    Helper function to add the given extension (default is ".exe") to the name
+    Helper function to add the given extension (default is ".exe") to the name if it does not have it already.
+    No op when the name has the extension already.
 #>
 function Get-ProcessNameWithExtension {
     [CmdletBinding(PositionalBinding = $false)]
@@ -14195,6 +14196,11 @@ function Get-ProcessNameWithExtension {
     }
 }
 
+<#
+.SYNOPSIS
+    Helper function to remove the given extension (default is ".exe") from the name.
+    No op when the name does not have the exension.
+#>
 function Get-ProcessNameWithoutExtension {
     [CmdletBinding(PositionalBinding = $false)]
     param(
