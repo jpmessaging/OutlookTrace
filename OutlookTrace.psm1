@@ -14183,16 +14183,18 @@ function ConvertFrom-ArgumentList {
 function Get-ProcessNameWithExtension {
     [CmdletBinding(PositionalBinding = $false)]
     param(
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Mandatory, ValueFromPipeline, Position = 0)]
         [string]$Name,
         [string]$Extension = '.exe'
     )
 
-    if ($Name.EndsWith($Extension)) {
-        $Name
-    }
-    else {
-        $Name + $Extension
+    process {
+        if ($Name.EndsWith($Extension)) {
+            $Name
+        }
+        else {
+            $Name + $Extension
+        }
     }
 }
 
@@ -14204,16 +14206,18 @@ function Get-ProcessNameWithExtension {
 function Get-ProcessNameWithoutExtension {
     [CmdletBinding(PositionalBinding = $false)]
     param(
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Mandatory, ValueFromPipeline, Position = 0)]
         [string]$Name,
         [string]$Extension = '.exe'
     )
 
-    if ($Name.EndsWith($Extension)) {
-        [IO.Path]::GetFileNameWithoutExtension($Name)
-    }
-    else {
-        $Name
+    process {
+        if ($Name.EndsWith($Extension)) {
+            [IO.Path]::GetFileNameWithoutExtension($Name)
+        }
+        else {
+            $Name
+        }
     }
 }
 
