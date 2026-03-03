@@ -14592,27 +14592,6 @@ function Collect-OutlookInfo {
         $null = New-Item -ItemType Directory $Path -ErrorAction Stop
     }
 
-    # Create a temporary folder to store data.
-    $Path = Convert-Path -LiteralPath $Path
-    $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
-    $null = New-Item $tempPath -ItemType directory -ErrorAction Stop
-
-    # Start logging.
-    Open-Log -Path (Join-Path $tempPath 'Log.csv') -WithBOM -AutoFlush:$AutoFlush -ErrorAction Stop
-    Write-Log "Script Version:$Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString())); PID:$pid"
-    Write-Log "PSVersion:$($PSVersionTable.PSVersion); CLRVersion:$($PSVersionTable.CLRVersion)"
-    Write-Log "PROCESSOR_ARCHITECTURE:$env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432:$env:PROCESSOR_ARCHITEW6432"
-    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin:$runAsAdmin; DebugPrivilegeEnabled:$debugPrivilegeEnabled"
-    Write-Log "Target user:$($targetUser.Name) ($($targetUser.Sid))"
-    Write-Log "AutoUpdate:$(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
-
-    $invocation = Get-CommandExpression -Invocation $MyInvocation
-    Write-Log "Invocation:$invocation"
-
-    if ($runAsAdmin -and -not $debugPrivilegeEnabled) {
-        Write-Log -Message "Running as admin, but failed to enable Debug Privilege. $debugPrivilegeError" -ErrorRecord $debugPrivilegeError -Category Error
-    }
-
     # Determine TargetProcessName (must be without extension)
     $TargetProcessName = if ($TargetProcessId) {
         # If TargetProcessId is given, use it (Bail if the process with the given PID is not found)
@@ -14641,6 +14620,27 @@ function Collect-OutlookInfo {
     }
 
     Write-Log "TargetProcessName: $TargetProcessName"
+
+    # Create a temporary folder to store data.
+    $Path = Convert-Path -LiteralPath $Path
+    $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
+    $null = New-Item $tempPath -ItemType directory -ErrorAction Stop
+
+    # Start logging.
+    Open-Log -Path (Join-Path $tempPath 'Log.csv') -WithBOM -AutoFlush:$AutoFlush -ErrorAction Stop
+    Write-Log "Script Version:$Script:Version (Module Version $($MyInvocation.MyCommand.Module.Version.ToString())); PID:$pid"
+    Write-Log "PSVersion:$($PSVersionTable.PSVersion); CLRVersion:$($PSVersionTable.CLRVersion)"
+    Write-Log "PROCESSOR_ARCHITECTURE:$env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432:$env:PROCESSOR_ARCHITEW6432"
+    Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin:$runAsAdmin; DebugPrivilegeEnabled:$debugPrivilegeEnabled"
+    Write-Log "Target user:$($targetUser.Name) ($($targetUser.Sid))"
+    Write-Log "AutoUpdate:$(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
+
+    $invocation = Get-CommandExpression -Invocation $MyInvocation
+    Write-Log "Invocation:$invocation"
+
+    if ($runAsAdmin -and -not $debugPrivilegeEnabled) {
+        Write-Log -Message "Running as admin, but failed to enable Debug Privilege. $debugPrivilegeError" -ErrorRecord $debugPrivilegeError -Category Error
+    }
 
     $ScriptInfo = [PSCustomObject]@{
         Version    = $Script:Version
