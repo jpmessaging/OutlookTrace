@@ -10432,10 +10432,12 @@ function Start-HangMonitor {
         [Parameter(Mandatory)]
         # Destination folder path
         [string]$Path,
-        [Parameter(Mandatory)]
+        [Parameter(ParameterSetName = 'ById', Mandatory)]
+        [int]$Id,
+        [Parameter(ParameterSetName = 'ByName', Mandatory)]
         # Name of the target process (e.g. "Outlook")
         [string]$Name,
-        [Parameter(Mandatory)]
+        [Parameter(ParameterSetName = 'ByName', Mandatory)]
         # Owner of the target process
         $User,
         [TimeSpan]$Timeout,
@@ -10445,19 +10447,23 @@ function Start-HangMonitor {
         [switch]$SkipWow64Check
     )
 
-    # Remove the extension ".exe" if exists.
-    $Name = Get-ProcessNameWithoutExtension $Name
+    if ($PSCmdlet.ParameterSetName -eq 'ByName') {
+        $Name = Get-ProcessNameWithExtension $Name
 
-    if (-not $User.Sid) {
-        $User = Resolve-User $User
+        if (-not $User.Sid) {
+            $User = Resolve-User $User
 
-        if (-not $User) {
-            return
+            if (-not $User) {
+                return
+            }
         }
     }
 
     if ($StartedEvent) {
         $null = $StartedEvent.Set()
+    }
+    else {
+        Write-Log "StartedEvent is missing"
     }
 
     # Key:Process Hash, Value:true/false for "need to log".
@@ -10466,69 +10472,93 @@ function Start-HangMonitor {
 
     # The target process may restart while being monitored. Keep monitoring until canceled (via CancellationToken).
     while ($true) {
-        # Wait for the target process ($Name) to come live.
-        while ($true) {
-            if ($CancellationToken.IsCancellationRequested) {
+        if ($CancellationToken.IsCancellationRequested) {
+            return
+        }
+
+        # When (process) ID is given, it's simple; just find the one.
+        if ($PSBoundParameters.ContainsKey('Id')) {
+            $win32Process = Get-CimInstance 'Win32_Process' -Filter "ProcessId = $Id"
+
+            if (-not $win32Process) {
+                Write-Error "Cannot find the process with PID:($Id)"
                 return
             }
 
-            # Find the target processes run by the specified user (There could be multiple process instances)
-            $targetList = @(
-                Get-CimInstance 'Win32_Process' -Filter "Name = '$Name.exe'" | & {
-                    param([Parameter(ValueFromPipeline)]$win32Process)
-                    process {
-                        try {
-                            # Don't use GetHashCode() because it changes for the same process in each iteration.
-                            $key = $win32Process | Get-ProcessHash
+            $target = [PSCustomObject]@{
+                Id           = $win32Process.ProcessId
+                Name         = $win32Process.Name
+                CreationDate = $win32Process.CreationDate
+            }
 
-                            if ($procCache.ContainsKey($key)) {
-                                if ($procCache[$key]) {
-                                    Write-Log "This instance of $($win32Process.Name) (PID:$($win32Process.ProcessId), CreationDate:$($win32Process.CreationDate)) has been seen already. This instance will be not be monitored"
-                                    $procCache[$key] = $false
+            $win32Process.Dispose()
+        }
+        else {
+            # Wait for the target process ($Name) to come live.
+            while ($true) {
+                if ($CancellationToken.IsCancellationRequested) {
+                    return
+                }
+
+                # Find the target processes run by the specified user (There could be multiple process instances)
+                $targetList = @(
+                    Get-CimInstance 'Win32_Process' -Filter "Name = '$Name'" | & {
+                        param([Parameter(ValueFromPipeline)]$win32Process)
+                        process {
+                            try {
+                                # Don't use GetHashCode() because it changes for the same process in each iteration.
+                                $key = $win32Process | Get-ProcessHash
+
+                                if ($procCache.ContainsKey($key)) {
+                                    if ($procCache[$key]) {
+                                        Write-Log "This instance of $($win32Process.Name) (PID:$($win32Process.ProcessId), CreationDate:$($win32Process.CreationDate)) has been seen already. This instance will be not be monitored"
+                                        $procCache[$key] = $false
+                                    }
+
+                                    return
                                 }
 
-                                return
+                                # Check if the owner matches the User
+                                $owner = $win32Process | Get-ProcessOwner
+
+                                if ($owner -and $owner.Sid -ne $User.Sid) {
+                                    Write-Log "This instance of $($win32Process.Name) (PID:$($win32Process.ProcessId)) has owner '$owner', and it is different from the target user '$User'. This instance will be not be monitored"
+                                    $procCache.Add($key, $false)
+                                    return
+                                }
+
+                                # Found a target process
+                                $procCache.Add($key, $true)
+
+                                [PSCustomObject]@{
+                                    Id           = $win32Process.ProcessId
+                                    Name         = $win32Process.Name
+                                    CreationDate = $win32Process.CreationDate
+                                }
                             }
-
-                            # Check if the owner matches the User
-                            $owner = $win32Process | Get-ProcessOwner
-
-                            if ($owner -and $owner.Sid -ne $User.Sid) {
-                                Write-Log "This instance of $($win32Process.Name) (PID:$($win32Process.ProcessId)) has owner '$owner', and it is different from the target user '$User'. This instance will be not be monitored"
-                                $procCache.Add($key, $false)
-                                return
+                            finally {
+                                $win32Process.Dispose()
                             }
-
-                            # Found a target process
-                            $procCache.Add($key, $true)
-
-                            [PSCustomObject]@{
-                                Id           = $win32Process.ProcessId
-                                CreationDate = $win32Process.CreationDate
-                            }
-                        }
-                        finally {
-                            $win32Process.Dispose()
                         }
                     }
+                )
+
+                # If there are multiple processes available, pick the one that started earliest.
+                $target = $targetList | Sort-Object CreationDate | Select-Object -First 1
+
+                if ($targetList.Count -gt 1) {
+                    Write-Log "There are $($targetList.Count) instances of $Name found"
                 }
-            )
 
-            # If there are multiple processes available, pick the one that started earliest.
-            $target = $targetList | Sort-Object CreationDate | Select-Object -First 1
+                if ($target) {
+                    break
+                }
 
-            if ($targetList.Count -gt 1) {
-                Write-Log "There are $($targetList.Count) instances of $Name found"
+                Start-Sleep -Seconds $interval.TotalSeconds
             }
-
-            if ($target) {
-                break
-            }
-
-            Start-Sleep -Seconds $interval.TotalSeconds
         }
 
-        Write-Log "Found $Name (PID:$($target.Id), CreationDate:$($target.CreationDate.ToString('o'))). Starting hang window monitoring"
+        Write-Log "Found $($target.Name) (PID:$($target.Id), CreationDate:$($target.CreationDate.ToString('o'))). Starting hang window monitoring"
 
         $hangDumpArgs = @{
             Path           = $Path
@@ -14595,10 +14625,10 @@ function Collect-OutlookInfo {
     # Determine TargetProcessName (must be without extension)
     $TargetProcessName = if ($TargetProcessId) {
         # If TargetProcessId is given, use it (Bail if the process with the given PID is not found)
-        $proc = Get-Process -Id $TargetProcessId -ErrorAction SilentlyContinue
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $TargetProcessId"
 
         if ($proc) {
-            $proc.Name
+            $proc.Name | Get-ProcessNameWithoutExtension
             $proc.Dispose()
         }
         else {
@@ -14619,8 +14649,6 @@ function Collect-OutlookInfo {
         }
     }
 
-    Write-Log "TargetProcessName: $TargetProcessName"
-
     # Create a temporary folder to store data.
     $Path = Convert-Path -LiteralPath $Path
     $tempPath = Join-Path $Path -ChildPath $([Guid]::NewGuid().ToString())
@@ -14633,6 +14661,7 @@ function Collect-OutlookInfo {
     Write-Log "PROCESSOR_ARCHITECTURE:$env:PROCESSOR_ARCHITECTURE; PROCESSOR_ARCHITEW6432:$env:PROCESSOR_ARCHITEW6432"
     Write-Log "Running as $($currentUser.Name) ($($currentUser.Sid)); RunningAsAdmin:$runAsAdmin; DebugPrivilegeEnabled:$debugPrivilegeEnabled"
     Write-Log "Target user:$($targetUser.Name) ($($targetUser.Sid))"
+    Write-Log "TargetProcessName: $TargetProcessName"
     Write-Log "AutoUpdate:$(if ($SkipAutoUpdate) { 'Skipped due to SkipAutoUpdate switch' } else { $autoUpdate.Message })"
 
     $invocation = Get-CommandExpression -Invocation $MyInvocation
@@ -14991,7 +15020,25 @@ function Collect-OutlookInfo {
                     break
                 }
 
-                $process = Get-SingleProcess -Name $TargetProcessName -User $targetUser
+                $process = if ($TargetProcessId) {
+                    $win32Proc = Get-CimInstance Win32_Process -Filter "ProcessId = $TargetProcessId"
+
+                    if (-not $win32Proc) {
+                        Write-Error -Message "Canont find target process with PID $TargetProcessId"
+                        return
+                    }
+
+                    [PSCustomObject]@{
+                        Id          = $win32Proc.ProcessId
+                        Name        = $win32Proc.Name
+                        CommandLine = $win32Proc.CommandLine
+                    }
+
+                    $win32Proc.Dispose()
+                }
+                else {
+                    Get-SingleProcess -Name $TargetProcessName -User $targetUser
+                }
 
                 if (-not $process) {
                     Write-Host "Cannot find $TargetProcessName. Please start $TargetProcessName" -ForegroundColor Yellow
@@ -15024,8 +15071,6 @@ function Collect-OutlookInfo {
 
             $hangMonitorArgs = @{
                 Path              = Join-Path $tempPath 'HangDump'
-                Name              = $TargetProcessName
-                User              = $targetUser
                 Timeout           = $HangTimeout
                 DumpCount         = $MaxHangDumpCount
                 CancellationToken = $hangDumpCts.Token
@@ -15033,8 +15078,18 @@ function Collect-OutlookInfo {
                 SkipWow64Check    = $SkipWow64Check
             }
 
-            Write-Log "Starting hangMonitorTask. TargetProcessName:$($hangMonitorArgs.Name), HangTimeout:$($hangMonitorArgs.Timeout), User:$targetUser"
-            $hangMonitorTask = Start-Task -Name 'HangMonitorTask' -ScriptBlock { param($Path, $Name, $User, $Timeout, $DumpCount, $CancellationToken, $StartedEvent, $SkipWow64Check) Start-HangMonitor @PSBoundParameters } -ArgumentList $hangMonitorArgs
+            if ($TargetProcessId) {
+                $hangMonitorArgs.Id = $TargetProcessId
+                Write-Log "Starting hangMonitorTask. TargetProcessId:$($hangMonitorArgs.Id), HangTimeout:$($hangMonitorArgs.Timeout)"
+                $hangMonitorTask = Start-Task -Name 'HangMonitorTask' -ScriptBlock { param($Path, $Id, $Timeout, $DumpCount, $CancellationToken, $StartedEvent, $SkipWow64Check) Start-HangMonitor @PSBoundParameters } -ArgumentList $hangMonitorArgs
+            }
+            else {
+                $hangMonitorArgs.Name = $TargetProcessName
+                $hangMonitorArgs.User = $targetUser
+                Write-Log "Starting hangMonitorTask. TargetProcessName:$($hangMonitorArgs.Name), HangTimeout:$($hangMonitorArgs.Timeout), User:$targetUser"
+                $hangMonitorTask = Start-Task -Name 'HangMonitorTask' -ScriptBlock { param($Path, $Name, $User, $Timeout, $DumpCount, $CancellationToken, $StartedEvent, $SkipWow64Check) Start-HangMonitor @PSBoundParameters } -ArgumentList $hangMonitorArgs
+            }
+
             $hangDumpStarted = $true
         }
 
@@ -15061,20 +15116,20 @@ function Collect-OutlookInfo {
 
             if ($TargetProcessId) {
                 # If TargetProcessId is given, use it (Bail if not found).
-                $wi32_proc = Get-CimInstance Win32_Process -Filter "ProcessId = $TargetProcessId"
+                $win32Proc = Get-CimInstance Win32_Process -Filter "ProcessId = $TargetProcessId"
 
-                if (-not $wi32_proc) {
+                if (-not $win32Proc) {
                     Write-Error -Message "Canont find target process with PID $TargetProcessId"
                     return
                 }
 
                 $process = [PSCustomObject]@{
-                    Id          = $wi32_proc.ProcessId
-                    Name        = $wi32_proc.Name
-                    CommandLine = $wi32_proc.CommandLine
+                    Id          = $win32Proc.ProcessId
+                    Name        = $win32Proc.Name
+                    CommandLine = $win32Proc.CommandLine
                 }
 
-                $wi32_proc.Dispose()
+                $win32Proc.Dispose()
             }
             else {
                 $process = Get-SingleProcess -Name $TargetProcessName -User $targetUser -CommandLineFilter $TTDCommandlineFilter
