@@ -22,7 +22,7 @@ Note on logman provider file:
 - If a line includes "<provider>" (with double-quotations), then anything before the first " will be skipped.
   e.g. In the following line, "foo bar " part will be skipped.
   foo bar "{9efff48f-728d-45a1-8001-536349a2db37}"" 0xFFFFFFFFFFFFFFFF 64
-- A line is tokenized by a space or horizontal tab (\t). 
+- A line is tokenized by a space or horizontal tab (\t).
 - At most 3 tokens are extracted (provider, flags, level). Anything after is ignored.
 #>
 # Outlook's ETW providers
@@ -15172,6 +15172,7 @@ function Collect-OutlookInfo {
                 $err = $($ttdProcess = Receive-Task -Task $attachTask -AutoRemoveTask -SkipFormatError) 2>&1
 
                 if ($err) {
+                    Write-Log -Message "Failed to attach TTD. $err" -ErrorRecord $err -Category Error
                     Write-Error -Message "Failed to attach TTD. $err" -Exception $err.Exception
                     return
                 }
