@@ -3311,7 +3311,7 @@ function Save-EventLog {
         foreach ($log in $logs) {
             $fileName = $log.Replace('/', '_') + '.evtx'
             $filePath = Join-Path $Path -ChildPath $fileName
-            Write-Log "Saving $log to $filePath"
+            Write-Log "Saving '$log' to $filePath"
 
             Start-Task -Name 'EventLogExportTask' -ScriptBlock {
                 param ($Log, $FilePath)
@@ -3708,7 +3708,7 @@ function Save-OfficeRegistry {
             }) 2>&1
 
         if ($null -eq $queryResult) {
-            Write-Log "$key does not exist"
+            Write-Log "'$key' does not exist"
             continue;
         }
 
@@ -3724,7 +3724,7 @@ function Save-OfficeRegistry {
             Remove-Item $filePath -Force
         }
 
-        Write-Log "Saving $key to $filePath"
+        Write-Log "Saving '$key' to $filePath"
         $err = $(Invoke-Command {
                 $ErrorActionPreference = 'Continue'
                 $null = & $regexe export $key $filePath
@@ -6396,7 +6396,7 @@ function Get-OfficeModuleInfo {
         }
     ) | Select-Object -Unique
 
-    Write-Log "officePaths are $($officePaths -join ',')"
+    # Write-Log "officePaths:$(($officePaths | & { process { "'$_'" } }) -join ', ')"
 
     # Get exe and dll
     # It's slightly faster to run gci twice with -Filter than running once with -Include *exe, *.dll
@@ -8203,18 +8203,20 @@ function Get-OfficeInfo {
     $displayName = $version = $installPath = $null
 
     if ($officeInstallations.Count -gt 0) {
-        # There might be more than one version of Office installed.
+        # There might be more than one version of Office installed (multiple languages, for example).
         # Use the latest
         $latestOffice = $officeInstallations | Sort-Object -Property { [System.Version]$_.Version } -Descending | Select-Object -First 1
         $displayName = $latestOffice.DisplayName
         $version = $latestOffice.Version
         $installPath = $latestOffice.Location
 
+        # Just for logging
         if ($officeInstallations.Count -gt 1) {
-            Write-Log "Multiple Office installations found:"
+            Write-Log "Multiple ($($officeInstallations.Count)) Office installations found. Selected '$displayName' ($version):"
 
-            foreach ($office in $officeInstallations) {
-                Write-Log "$($office.DisplayName), Version: $($office.Version), InstallPath: $($office.Location)"
+            for ($i = 0; $i -lt $officeInstallations.Count; ++$i) {
+                $office = $officeInstallations[$i]
+                Write-Log "$($i + 1). '$($office.DisplayName)', Version:$($office.Version), InstallPath:'$($office.Location)'"
             }
         }
     }
