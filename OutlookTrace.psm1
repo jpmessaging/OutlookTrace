@@ -14513,6 +14513,8 @@ function Collect-OutlookInfo {
         [string[]]$TTDModules,
         # Switch to show TTD UI
         [switch]$TTDShowUI,
+        # Switch to allow attaching TTD to a process for which TTD was previously collected.
+        [switch]$TTDAllowReattach,
         [ValidateSet('GeneralProfile', 'CPU', 'DiskIO', 'FileIO', 'Registry', 'Network', 'Heap', 'Pool', 'VirtualAllocation', 'Audio', 'Video', 'Power', 'InternetExplorer', 'EdgeBrowser', 'Minifilter', 'GPU', 'Handle', 'XAMLActivity', 'HTMLActivity', 'DesktopComposition', 'XAMLAppResponsiveness', 'HTMLResponsiveness', 'ReferenceSet', 'ResidentSet', 'XAMLHTMLAppMemoryAnalysis', 'UTC', 'DotNET', 'WdfTraceLoggingProvider', 'HeapSnapshot')]
         # WPR profiles
         [string[]]$WprProfiles = @('GeneralProfile', 'CPU', 'DiskIO', 'FileIO', 'Registry', 'Network'),
@@ -15154,9 +15156,7 @@ function Collect-OutlookInfo {
                 Write-Log $logMsg
 
                 $ttdArgs.ProcessId = $process.Id
-
-                # Reattach is disabled for now (Consider exposing this as a parameter if necessary)
-                $ttdArgs.NoReattach = $true
+                $ttdArgs.NoReattach = -not $TTDAllowReattach
 
                 # Attach TTD with a background task and asynchronously wait
                 $attachTask = Start-Task -Name 'AttachTTD' -ScriptBlock { param($TTDPath, $Path, $ProcessID, $Modules, $ShowUI, $NoReattach) Attach-TTD @PSBoundParameters } -ArgumentList $ttdArgs
@@ -15284,7 +15284,7 @@ function Collect-OutlookInfo {
             # Stopping or detaching TTD might fail if TTD.exe died during tracing. In this case, ask the user to shutdown Outlook (or whatever TargetProcess is) manually so that trace file is fully written.
             if ($err) {
                 $targetProcs = @(Get-Process -Name $ttdProcess.TargetProcessName -ErrorAction SilentlyContinue | `
-                        Where-Object { $_.Modules | Where-Object { $_.ModuleName -match 'TTDRecordCPU' } })
+                        Where-Object { $_.Modules | Where-Object { $_.ModuleName -eq 'TTDRecordCPU.dll' } | Select-Object -First 1 })
 
                 if ($targetProcs.Count) {
                     Write-Host "Please shutdown $($targetProcs[0].Name) (PID:$($targetProcs.Id -join ','))" -ForegroundColor Yellow

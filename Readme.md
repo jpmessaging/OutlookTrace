@@ -198,6 +198,7 @@ If you captured a Fiddler trace, send the password used in step 10 too.
 | TTDCommandlineFilter   | Command line filter for TTD monitor                                                                                                            |
 | TTDModules             | Restrict TTD trace to specified modules                                                                                                        |
 | TTDShowUI              | Switch to show TTD UI                                                                                                                          |
+| TTDAllowReattach       | Switch to allow attaching TTD to a process for which TTD was previously collected                                                              |
 | WprProfiles            | WPR profiles to capture (Default: `GeneralProfile`, `CPU`, `DiskIO`, `FileIO`, `Registry`, `Network`)                                          |
 | RemoveIdentityCache    | Switch to remove cached identites & authentication tokens                                                                                      |
 | SkipLoopbackExempt     | Switch to skip adding Microsoft.AAD.BrokerPlugin to LoopbackExempt                                                                             |
