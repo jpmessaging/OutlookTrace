@@ -11496,7 +11496,7 @@ function Invoke-RequestToken {
             $SMTO_ABORTIFHUNG = 2
             $Timeout = [TimeSpan]::FromSeconds(5)
             $result = [IntPtr]::Zero
-            $ret = [Win32.User32]::SendMessageTimeoutW($hWnd, $WM_DESTROY, [IntPtr]::Zero, [IntPtr]::Zero, $SMTO_ABORTIFHUNG, $Timeout.TotalMilliseconds, [ref]$result)
+            $ret = [Win32.User32]::SendMessageTimeoutW($hwnd, $WM_DESTROY, [IntPtr]::Zero, [IntPtr]::Zero, $SMTO_ABORTIFHUNG, $Timeout.TotalMilliseconds, [ref]$result)
 
             # > If the function succeeds, the return value is nonzero.
             if ($ret -ne 0) {
