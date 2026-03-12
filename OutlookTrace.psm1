@@ -1077,7 +1077,8 @@ namespace Win32
         ERROR_ARENA_TRASHED,
         ERROR_NOT_ENOUGH_MEMORY,
         ERROR_MOD_NOT_FOUND = 126,
-        ERROR_MORE_DATA = 234
+        ERROR_MORE_DATA = 234,
+        ERROR_NOT_FOUND = 1168
     }
 }
 '@
@@ -1889,9 +1890,8 @@ function Get-StoredCredential {
 
     if (-not $success) {
         $ec = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-        $ERROR_NOT_FOUND = 1168
 
-        if ($ec -eq $ERROR_NOT_FOUND) {
+        if ($ec -eq [Win32.Error]::ERROR_NOT_FOUND) {
             # No credentials found.
             return
         }
