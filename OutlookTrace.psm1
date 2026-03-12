@@ -1866,7 +1866,9 @@ function Get-StoredCredential {
         [string]$Filter,
         [Parameter(ParameterSetName = 'NoFilter')]
         # Switch to get extra credential entry using "CRED_ENUMERATE_ALL_CREDENTIALS" flag (Cannot be used together with Filter parameter)
-        [switch]$All
+        [switch]$All,
+        # Include crendential in the output as Base64 string
+        [switch]$IncludeCredential
     )
 
     $count = 0
@@ -1908,11 +1910,29 @@ function Get-StoredCredential {
         $pCred = [System.Runtime.Interopservices.Marshal]::ReadIntPtr($pCreds, $i * [IntPtr]::Size)
         $cred = [System.Runtime.InteropServices.Marshal]::PtrToStructure($pCred, [Type][Win32.Advapi32+CREDENTIALW])
 
-        [PSCustomObject]@{
+        $output = [ordered]@{
             Type       = $cred.Type
             TargetName = $cred.TargetName
             UserName   = $cred.UserName
         }
+
+        if ($IncludeCredential) {
+            $output.CredentialBlob = $null
+
+            if ($cred.CredentialBlob -ne [IntPtr]::Zero) {
+                $bytes = [System.Array]::CreateInstance([byte], $cred.CredentialBlobSize)
+                [System.Runtime.InteropServices.Marshal]::Copy(<# source #>$cred.CredentialBlob, <# destination #>$bytes, <# startIndex #>0, <# length #>$cred.CredentialBlobSize)
+                $output.CredentialBlob = [convert]::ToBase64String($bytes)
+
+                # If an ANSI string is assumed:
+                # $blob = [System.Runtime.InteropServices.Marshal]::PtrToStringAnsi($cred.CredentialBlob, $cred.CredentialBlobSize)
+
+                # If a UTF-16 string is assumed:
+                # $blob = [System.Runtime.InteropServices.Marshal]::PtrToStringUni($cred.CredentialBlob, <# cch #> $cred.CredentialBlobSize / 2)
+            }
+        }
+
+        [PSCustomObject]$output
     }
 
     [Win32.Advapi32]::CredFree($pCreds)
