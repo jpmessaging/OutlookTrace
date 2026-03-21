@@ -12225,9 +12225,17 @@ function Set-ThreadCulture {
         [System.Threading.Thread]::CurrentThread.CurrentCulture = $newCulture
         [System.Threading.Thread]::CurrentThread.CurrentUICulture = $newCulture
 
-        # Changing CurrentThread.CurrentCulture & CurrentUICulture is not enough. NativeCultureResolver.m_Culture & m_uiCulture must be also changed.
-        [System.Reflection.Assembly]::Load('System.Management.Automation').GetType('Microsoft.PowerShell.NativeCultureResolver').GetField('m_Culture', 'NonPublic, Static').SetValue($null, $newCulture)
-        [System.Reflection.Assembly]::Load('System.Management.Automation').GetType('Microsoft.PowerShell.NativeCultureResolver').GetField('m_uiCulture', 'NonPublic, Static').SetValue($null, $newCulture)
+        # For Windows PowerShell, changing CurrentThread.CurrentCulture & CurrentUICulture is not enough. NativeCultureResolver.m_Culture & m_uiCulture must be changed also.
+        # For PowerShell 7 or greater, no need to to this. NativeCultureResolver doesn't even have m_Culture & m_uiCulture fields anymore.
+        # https://stackoverflow.com/questions/19869627/forcing-powershell-errors-output-in-english-on-localized-systems/59118816#comment140586911_59118816
+        if ($PSVersionTable.PSVersion.Major -ge 7) {
+            Write-Log "Skipping NativeCultureResolver's m_Culture & m_uiCulture because PowerShell version is 7 or greater (PSVersion:$($PSVersionTable.PSVersion))"
+            return
+        }
+
+        $cultureResolverType = [System.Reflection.Assembly]::Load('System.Management.Automation').GetType('Microsoft.PowerShell.NativeCultureResolver')
+        $cultureResolverType.GetField('m_Culture', 'NonPublic, Static').SetValue($null, $newCulture)
+        $cultureResolverType.GetField('m_uiCulture', 'NonPublic, Static').SetValue($null, $newCulture)
     }
     catch {
         Write-Error -Message "Set-ThreadCulture failed" -Exception $_.Exception
@@ -12239,15 +12247,25 @@ function Reset-ThreadCulture {
     param()
 
     try {
+        $cultureResolverType = [System.Reflection.Assembly]::Load('System.Management.Automation').GetType('Microsoft.PowerShell.NativeCultureResolver')
+
         if ($Script:SavedCulture) {
             [System.Threading.Thread]::CurrentThread.CurrentCulture = $Script:SavedCulture
-            [System.Reflection.Assembly]::Load('System.Management.Automation').GetType('Microsoft.PowerShell.NativeCultureResolver').GetField('m_Culture', 'NonPublic, Static').SetValue($null, $Script:SavedCulture)
+
+            if ($PSVersionTable.PSVersion.Major -lt 7) {
+                $cultureResolverType.GetField('m_Culture', 'NonPublic, Static').SetValue($null, $Script:SavedCulture)
+            }
+
             $Script:SavedCulture = $null
         }
 
         if ($Script:SavedUICulture) {
             [System.Threading.Thread]::CurrentThread.CurrentUICulture = $Script:SavedUICulture
-            [System.Reflection.Assembly]::Load('System.Management.Automation').GetType('Microsoft.PowerShell.NativeCultureResolver').GetField('m_uiCulture', 'NonPublic, Static').SetValue($null, $Script:SavedUICulture)
+
+            if ($PSVersionTable.PSVersion.Major -lt 7) {
+                $cultureResolverType.GetField('m_uiCulture', 'NonPublic, Static').SetValue($null, $Script:SavedUICulture)
+            }
+
             $Script:SavedUICulture = $null
         }
     }
