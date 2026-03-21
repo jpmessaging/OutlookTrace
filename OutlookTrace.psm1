@@ -4997,7 +4997,7 @@ function Get-GlobalSection {
         }
 
         if ($syncModeBin = $globalSection.$($PropTags.PR_CACHE_SYNC_MODE)) {
-            $cacheSyncMode = [BitConverter]::ToInt32($syncModeBin, 0)
+            $cacheSyncMode = [Win32.Mapi.CacheSyncMode]([BitConverter]::ToInt32($syncModeBin, 0))
         }
 
         if ($ABSearchPathCustomizationBin = $globalSection.$($PropTags.PR_AB_SEARCH_PATH_CUSTOMIZATION)) {
