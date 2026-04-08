@@ -3324,7 +3324,7 @@ function Save-EventLog {
     $logs = @(
         'Application'
         'System'
-        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client|WebAuth|CAPI2|AppLocker|AppxPackaging|AppXDeployment/|AppXDeploymentServer/"
+        (wevtutil el) -match "Microsoft-Windows-Windows Firewall With Advanced Security|AAD|Microsoft-Windows-Bits-Client|WebAuth|CAPI2|AppLocker|AppxPackaging|AppXDeployment/|AppXDeploymentServer/|Microsoft-Windows-Windows Defender"
     )
 
     $tasks = @(
