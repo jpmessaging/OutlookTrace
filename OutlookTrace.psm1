@@ -9497,7 +9497,7 @@ function Get-Token {
 This function makes an Autodiscover request.
 #>
 function Test-Autodiscover {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName='LegacyAuth')]
     param(
         # Server to send an Autodiscover request. For Exchange Online, use 'outlook.office365.com'
         # When not specified, "autodiscover.{SMTP domain}" will be tried.
@@ -9537,11 +9537,16 @@ function Test-Autodiscover {
 <?xml version="1.0" encoding="utf-8"?>
 <Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/requestschema/2006">
     <Request>
-    <EMailAddress>$EmailAddress</EMailAddress>
+    <EMailAddress></EMailAddress>
     <AcceptableResponseSchema>http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a</AcceptableResponseSchema>
     </Request>
 </Autodiscover>
 "@
+
+    # To prevent XML Injection, use XmlDocument instead of concatenating EmailAddress
+    $xml = New-Object System.Xml.XmlDocument
+    $xml.LoadXml($body)
+    $xml.Autodiscover.Request.EMailAddress = $EmailAddress
 
     $mailDomain = $EmailAddress.Substring($EmailAddress.IndexOf("@") + 1)
 
@@ -9571,7 +9576,7 @@ function Test-Autodiscover {
                 Method          = 'POST'
                 Uri             = $uri
                 Headers         = @{'Content-Type' = 'text/xml' }
-                Body            = $body
+                Body            = $xml.OuterXml
                 UseBasicParsing = $true
             }
 
