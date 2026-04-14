@@ -8835,48 +8835,80 @@ function Start-Wow64Dump {
         [Parameter(Mandatory)]
         [string]$Path,
         [Parameter(Mandatory)]
+        [ValidateRange(4, [int]::MaxValue)]
         [int]$ProcessId
     )
 
+    # Make sure the process with the given PID exits
+    if ($proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue) {
+        $proc.Dispose()
+    }
+    else {
+        Write-Error "Cannot find the process with PID:$ProcessId"
+        return
+    }
+
+    # waitEvent   : Event PS32 will wait and the main process will signal to generate a dump file.
+    # startedEvent: Event the main process will wait and the PS32 will signal to notify that it has started executing the script.
     $waitEventName = [Guid]::NewGuid().ToString()
+    $startedEventName = [Guid]::NewGuid().ToString()
 
     try {
         $waitEvent = New-Object System.Threading.EventWaitHandle -ArgumentList $false, ([System.Threading.EventResetMode]::AutoReset), $waitEventName
+        $startedEvent = New-Object System.Threading.EventWaitHandle -ArgumentList $false, ([System.Threading.EventResetMode]::AutoReset), $startedEventName
     }
     catch {
-        Write-Error "Failed to create an Event '$WaitEventName'"
+        Write-Error "Failed to create an Event"
         return
     }
 
     $ps32 = Join-Path $env:SystemRoot 'SysWOW64\WindowsPowerShell\v1.0\powershell.exe'
 
-    $command = @"
-& {
-Import-Module '$($Script:MyModulePath)' -DisableNameChecking
+    $scriptFile = Join-Path $env:TEMP ([Guid]::NewGuid().ToString() + '.ps1')
+    $scriptContent = @'
+param($ModulePath, $TriggerEvent, $DumpPath, $ProcessId, $StartedEvent)
 
-try {
-    `$waitEvent = [System.Threading.EventWaitHandle]::OpenExisting('$waitEventName')
-}
-catch {
-    Write-Error "Failed to open an Event '$waitEventName'"
+$err = $(Import-Module $ModulePath -DisableNameChecking) 2>&1
+
+if ($err) {
+    Write-Error "Import-Module failed for $ModulePath"
     return
 }
 
-if (`$waitEvent.WaitOne()) {
-    Save-Dump -Path '$Path' -ProcessId $ProcessId
-}}
-"@
+try {
+    $waitEvent = [System.Threading.EventWaitHandle]::OpenExisting($TriggerEvent)
+} catch {
+    Write-Error "Failed to open TriggerEvent '$TriggerEvent'"
+    return
+}
 
-    Write-Log "Invoking $ps32 -NoLogo -NoProfile -OutputFormat XML -ExecutionPolicy Unrestricted -Command '$command'"
+try {
+    $startedEvent = [System.Threading.EventWaitHandle]::OpenExisting($StartedEvent) 
+    $null = $startedEvent.Set()
+} catch {
+    Write-Error "Failed to open StartedEvent '$StartedEvent'"
+    return
+}
+
+if ($waitEvent.WaitOne()) {
+    Save-Dump -Path $DumpPath -ProcessId $ProcessId
+}
+'@
+
+    Set-Content -LiteralPath $scriptFile -Value $scriptContent -Encoding UTF8
+
+    # Note: Folder path parameter must be double-quoted and it must not have the trailing backslash because \" is treated as escaped.
+    $Path = $Path.TrimEnd('\')
 
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $ps32
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     $startInfo.UseShellExecute = $false
-    $startInfo.Arguments = "-NoLogo -NoProfile -OutputFormat XML -ExecutionPolicy Unrestricted -Command `"$command`""
+    $startInfo.Arguments = "-NoLogo -NoProfile -OutputFormat XML -ExecutionPolicy Unrestricted -File `"$scriptFile`" `"$($Script:MyModulePath)`" $waitEventName `"$Path`" $ProcessId $startedEventName"
     $startInfo.CreateNoWindow = $true
 
+    Write-Log "Invoking $ps32 $($startInfo.Arguments)"
     $psProcess = $null
 
     try {
@@ -8886,14 +8918,33 @@ if (`$waitEvent.WaitOne()) {
 
         Write-Log "Started 32bit PowerShell process (PID:$($psProcess.Id)) to write a dump file for PID:$ProcessId"
 
-        [PSCustomObject]@{
-            PS32Process = $psProcess
-            WaitEvent   = $waitEvent
+        # Wait until the worker process starts executing the script
+        while ($true) {
+            if ($startedEvent.WaitOne(0)) {
+                [PSCustomObject]@{
+                    PS32Process = $psProcess
+                    WaitEvent   = $waitEvent
+                }
+
+                break
+            }
+            else {
+                if ($psProcess.HasExited) {
+                    throw "32-bit PowerShell process has exited"
+                }
+
+                Start-Sleep -Second 1
+            }
         }
     }
     catch {
-        Write-Error -Message "Failed to start 32-it PowerShell. $_" -Exception $_.Exception
+        Write-Error -Message "Failed to start 32-bit PowerShell. $_" -Exception $_.Exception
+        $psProcess.Dispose()
+        $waitEvent.Dispose()
     }
+
+    $startedEvent.Dispose()
+    Remove-Item $scriptFile -Force -ErrorAction SilentlyContinue
 }
 
 function Complete-Wow64Dump {
@@ -10647,19 +10698,36 @@ function Invoke-AutoUpdate {
     else {
         try {
             Write-Progress -Activity "AutoUpdate" -Status 'Checking if a newer version is available. Please wait' -PercentComplete -1
-            $release = Invoke-RestMethod -Uri $GitHubUri -UseDefaultCredentials -ErrorAction Stop
+            $release = Invoke-RestMethod -Uri $GitHubUri -ErrorAction Stop
 
             if ($Version -ge $release.name) {
                 $message = "Skipped because the current script ($Version) is newer than or equal to GitHub's latest release ($($release.name))"
             }
             else {
+                if ($release.body -match 'SHA256\W*(?<Hash>\w+)') {
+                    $expectedHash = $Matches.Hash
+                }
+
                 Write-Verbose "Downloading the latest script"
 
                 $response = Invoke-Command {
                     # Suppress progress on Invoke-WebRequest.
                     $ProgressPreference = "SilentlyContinue"
-                    Invoke-WebRequest -Uri $release.assets.browser_download_url -UseDefaultCredentials -UseBasicParsing
+                    Invoke-WebRequest -Uri $release.assets.browser_download_url -UseBasicParsing
                 }
+
+                # Verify the hash
+                $tempFile = Join-Path $env:TEMP ([Guid]::NewGuid().ToString() + '.psm1')
+                [IO.File]::WriteAllBytes($tempFile, $response.Content)
+
+                $actualHash = Get-FileHash -LiteralPath $tempFile -Algorithm SHA256 | Select-Object -ExpandProperty Hash
+
+                if ($actualHash -ne $expectedHash) {
+                    Remove-Item $tempFile -Force
+                    throw "SHA256 mismatch for $($release.name). Expected:$expectedHash, Actual:$actualHash"
+                }
+
+                Write-Verbose "Lastest script ($($release.name)) was successfully downloaded"
 
                 # Rename the current script and replace with the latest one.
                 $newName = [IO.Path]::GetFileNameWithoutExtension($PSCommandPath) + '_' + $Version + [IO.Path]::GetExtension($PSCommandPath)
@@ -10669,9 +10737,8 @@ function Invoke-AutoUpdate {
                 }
 
                 Rename-Item -LiteralPath $PSCommandPath -NewName $newName -ErrorAction Stop
-                [IO.File]::WriteAllBytes($PSCommandPath, $response.Content)
+                Move-Item -LiteralPath $tempFile -Destination $PSCommandPath -Force
 
-                Write-Verbose "Lastest script ($($release.name)) was successfully downloaded"
                 Import-Module $PSCommandPath -DisableNameChecking -Force -ErrorAction Stop
                 $autoUpdateSuccess = $true
             }
