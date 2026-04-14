@@ -14639,7 +14639,7 @@ function Collect-OutlookInfo {
     $runAsAdmin = Test-RunAsAdministrator
 
     # Explicitly check admin rights depending on the request.
-    if (-not $runAsAdmin -and (($Component -join ' ') -match 'Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump|TTD' -or $EnablePageHeap -or $RemoveIdentityCache)) {
+    if (-not $runAsAdmin -and (($Component -join ' ') -match '^Outlook|Netsh|CAPI|LDAP|WAM|WPR|WFP|CrashDump|TTD' -or $EnablePageHeap -or $RemoveIdentityCache -or $EnableWebView2DevTools)) {
         Write-Warning "Please run as administrator"
         return
     }
@@ -15066,10 +15066,6 @@ function Collect-OutlookInfo {
             $webView2DevToolsEnabled = $true
         }
 
-        if ($Component -contains 'NewOutlook') {
-            $newOutlookTraceStarted = $true
-        }
-
         if ($Component -contains 'WebView2') {
             Enable-WebView2Netlog -ExecutableName $TargetProcessName -User $targetUser -Path (Join-Path $tempPath 'WebView2') -MaxFileSizeMB 2048 -ErrorAction Stop
             $webView2TraceStarted = $true
@@ -15331,7 +15327,7 @@ function Collect-OutlookInfo {
         $waitStart = Get-Timestamp
         $waitResult = $null
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hangDumpStarted -or $wprStarted -or $recordingStarted -or $newOutlookTraceStarted -or $webView2TraceStarted) {
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hangDumpStarted -or $wprStarted -or $recordingStarted -or $webView2DevToolsEnabled -or $webView2TraceStarted) {
             Write-Log "Waiting for the user to stop"
             $ScriptInfo.WaitStart = [DateTimeOffset]::Now
 
@@ -15425,7 +15421,7 @@ function Collect-OutlookInfo {
             Disable-WebView2DevTools -ExecutableName $TargetProcessName -User $targetUser 2>&1 | Write-Log -Category Error -PassThru
         }
 
-        if ($Local:newOutlookTraceStarted) {
+        if ($Component -contains 'NewOutlook') {
             Save-MonarchLog -User $targetUser -Path (Join-Path $tempPath 'Monarch')  2>&1 | Write-Log -Category Error -PassThru
             Save-MonarchSetupLog -User $targetUser -Path (Join-Path $tempPath 'MonarchSetup')  2>&1 | Write-Log -Category Error -PassThru
         }
