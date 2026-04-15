@@ -916,9 +916,9 @@ namespace Win32
             inputs[2].u.ki.wVk = 0x35; // 5
             inputs[2].u.ki.dwFlags = (uint)(KeyEventF.KeyUp);
 
-            inputs[2].type = InputType.Keyboard;
-            inputs[2].u.ki.wVk = 0x11; // VK_CONTROL
-            inputs[2].u.ki.dwFlags = (uint)(KeyEventF.KeyUp);
+            inputs[3].type = InputType.Keyboard;
+            inputs[3].u.ki.wVk = 0x11; // VK_CONTROL
+            inputs[3].u.ki.dwFlags = (uint)(KeyEventF.KeyUp);
 
             var count = SendInput(inputs.Length, inputs, Marshal.SizeOf(typeof(Input)));
 
@@ -1981,6 +1981,11 @@ function Download-File {
         [string]$Activity
     )
 
+    if (-not $Uri.StartsWith('https://', [StringComparison]::OrdinalIgnoreCase)) {
+        Write-Error "Only HTTPS is supported"
+        return
+    }
+
     $webClient = $null
     $progressChangeId = $null
     $completedId = $null
@@ -2741,7 +2746,10 @@ function Restore-EventLog {
         $errs = $($null = wevtutil.exe $evtArgs) 2>&1
 
         if ($errs) {
-            $err | ForEach-Object { Write-Error -ErrorRecord $_ }
+            foreach ($err in $errs) {
+                Write-Error -ErrorRecord $err
+            }
+
             return
         }
 
@@ -8883,7 +8891,7 @@ try {
 }
 
 try {
-    $startedEvent = [System.Threading.EventWaitHandle]::OpenExisting($StartedEvent) 
+    $startedEvent = [System.Threading.EventWaitHandle]::OpenExisting($StartedEvent)
     $null = $startedEvent.Set()
 } catch {
     Write-Error "Failed to open StartedEvent '$StartedEvent'"
@@ -8973,10 +8981,9 @@ function Complete-Wow64Dump {
     $stdOut = $PS32Process.StandardOutput.ReadToEnd()
 
     if ($stdOut) {
-        $saveDumpOutput = [IO.Path]::GetTempFileName()
-        [IO.File]::AppendAllText($saveDumpOutput, $stdOut)
-        Import-Clixml $saveDumpOutput
-        Remove-Item $saveDumpOutput -Force
+        $objXml = $stdOut.Substring($stdOut.IndexOf("`n"))
+        $ps32Output = [System.Management.Automation.PSSerializer]::Deserialize($objXml)
+        Write-Output $ps32Output
     }
 
     $PS32Process.Dispose()
@@ -9548,7 +9555,7 @@ function Get-Token {
 This function makes an Autodiscover request.
 #>
 function Test-Autodiscover {
-    [CmdletBinding(DefaultParameterSetName='LegacyAuth')]
+    [CmdletBinding(DefaultParameterSetName = 'LegacyAuth')]
     param(
         # Server to send an Autodiscover request. For Exchange Online, use 'outlook.office365.com'
         # When not specified, "autodiscover.{SMTP domain}" will be tried.
@@ -15699,6 +15706,9 @@ $Script:Emoji = @{
     Warning     = [Char]::ConvertFromUtf32(0x26A0)
     Error       = [Char]::ConvertFromUtf32(0x26D4) # This is actually "NoEntry" emoji
 }
+
+# Enforce TLS 1.2 or above
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 # Add type for Win32 interop
 if (-not ('Win32.Kernel32' -as [type])) {

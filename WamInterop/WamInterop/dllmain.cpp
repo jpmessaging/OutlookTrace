@@ -91,7 +91,7 @@ HWND CreateAnchorWindow()
     .hCursor = LoadCursor(NULL, IDC_ARROW),
     .hbrBackground = GetSysColorBrush(COLOR_3DFACE),
     .lpszMenuName = nullptr,
-    .lpszClassName = L"WndClass",
+    .lpszClassName = L"AnchorWndClass",
     .hIconSm = nullptr
     };
 
