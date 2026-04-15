@@ -1999,7 +1999,6 @@ function Download-File {
 
     try {
         $webClient = New-Object System.Net.WebClient
-        $webClient.UseDefaultCredentials = $true
         $start = Get-TimeStamp
 
         if (-not $Activity) {
@@ -6757,7 +6756,6 @@ function Start-FiddlerCap {
             $webClient = $null
             try {
                 $webClient = New-Object System.Net.WebClient
-                $webClient.UseDefaultCredentials = $true
                 Write-Progress -Activity "Downloading FiddlerCap" -Status "Please wait" -PercentComplete -1
                 $webClient.DownloadFile($fiddlerCapUrl, $fiddlerSetupFile)
             }
