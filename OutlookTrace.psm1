@@ -1532,7 +1532,7 @@ function Receive-Task {
                 # Scope 1 is the parent scope, but it's not necessarily the caller scope.
                 # If the caller is a function in this module, then scope 1 is the caller function.
                 # However, if it's called from outside of module, scope 1 is the module's script scope. Thus the caller does not get the error.
-                # Because this function is meant to be moudule-internal and should be called only within the moudle, Scope 1 is ok for now.
+                # Because this function is meant to be module-internal and should be called only within the moudle, Scope 1 is ok for now.
                 New-Variable -Name $TaskErrorVariable -Value $($ps.Streams.Error.ReadAll()) -Scope 1 -Force
             }
 
@@ -1595,6 +1595,7 @@ function ConvertFrom-PSPath {
         if ($Path -match '(?<Prefix>^.*::)(?<Rest>.*)') {
             if ($KeepProvider) {
                 $pathWithoutPrefix = $Matches['Rest']
+
                 if ($Matches['Prefix'] -match '(?<Provider>\w+::)') {
                     "$($Matches['Provider'])$pathWithoutPrefix"
                 }
@@ -1602,6 +1603,9 @@ function ConvertFrom-PSPath {
             else {
                 $Matches['Rest']
             }
+        }
+        else {
+            $Path
         }
     }
 }
@@ -1721,7 +1725,7 @@ function Get-Privilege {
         }
 
         # Allocate buffer & retry
-        # Note: The following line does not work in PSv4 due to an overload resolutuion issue:
+        # Note: The following line does not work in PSv4 due to an overload resolution issue:
         #
         #   $buffer = New-Object Win32.SafeCoTaskMemFreeHandle -ArgumentList $cbSize
         #
@@ -1992,7 +1996,7 @@ function Download-File {
 
     $dir = Split-Path $OutFile
 
-    # Directory must exist otherwize WebClient.DownloadFile(Async) fails.
+    # Directory must exist otherwise WebClient.DownloadFile(Async) fails.
     if (-not (Test-Path $dir)) {
         $null = New-Item -Path $dir -ItemType Directory -ErrorAction Stop
     }
@@ -2223,7 +2227,7 @@ function Compress-Folder {
             return
         }
 
-        # Check if .NET Framework's compression is avaiable.
+        # Check if .NET Framework's compression is available.
         try {
             Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
         }
@@ -2752,7 +2756,7 @@ function Restore-EventLog {
             return
         }
 
-        Write-Log "Eveng Log config is restored for $($Configuration.Name). Enabled:$($Configuration.Enabled), MaxSize:$($Configuration.MaxSize)"
+        Write-Log "Event Log config is restored for $($Configuration.Name). Enabled:$($Configuration.Enabled), MaxSize:$($Configuration.MaxSize)"
     }
 }
 
@@ -2938,7 +2942,7 @@ function Start-OutlookTrace {
 
     $traceFile = Join-Path $Path -ChildPath $FileName
 
-    if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, $logmanCommand)) {
+    if ($PSCmdlet.ShouldProcess($env:COMPUTERNAME, 'Starting an ETW session')) {
         Write-Log "Starting an Outlook trace. SessionName:`"$SessionName`", traceFile:`"$traceFile`", logFileMode:`"$mode`", maxFileSize:`"$MaxFileSizeMB`""
 
         $err = $($stdout = Invoke-Command {
@@ -3050,12 +3054,13 @@ function Stop-NetshTrace {
         }
 
         $sessions = @(Get-EtwSession | Where-Object { $_.SessionName -like "*$SessionName*" })
+
         if ($sessions.Count -eq 1) {
             $SessionName = $sessions[0].SessionName
             $sessionFound = $true
             break
         }
-        elseif ($sesionNames.Count -gt 1) {
+        elseif ($sessions.Count -gt 1) {
             Write-Error "Found multiple sessions matching $SessionName"
             return
         }
@@ -4356,7 +4361,7 @@ function Get-WinHttpDefaultProxy {
         # Wrap the native string data in SafeHandle-derived class so that the memory will be properly freed (By GlobalFree in this case) when GC collects them.
         $props['Proxy'] = (New-Object Win32.SafeGlobalFreeString -ArgumentList $proxyInfo.lpszProxy).ToString()
         $props['ProxyBypass'] = (New-Object Win32.SafeGlobalFreeString -ArgumentList $proxyInfo.lpszProxyBypass).ToString()
-        #$props['WINHTTP_PROXY_INFO'] = $proxyInfo # for debugging purpuse
+        #$props['WINHTTP_PROXY_INFO'] = $proxyInfo # for debugging purpose
     }
     else {
         Write-Error ("Win32 WinHttpGetDefaultProxyConfiguration failed with 0x{0:x8}" -f [System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
@@ -6726,7 +6731,7 @@ function Start-FiddlerCap {
     param(
         [Parameter(Mandatory = $true)]
         $Path,
-        # Do not start FiddlerCap.exe, but ensure it's avaiable (download it if necessary).
+        # Do not start FiddlerCap.exe, but ensure it's available (download it if necessary).
         [Switch]$CheckAvailabilityOnly
     )
 
@@ -6841,7 +6846,7 @@ function Start-FiddlerEverywhereReporter {
     param(
         [Parameter(Mandatory = $true)]
         $Path,
-        # Do not start FiddlerCap.exe, but ensure it's avaiable (download it if necessary).
+        # Do not start FiddlerCap.exe, but ensure it's available (download it if necessary).
         [Switch]$CheckAvailabilityOnly
     )
 
@@ -14616,7 +14621,6 @@ function Test-AuthenticodeSignature {
     This will collect configuration data, Netsh trace, and Outlook ETW trace.
 .LINK
     https://github.com/jpmessaging/OutlookTrace
-
 #>
 function Collect-OutlookInfo {
     [CmdletBinding(SupportsShouldProcess = $true, PositionalBinding = $false)]
