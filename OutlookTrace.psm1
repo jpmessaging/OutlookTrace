@@ -6904,7 +6904,9 @@ function Start-FiddlerEverywhereReporter {
         return
     }
 
-    # Check Authenticode Signature
+    # Verify Authenticode Signature
+    Write-Progress -Activity "Verifying Authenticode Signature of $fiddlerExe" -Status 'Please wait'
+
     if (-not (Test-AuthenticodeSignature -Path $fiddlerExe -SignerCertificateSubjectPattern '^CN=PROGRESS SOFTWARE CORPORATION')) {
         return
     }
@@ -14615,7 +14617,9 @@ function Test-AuthenticodeSignature {
         [string]$SignerCertificateSubjectPattern
     )
 
+    $start = Get-Timestamp
     $codeSig = Get-AuthenticodeSignature $Path
+    Write-Log "Get-AuthenticodeSignature for '$Path' took $(Get-Elapsed $start)"
 
     if (-not $codeSig) {
         return $false
