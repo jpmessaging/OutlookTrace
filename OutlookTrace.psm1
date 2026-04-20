@@ -8893,6 +8893,9 @@ param($ModulePath, $TriggerEventName, $DumpPath, $ProcessId, $StartedEventName)
 
 $err = $(Import-Module $ModulePath -DisableNameChecking) 2>&1
 
+Write-Error "This is a mock error"
+return
+
 if ($err) {
     Write-Error "Import-Module failed for $ModulePath"
     return
@@ -8947,10 +8950,21 @@ if ($waitEvent.WaitOne()) {
         }
 
         if ($psProcess.HasExited) {
+            $errMsg = '32-bit PowerShell process has exited. '
             $err = Import-CliXml $startProcArgs.RedirectStandardError | Where-Object { $_.Exception } | Select-Object -First 1
 
             if ($err) {
-                Write-Error "32-bit PowerShell process has exited. $err"
+                $errMsg += $err.ToString()
+            }
+
+            Write-Error $errMsg
+
+            if (Test-Path $startProcArgs.RedirectStandardOutput) {
+                Remove-Item $startProcArgs.RedirectStandardOutput -Force -ErrorAction SilentlyContinue
+            }
+
+            if (Test-Path $startProcArgs.RedirectStandardError) {
+                Remove-Item $startProcArgs.RedirectStandardError -Force -ErrorAction SilentlyContinue
             }
 
             break
@@ -8994,14 +9008,14 @@ function Complete-Wow64Dump {
     $PS32Process.WaitForExit()
 
 
-    if ($stdOutPath) {
-        Import-CliXml $stdOutPath
-        Remove-Item $stdOutPath -Force -ErrorAction SilentlyContinue
+    if ($StdOutPath -and (Test-Path $StdOutPath)) {
+        Import-CliXml $StdOutPath
+        Remove-Item $StdOutPath -Force -ErrorAction SilentlyContinue
     }
 
-    if ($stdErrPath) {
-        $errs = Import-CliXml $stdErrPath | Where-Object { $_.Exception }
-        Remove-Item $stdErrPath -Force -ErrorAction SilentlyContinue
+    if ($StdErrPath -and (Test-Path $StdErrPath)) {
+        $errs = Import-CliXml $StdErrPath | Where-Object { $_.Exception }
+        Remove-Item $StdErrPath -Force -ErrorAction SilentlyContinue
 
         foreach ($err in $errs) {
             Write-Error -Message $err
