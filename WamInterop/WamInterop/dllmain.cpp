@@ -80,7 +80,7 @@ extern "C"
 __declspec(dllexport)
 HWND CreateAnchorWindow()
 {
-    WNDCLASSEX wndclass{
+    WNDCLASSEXW wndclass{
     .cbSize = sizeof(WNDCLASSEX),
     .style = CS_HREDRAW | CS_VREDRAW,
     .lpfnWndProc = WndProc,
