@@ -3377,7 +3377,7 @@ function Get-InstalledProgram {
         "Registry::HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
         Join-Path $userRegRoot "Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
         Join-Path $userRegRoot 'Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
-    } | 
+    } |
     Get-ItemProperty |
         & {
             process {
@@ -12936,7 +12936,7 @@ function Save-GPResult {
         [string]$FileName = 'GPResult',
         [ValidateSet('TEXT', 'HTML', 'XML')]
         [Parameter(Mandatory)]
-        [string]$Format = 'TEXT',
+        [string]$Format,
         [Threading.CancellationToken]$CancellationToken
     )
 
