@@ -3373,17 +3373,19 @@ function Get-InstalledProgram {
     }
 
     & {
-        "Registry::HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
-        "Registry::HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-        Join-Path $userRegRoot "Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
-        Join-Path $userRegRoot 'Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+        'Registry::HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        'Registry::HKLM\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        Join-Path $userRegRoot 'Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        Join-Path $userRegRoot 'Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
     } |
     Get-ItemProperty |
         & {
             process {
                 if ($_.DisplayName) {
+                    $installedDate = $null
+
                     if ($_.InstallDate) {
-                        # Usually InstallDate has  format "yyyyMMdd" (e.g. "20260415").
+                        # Usually InstallDate has format "yyyyMMdd" (e.g. "20260415").
                         # However, sometimes it looks like "Tue Jan 27 08:26:13 2026". Ignore error case for now.
                         $year = $_.InstallDate.Substring(0, 4)
                         $month = $_.InstallDate.Substring(4, 2)
