@@ -8959,7 +8959,7 @@ if ($err) {
 try {
     $waitEvent = [System.Threading.EventWaitHandle]::OpenExisting($TriggerEventName)
 } catch {
-    Write-Error "Failed to open TriggerEvent '$TriggerEvent'"
+    Write-Error "Failed to open TriggerEvent '$TriggerEventName'"
     return
 }
 
@@ -8967,7 +8967,7 @@ try {
     $startedEvent = [System.Threading.EventWaitHandle]::OpenExisting($StartedEventName)
     $null = $startedEvent.Set()
 } catch {
-    Write-Error "Failed to open StartedEvent '$StartedEvent'"
+    Write-Error "Failed to open StartedEvent '$StartedEventName'"
     return
 }
 
