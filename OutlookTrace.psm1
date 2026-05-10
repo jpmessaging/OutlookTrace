@@ -3379,40 +3379,40 @@ function Get-InstalledProgram {
         Join-Path $userRegRoot 'Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
     } |
     Get-ItemProperty |
-        & {
-            process {
-                if ($_.DisplayName) {
-                    $installedDate = $null
+    & {
+        process {
+            if ($_.DisplayName) {
+                $installedDate = $null
 
-                    if ($_.InstallDate) {
-                        # Usually InstallDate has format "yyyyMMdd" (e.g. "20260415").
-                        # However, sometimes it looks like "Tue Jan 27 08:26:13 2026". Ignore error case for now.
-                        $year = $_.InstallDate.Substring(0, 4)
-                        $month = $_.InstallDate.Substring(4, 2)
-                        $day = $_.InstallDate.Substring(6, 2)
+                if ($_.InstallDate) {
+                    # Usually InstallDate has format "yyyyMMdd" (e.g. "20260415").
+                    # However, sometimes it looks like "Tue Jan 27 08:26:13 2026". Ignore error case for now.
+                    $year = $_.InstallDate.Substring(0, 4)
+                    $month = $_.InstallDate.Substring(4, 2)
+                    $day = $_.InstallDate.Substring(6, 2)
 
-                        try {
-                            $installedDate = New-Object DateTime -ArgumentList $year, $month, $day
-                        }
-                        catch {
-                            # ignore
-                        }
+                    try {
+                        $installedDate = New-Object DateTime -ArgumentList $year, $month, $day
                     }
-
-                    [PSCustomObject]@{
-                        Name = $_.DisplayName
-                        Publisher = $_.Publisher
-                        InstalledOn = if ($installedDate) { $installedDate.ToString('yyyy-MM-dd') } else { $null }
-                        EstimatedSize = $_.EstimatedSize
-                        Version = $_.DisplayVersion
-                        InstallLocation = $_.InstallLocation
-                        UninstallString = $_.UninstallString
-                        DisplayIcon     = $_.DisplayIcon
-                        Path = Convert-Path $_.PSPath
+                    catch {
+                        # ignore
                     }
+                }
+
+                [PSCustomObject]@{
+                    Name            = $_.DisplayName
+                    Publisher       = $_.Publisher
+                    InstalledOn     = if ($installedDate) { $installedDate.ToString('yyyy-MM-dd') } else { $null }
+                    EstimatedSize   = $_.EstimatedSize
+                    Version         = $_.DisplayVersion
+                    InstallLocation = $_.InstallLocation
+                    UninstallString = $_.UninstallString
+                    DisplayIcon     = $_.DisplayIcon
+                    Path            = Convert-Path $_.PSPath
                 }
             }
         }
+    }
 }
 
 function Get-InstalledUpdate {
@@ -6226,14 +6226,16 @@ function Save-CachedOutlookConfig {
 function Remove-HiddenAttribute {
     [CmdletBinding()]
     param(
-        [Parameter(ValueFromPipeline = $true)]
-        $File
+        [Parameter(Mandatory, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('FullName')]
+        # File path
+        [string]$Path
     )
 
     process {
         try {
-            if ((Get-ItemProperty $File.FullName).Attributes -band [IO.FileAttributes]::Hidden) {
-                (Get-ItemProperty $File.FullName).Attributes -= 'Hidden'
+            if ((Get-ItemProperty $Path).Attributes -band [IO.FileAttributes]::Hidden) {
+                (Get-ItemProperty $Path).Attributes -= 'Hidden'
                 return
             }
         }
@@ -6242,7 +6244,7 @@ function Remove-HiddenAttribute {
         }
 
         # This could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
-        Set-ItemProperty $File.Fullname -Name Attributes -Value ((Get-ItemProperty $File.FullName).Attributes -bxor [IO.FileAttributes]::Hidden)
+        Set-ItemProperty $Path -Name Attributes -Value ((Get-ItemProperty $Path).Attributes -bxor [IO.FileAttributes]::Hidden)
     }
 }
 
