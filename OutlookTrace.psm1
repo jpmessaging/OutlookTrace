@@ -7544,7 +7544,7 @@ function Stop-TTTracer {
     }
 
     if ($AutoRemove) {
-        $ttd.Dispose()
+        $Descriptor.Dispose()
     }
 }
 
