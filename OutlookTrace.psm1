@@ -15282,7 +15282,7 @@ function Collect-OutlookInfo {
         if ($Component -contains 'Procmon') {
             Write-Progress -Status 'Starting Procmon'
             $null = Start-Procmon -Path (Join-Path $tempPath 'Procmon') -ProcmonSearchPath $Path -ErrorAction Stop
-            $procmonStared = $true
+            $procmonStarted = $true
         }
 
         if ($Component -contains 'WFP') {
@@ -15488,7 +15488,7 @@ function Collect-OutlookInfo {
         $waitStart = Get-Timestamp
         $waitResult = $null
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerStarted -or $crashDumpStarted -or $procmonStared -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hangDumpStarted -or $wprStarted -or $recordingStarted -or $webView2DevToolsEnabled -or $webView2TraceStarted) {
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerStarted -or $crashDumpStarted -or $procmonStarted -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hangDumpStarted -or $wprStarted -or $recordingStarted -or $webView2DevToolsEnabled -or $webView2TraceStarted) {
             Write-Log "Waiting for the user to stop"
             $ScriptInfo.WaitStart = [DateTimeOffset]::Now
 
@@ -15634,7 +15634,7 @@ function Collect-OutlookInfo {
             Stop-WamTrace
         }
 
-        if ($Local:procmonStared) {
+        if ($Local:procmonStarted) {
             Write-Progress -Status 'Stopping Procmon'
             Stop-Procmon 2>&1 | Write-Log -Category Error -PassThru
         }
