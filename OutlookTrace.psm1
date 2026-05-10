@@ -1768,7 +1768,7 @@ function Get-Privilege {
             $cchName = $nameBuffer.Length
 
             if (-not [Win32.Advapi32]::LookupPrivilegeNameW($null, $pCurrent, $nameBuffer, [ref]$cchName)) {
-                Write-Error "LookupPrivilegeNameW failed for $($pCurrent.Luid) with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+                Write-Error "LookupPrivilegeNameW failed for $($priv.Luid) with $([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())"
                 continue
             }
 
@@ -8950,9 +8950,6 @@ function Start-Wow64Dump {
 param($ModulePath, $TriggerEventName, $DumpPath, $ProcessId, $StartedEventName)
 
 $err = $(Import-Module $ModulePath -DisableNameChecking) 2>&1
-
-Write-Error "This is a mock error"
-return
 
 if ($err) {
     Write-Error "Import-Module failed for $ModulePath"
