@@ -12851,7 +12851,7 @@ function Add-LoopbackExempt {
     [OutputType([bool])]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$PackageFamiliyName
+        [string]$PackageFamilyName
     )
 
     if (-not (Get-Command 'CheckNetIsolation.exe')) {
@@ -12862,22 +12862,22 @@ function Add-LoopbackExempt {
     # Check if it's already added.
     $found = CheckNetIsolation.exe LoopbackExempt -s | & {
         process {
-            if (Select-String -InputObject $_ -Pattern $PackageFamiliyName -SimpleMatch -Quiet) {
+            if (Select-String -InputObject $_ -Pattern $PackageFamilyName -SimpleMatch -Quiet) {
                 $true
             }
         }
     } | Select-Object -First 1
 
     if ($found) {
-        Write-Error "$PackageFamiliyName is already in LoopbackExempt"
+        Write-Error "$PackageFamilyName is already in LoopbackExempt"
         return
     }
 
     # Add it (Note:package name MUST be double-quoted)
-    $null = CheckNetIsolation.exe LoopbackExempt -a -n="$PackageFamiliyName"
+    $null = CheckNetIsolation.exe LoopbackExempt -a -n="$PackageFamilyName"
 
     if ($LASTEXITCODE -eq 0) {
-        Write-Log "$PackageFamiliyName is added to LoopbackExempt"
+        Write-Log "$PackageFamilyName is added to LoopbackExempt"
         $true
     }
     else {
@@ -12889,13 +12889,13 @@ function Remove-LoopbackExempt {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$PackageFamiliyName
+        [string]$PackageFamilyName
     )
 
-    $null = CheckNetIsolation.exe LoopbackExempt -d -n="$PackageFamiliyName"
+    $null = CheckNetIsolation.exe LoopbackExempt -d -n="$PackageFamilyName"
 
     if ($LASTEXITCODE -eq 0) {
-        Write-Log "$PackageFamiliyName is removed from LoopbackExempt"
+        Write-Log "$PackageFamilyName is removed from LoopbackExempt"
     }
     else {
         Write-Error "CheckNetIsolation.exe failed with $LASTEXITCODE"
