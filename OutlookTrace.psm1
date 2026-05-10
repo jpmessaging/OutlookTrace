@@ -5739,6 +5739,11 @@ function Get-OutlookOption {
     }
 
     $officeInfo = Get-OfficeInfo
+
+    if (-not $officeInfo) {
+        return
+    }
+
     $major = $officeInfo.Version.Split('.')[0]
 
     $optionsPath = Join-Path $userRegRoot "Software\Microsoft\Office\$major.0\Outlook\Options"
