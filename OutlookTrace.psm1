@@ -8795,8 +8795,8 @@ function Start-WfpTrace {
 
 function Stop-WfpTrace {
     [CmdletBinding()]
-    [Parameter(Mandatory = $true)]
     param (
+        [Parameter(Mandatory = $true)]
         $WfpJob
     )
 
@@ -10978,10 +10978,11 @@ function Get-IMProvider {
         return
     }
 
-    $defaultIMApp = Join-Path $root 'SOFTWARE\IM Providers' | Get-ItemProperty -Name 'DefaultIMApp' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultIMApp'
+    $imProvidersPath = Join-Path $root 'SOFTWARE\IM Providers'
+    $defaultIMApp = $imProvidersPath | Get-ItemProperty -Name 'DefaultIMApp' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty 'DefaultIMApp'
 
     if (-not $defaultIMApp) {
-        Write-Error "There is no DefaultIMApp in $defaultIMApp"
+        Write-Error "There is no DefaultIMApp in $imProvidersPath"
         return
     }
 
@@ -11119,7 +11120,7 @@ function Receive-WinRTAsyncResult {
         }
         else {
             # Use AsTask(Windows.Foundation.IAsyncAction)
-            if (-not $Scipt:AsTaskofIAsyncAction) {
+            if (-not $Script:AsTaskofIAsyncAction) {
                 $methodInfo = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {
                     $_.Name -eq 'AsTask' `
                         -and $_.GetParameters().Count -eq 1 `
