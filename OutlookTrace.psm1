@@ -275,9 +275,9 @@ namespace Win32
         [DllImport("Advapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
         public static extern int StopTraceW(ulong TraceHandle, string InstanceName, IntPtr Properties); // TRACEHANDLE is defined as ULONG64
 
-        const int MAX_SESSIONS = 64;
         const int MAX_NAME_COUNT = 1024; // max char count for LogFileName & SessionName
         const uint ERROR_SUCCESS = 0;
+        const uint ERROR_MORE_DATA = 234;
 
         // https://docs.microsoft.com/en-us/windows/win32/etw/wnode-header
         // > The size of memory must include the room for the EVENT_TRACE_PROPERTIES structure plus the session name string and log file name string that follow the structure in memory.
@@ -288,30 +288,45 @@ namespace Win32
         public static List<EventTraceProperties> QueryAllTraces()
         {
             List<EventTraceProperties> eventProperties = null;
-            int BufferSize = PropertiesSize * MAX_SESSIONS;
+
+            // Session count used to be maxed with 64, but now it can be greater and must be dynamically adjusted.
+            // https://learn.microsoft.com/en-us/windows/win32/api/evntrace/nf-evntrace-queryalltracesw
+            // > Windows 10: PropertyArrayCount may be larger than 64 and some systems may support more than 64 tracing sessions.
+            int sessionCount = 64;
+
+            EVENT_TRACE_PROPERTIES props = new EVENT_TRACE_PROPERTIES();
+            props.Wnode.BufferSize = (uint)PropertiesSize;
+            props.LoggerNameOffset = LoggerNameOffset;
+            props.LogFileNameOffset = LogFileNameOffset;
 
             // Wrap the native memory in SafeHandle-derived class
-            using (Win32.SafeCoTaskMemFreeHandle safeHandle = new Win32.SafeCoTaskMemFreeHandle(Marshal.AllocCoTaskMem(BufferSize)))
+            using (Win32.SafeCoTaskMemFreeHandle safeHandle = new Win32.SafeCoTaskMemFreeHandle())
             {
-                IntPtr pBuffer = safeHandle.DangerousGetHandle();
-                Win32.Kernel32.RtlZeroMemory(pBuffer, BufferSize);
-                IntPtr[] sessions = new IntPtr[64];
+                int status = 0;
+                IntPtr[] sessions;
 
-                for (int i = 0; i < 64; ++i)
+                do
                 {
-                    //sessions[i] = pBuffer + (i * PropertiesSize); // This does not compile in .NET 2.0
-                    sessions[i] = new IntPtr(pBuffer.ToInt64() + (i * PropertiesSize));
+                    int bufferSize = PropertiesSize * sessionCount;
+                    safeHandle.Resize(bufferSize);
 
-                    // Marshal from managed to native
-                    EVENT_TRACE_PROPERTIES props = new EVENT_TRACE_PROPERTIES();
-                    props.Wnode.BufferSize = (uint)PropertiesSize;
-                    props.LoggerNameOffset = LoggerNameOffset;
-                    props.LogFileNameOffset = LogFileNameOffset;
-                    Marshal.StructureToPtr(props, sessions[i], false);
+                    IntPtr pBuffer = safeHandle.DangerousGetHandle();
+                    Win32.Kernel32.RtlZeroMemory(pBuffer, bufferSize);
+
+                    sessions = new IntPtr[sessionCount];
+
+                    for (int i = 0; i < sessionCount; ++i)
+                    {
+                        //sessions[i] = pBuffer + (i * PropertiesSize); // This does not compile in .NET 2.0
+                        sessions[i] = new IntPtr(pBuffer.ToInt64() + (i * PropertiesSize));
+
+                        // Prime the memory pointed by session[i] as an EVENT_TRACE_PROPERTIES
+                        Marshal.StructureToPtr(props, sessions[i], false);
+                    }
+
+                    status = QueryAllTracesW(sessions, (uint)sessionCount, ref sessionCount);
                 }
-
-                int loggerCount = 0;
-                int status = QueryAllTracesW(sessions, MAX_SESSIONS, ref loggerCount);
+                while (status == ERROR_MORE_DATA);
 
                 if (status != ERROR_SUCCESS)
                 {
@@ -319,14 +334,13 @@ namespace Win32
                 }
 
                 eventProperties = new List<EventTraceProperties>();
-                for (int i = 0; i < loggerCount; ++i)
+                for (int i = 0; i < sessionCount; ++i)
                 {
                     // Marshal back from native to managed.
-                    EVENT_TRACE_PROPERTIES props = (EVENT_TRACE_PROPERTIES)Marshal.PtrToStructure(sessions[i], typeof(EVENT_TRACE_PROPERTIES));
+                    props = (EVENT_TRACE_PROPERTIES)Marshal.PtrToStructure(sessions[i], typeof(EVENT_TRACE_PROPERTIES));
                     string sessionName = Marshal.PtrToStringUni(new IntPtr(sessions[i].ToInt64() + LoggerNameOffset));
                     string logFileName = Marshal.PtrToStringUni(new IntPtr(sessions[i].ToInt64() + LogFileNameOffset));
 
-                    //eventProperties.Add(new EventTraceProperties { Properties = props, SessionName = sessionName, LogFileName = logFileName });
                     eventProperties.Add(new EventTraceProperties(props, sessionName, logFileName));
                 }
             }
@@ -776,6 +790,11 @@ namespace Win32
             }
 
             this.handle = handle;
+        }
+
+        public void Resize(int cb)
+        {
+            SetHandle(Marshal.ReAllocCoTaskMem(handle, cb));
         }
     }
 
