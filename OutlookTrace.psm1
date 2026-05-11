@@ -276,8 +276,6 @@ namespace Win32
         public static extern int StopTraceW(ulong TraceHandle, string InstanceName, IntPtr Properties); // TRACEHANDLE is defined as ULONG64
 
         const int MAX_NAME_COUNT = 1024; // max char count for LogFileName & SessionName
-        const uint ERROR_SUCCESS = 0;
-        const uint ERROR_MORE_DATA = 234;
 
         // https://docs.microsoft.com/en-us/windows/win32/etw/wnode-header
         // > The size of memory must include the room for the EVENT_TRACE_PROPERTIES structure plus the session name string and log file name string that follow the structure in memory.
@@ -326,9 +324,9 @@ namespace Win32
 
                     status = QueryAllTracesW(sessions, (uint)sessionCount, ref sessionCount);
                 }
-                while (status == ERROR_MORE_DATA);
+                while (status == Win32.Error.ERROR_MORE_DATA);
 
-                if (status != ERROR_SUCCESS)
+                if (status != Win32.Error.ERROR_SUCCESS)
                 {
                     throw new Win32Exception(status);
                 }
@@ -362,7 +360,8 @@ namespace Win32
                 Marshal.StructureToPtr(props, pProps, false);
 
                 int status = StopTraceW(0, SessionName, pProps);
-                if (status != ERROR_SUCCESS)
+
+                if (status != Win32.Error.ERROR_SUCCESS)
                 {
                     throw new Win32Exception(status);
                 }
@@ -1084,20 +1083,21 @@ namespace Win32
         public static extern IntPtr CreateAnchorWindow();
     }
 
-    public enum Error
+    public static class Error
     {
-        ERROR_SUCCESS,
-        ERROR_INVALID_FUNCTION,
-        ERROR_FILE_NOT_FOUND,
-        ERROR_PATH_NOT_FOUND,
-        ERROR_TOO_MANY_OPEN_FILES,
-        ERROR_ACCESS_DENIED,
-        ERROR_INVALID_HANDLE,
-        ERROR_ARENA_TRASHED,
-        ERROR_NOT_ENOUGH_MEMORY,
-        ERROR_MOD_NOT_FOUND = 126,
-        ERROR_MORE_DATA = 234,
-        ERROR_NOT_FOUND = 1168
+        public const int ERROR_SUCCESS             = 0;
+        public const int ERROR_INVALID_FUNCTION    = 1;
+        public const int ERROR_FILE_NOT_FOUND      = 2;
+        public const int ERROR_PATH_NOT_FOUND      = 3;
+        public const int ERROR_TOO_MANY_OPEN_FILES = 4;
+        public const int ERROR_ACCESS_DENIED       = 5;
+        public const int ERROR_INVALID_HANDLE      = 6;
+        public const int ERROR_ARENA_TRASHED       = 7;
+        public const int ERROR_NOT_ENOUGH_MEMORY   = 8;
+        public const int ERROR_INSUFFICIENT_BUFFER = 122;
+        public const int ERROR_MOD_NOT_FOUND       = 126;
+        public const int ERROR_MORE_DATA           = 234;
+        public const int ERROR_NOT_FOUND           = 1168;
     }
 }
 '@
@@ -1734,10 +1734,9 @@ function Get-Privilege {
             [ref]$cbSize)
 
         # Expected to get ERROR_INSUFFICIENT_BUFFER
-        $ERROR_INSUFFICIENT_BUFFER = 0x7a
         $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
 
-        if ($errorCode -ne $ERROR_INSUFFICIENT_BUFFER) {
+        if ($errorCode -ne [Win32.Error]::ERROR_INSUFFICIENT_BUFFER) {
             $ex = New-Object System.ComponentModel.Win32Exception -ArgumentList ([System.Runtime.InteropServices.Marshal]::GetLastWin32Error())
             Write-Error -Message "GetTokenInformation failed. $($ex.Message) (NativeErrorCode:$($ex.NativeErrorCode))" -Exception $ex
             return
