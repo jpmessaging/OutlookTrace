@@ -15282,7 +15282,7 @@ function Collect-OutlookInfo {
         }
 
         if ($Component -contains 'LDAP') {
-            Start-LDAPTrace -Path (Join-Path $tempPath 'LDAP') -TargetExecutable $TargetProcessName
+            Start-LDAPTrace -Path (Join-Path $tempPath 'LDAP') -TargetExecutable $TargetProcessName -ErrorAction Stop
             $ldapTraceStarted = $true
         }
 
