@@ -1085,6 +1085,7 @@ namespace Win32
 
     public static class Error
     {
+        public const int S_OK                      = 0;
         public const int ERROR_SUCCESS             = 0;
         public const int ERROR_INVALID_FUNCTION    = 1;
         public const int ERROR_FILE_NOT_FOUND      = 2;
@@ -9871,13 +9872,11 @@ function ConvertTo-CLSID {
         [string]$User
     )
 
-    [uint32]$S_OK = 0
-
     [Guid]$CLSID = [Guid]::Empty
     [uint32]$hr = [Win32.Ole32]::CLSIDFromProgID($ProgId, [ref]$CLSID)
     $path = $null
 
-    if ($hr -ne $S_OK) {
+    if ($hr -ne [Win32.Error]::S_OK) {
         $userRegRoot = Get-UserRegistryRoot -User $User
 
         if (-not $userRegRoot) {
@@ -9918,7 +9917,7 @@ function ConvertTo-CLSID {
     [IntPtr]$pClsIdString = [IntPtr]::Zero
     $hr = [Win32.Ole32]::StringFromCLSID($CLSID, [ref]$pCLSIDString)
 
-    if ($hr -eq $S_OK -and $pCLSIDString) {
+    if ($hr -eq [Win32.Error]::S_OK -and $pCLSIDString) {
         $CLSIDString = [System.Runtime.InteropServices.Marshal]::PtrToStringUni($pCLSIDString)
         [System.Runtime.InteropServices.Marshal]::FreeCoTaskMem($pCLSIDString)
         $pCLSIDString = [IntPtr]::Zero
@@ -11687,7 +11686,7 @@ function Invoke-RequestToken {
 
             $null = [System.Runtime.InteropServices.Marshal]::Release($requestPtr)
 
-            if ($hr -ne 0 <# S_OK #>) {
+            if ($hr -ne [Win32.Error]::S_OK) {
                 Write-Error "RequestToken() failed with 0x$("{0:x}" -f $hr)"
                 return
             }
