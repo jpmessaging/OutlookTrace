@@ -3777,6 +3777,7 @@ function Save-OfficeRegistry {
         'HKLM\SOFTWARE\Microsoft\WindowsUpdate\Orchestrator'
         'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Orchestrator'
         'HKLM\SOFTWARE\Classes\Installer\Components'
+        'HKLM\SOFTWARE\FSLogix\'
 
         # Policies
         'HKCU\Software\Policies'
