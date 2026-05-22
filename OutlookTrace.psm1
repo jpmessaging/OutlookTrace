@@ -3683,16 +3683,17 @@ function Get-UserProfilePath {
 
 <#
 .SYNOPSIS
-Get a given user's shell folder path (e.g. "LocalAppData", "Desktop" etc.)
+Get given user's Shell Folders (e.g. "LocalAppData", "Desktop" etc.)
+Without ShellFolderName parameter, it returns all of them as a Name & Path for each.
+If ShellFolderName is given, it returns its path only. If it's missing, it return $null
 #>
 function Get-UserShellFolder {
     [CmdletBinding()]
     param(
         # User name or SID
         [string]$User,
-        [parameter(Mandatory = $true)]
         # Shell folder name (e.g. "AppData", "Desktop", "Local AppData" etc.)
-        [ValidateSet('AppData', 'Desktop', 'Local AppData', 'Programs', 'Personal', 'Startup')]
+        [ValidateSet('AppData', 'Cache', 'Desktop', 'Local AppData', 'Programs', 'Personal', 'Startup')]
         [string]$ShellFolderName
     )
 
@@ -3702,18 +3703,51 @@ function Get-UserShellFolder {
         return
     }
 
-    # Do not use Get-ItemProperty here because it'd expand environment variable.
-    $shellFolders = Get-Item $(Join-Path $userRegRoot "SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
-    $folderPath = $shellFolders.GetValue($ShellFolderName, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-    $shellFolders.Dispose()
+    $shellFolders = $null
+    $userProfile = Get-UserProfilePath $User
 
-    if (-not $folderPath) {
-        return
+    try {
+        # Do not use Get-ItemProperty here because it'd expand environment variable.
+        $shellFolders = Get-Item $(Join-Path $userRegRoot "SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders")
+
+        $names = @(
+            if ($ShellFolderName) {
+                $ShellFolderName
+            }
+            else {
+                $shellFolders.GetValueNames()
+            }
+        )
+
+        $folders = foreach ($name in $names) {
+            $path = $shellFolders.GetValue($name)
+
+            if (-not $path) {
+                continue
+            }
+
+            # Folder path is like "%USERPROFILE%\AppData\Local". Replace USERPROFILE.
+            $null = $path.Replace('%USERPROFILE%', $userProfile)
+
+            [PSCustomObject]@{
+                Name = $name
+                Path = $path
+            }
+        }
+    }
+    finally {
+        if ($shellFolders) {
+            $shellFolders.Dispose()
+        }
     }
 
-    # Folder path is like "%USERPROFILE%\AppData\Local". Replace USERPROFILE.
-    $userProfile = Get-UserProfilePath $User
-    $folderPath.Replace('%USERPROFILE%', $userProfile)
+    # Return only the path if the target ShllFolderName was given.
+    if ($ShellFolderName) {
+        $folders | Where-Object { $_.Name -eq $ShellFolderName } | Select-Object -ExpandProperty 'Path'
+    }
+    else {
+        $folders
+    }
 }
 
 <#
@@ -3885,6 +3919,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { param($User) Get-AppContainerRegistryAcl @PSBoundParameters }; ArgumentList = $userArg }
         @{ScriptBlock = { param($User) Get-StructuredQuerySchema @PSBoundParameters }; ArgumentList = $userArg }
         @{ScriptBlock = { param($User) Get-InstalledProgram @PSBoundParameters }; ArgumentList = $userArg }
+        @{ScriptBlock = { param($User) Get-UserShellFolder @PSBoundParameters }; ArgumentList = $userArg }
 
         # These are moved to Collect-OutlookInfo so that they run before Fiddler is started
         # @{ScriptBlock = { param($User) Get-WinInetProxy @PSBoundParameters }; ArgumentList = $userArg }
