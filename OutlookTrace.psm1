@@ -21,7 +21,7 @@ Note on logman provider file:
 - If a line starts with '-', the provider will be removed (if previously added)
 - If a line includes "<provider>" (with double-quotations), then anything before the first " will be skipped.
   e.g. In the following line, "foo bar " part will be skipped.
-  foo bar "{9efff48f-728d-45a1-8001-536349a2db37}"" 0xFFFFFFFFFFFFFFFF 64
+  foo bar "{9efff48f-728d-45a1-8001-536349a2db37}" 0xFFFFFFFFFFFFFFFF 64
 - A line is tokenized by a space or horizontal tab (\t).
 - At most 3 tokens are extracted (provider, flags, level). Anything after is ignored.
 #>
@@ -8313,7 +8313,7 @@ function Get-OfficeInfo {
             }
             else {
                 # This is the case where registry redirection takes place (32bit PowerShell on 64bit OS). Bail.
-                Write-Error "32bit PowerShell 2.0 is running on 64bit OS. Please run 64bit PowerShell"
+                Write-Error "32-bit PowerShell 2.0 is running on 64bit OS. Please run 64bit PowerShell"
                 return
             }
 
@@ -8340,7 +8340,7 @@ function Get-OfficeInfo {
                     $displayIcon = $subKey.GetValue('DisplayIcon')
                     $modifyPath = $subKey.GetValue('ModifyPath')
 
-                    if (($displayName -like "Microsoft Office*" -or $displayName -like "Microsoft 365 Apps*") -and $displayIcon -and $modifyPath -notlike "*MUI*") {
+                    if (($displayName -like "Microsoft Office*" -or $displayName -like "Microsoft 365 Apps*") -and $displayIcon -and $modifyPath -notlike "*MUI*" -and $displayName -notlike '*.proof') {
                         [PSCustomObject]@{
                             DisplayName = $displayName
                             Version     = $subKey.GetValue('DisplayVersion')
