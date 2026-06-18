@@ -4,9 +4,9 @@
 
 OutlookTrace.psm1 is a PowerShell script to collect several traces related to Microsoft Outlook
 
-[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2026-05-10/OutlookTrace.psm1)
+[Download](https://github.com/jpmessaging/OutlookTrace/releases/download/v2026-06-18/OutlookTrace.psm1)
 
-SHA256: `9D87786BDB1543CED7612FFE8B50946B763E102A921FFB96BA6E2ADBFA7709CE`
+SHA256: `7CADADBD136FE1470AFA459BD2F7682492344F4EC9EC3B642BD8DA158C7CC750`
 
 You can get the file hash with `Get-FileHash`:
 
@@ -202,7 +202,7 @@ If you captured a Fiddler trace, send the password used in step 10 too.
 | WprProfiles            | WPR profiles to capture (Default: `GeneralProfile`, `CPU`, `DiskIO`, `FileIO`, `Registry`, `Network`)                                          |
 | RemoveIdentityCache    | Switch to remove cached identites & authentication tokens                                                                                      |
 | SkipLoopbackExempt     | Switch to skip adding Microsoft.AAD.BrokerPlugin to LoopbackExempt                                                                             |
-| EnableWebView2DevTools | Switch to Enable WebView2 DevTools for the target process                                                                                      |
+| EnableWebView2DevTools | Switch to enable WebView2 DevTools for the target process                                                                                      |
 
 ## License
 
