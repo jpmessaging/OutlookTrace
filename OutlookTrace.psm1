@@ -3960,6 +3960,8 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-AppxPackage -AllUsers } }
         @{ScriptBlock = { Get-AppxProvisionedPackage -Online } }
 
+        @{ScriptBlock = { @('C:\Windows\System32\winhttp.dll', 'C:\Windows\System32\wininet.dll') | Get-SymbolInfo }; FileName = 'SymbolInfo.xml' }
+
         # These are just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
         @{ScriptBlock = { whoami.exe /USER }; FileName = 'whoami.txt' }
@@ -15702,17 +15704,6 @@ function Collect-OutlookInfo {
         if ($Local:netshTraceStarted) {
             Write-Progress -Status 'Stopping Netsh trace'
             Stop-NetshTrace 2>&1 | Write-Log -Category Error -PassThru
-
-            # [Experimental] Save winhttp.dll & wininet.dll for symbol lookup
-            $saveItemArgs = @{
-                Include = @('winhttp.dll', 'wininet.dll')
-            }
-
-            Save-Item -Path (Join-Path $env:SystemRoot 'System32') -Destination (Join-Path $tempPath 'Netsh\DLL') @saveItemArgs 2>&1 | Write-Log -Category Error
-
-            if ($env:PROCESSOR_ARCHITECTURE -eq 'AMD64') {
-                Save-Item -Path (Join-Path $env:SystemRoot 'SysWOW64') -Destination (Join-Path $tempPath 'Netsh\DLL32') @saveItemArgs 2>&1 | Write-Log -Category Error
-            }
         }
 
         if ($Local:outlookTraceStarted) {
