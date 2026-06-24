@@ -3960,7 +3960,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-AppxPackage -AllUsers } }
         @{ScriptBlock = { Get-AppxProvisionedPackage -Online } }
 
-        @{ScriptBlock = { @('C:\Windows\System32\winhttp.dll', 'C:\Windows\System32\wininet.dll') | Get-SymbolInfo }; FileName = 'SymbolInfo.xml' }
+        @{ScriptBlock = { @('C:\Windows\System32\winhttp.dll', 'C:\Windows\System32\wininet.dll', 'C:\Windows\SysWOW64\winhttp.dll', 'C:\Windows\SysWOW64\wininet.dll') | Get-SymbolInfo }; FileName = 'SymbolInfo.xml' }
 
         # These are just for troubleshooting.
         @{ScriptBlock = { Get-ChildItem 'Registry::HKEY_USERS' | Select-Object 'Name' }; FileName = 'Users.xml' }
@@ -12914,6 +12914,7 @@ function Get-SymbolInfo {
 
         if ($success) {
             [PSCustomObject]@{
+                Path      = $Path
                 File      = $info.file
                 Stripped  = $info.stripped
                 TimeStamp = $info.timestamp
