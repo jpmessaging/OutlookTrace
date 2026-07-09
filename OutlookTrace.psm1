@@ -3217,7 +3217,7 @@ function Test-PSR {
     $appCompat = Get-ItemProperty 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\AppCompat' -Name 'DisableUAR' -ErrorAction SilentlyContinue
 
     if ($appCompat.DisableUAR) {
-        Write-Error "PSR is disabled by policy. HKLM\SOFTWARE\Policies\Microsoft\Windows\AppCompat\DisableUAR is set to $($appCompat.DisableUAR)"
+        Write-Error "PSR (Problem Steps Recorder) is disabled by policy. HKLM\SOFTWARE\Policies\Microsoft\Windows\AppCompat\DisableUAR is set to $($appCompat.DisableUAR)"
         return $false
     }
 
