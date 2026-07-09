@@ -3198,7 +3198,34 @@ function Stop-EtwSession {
     }
 }
 
+<#
+.SYNOPSIS
+    Test if PSR is available. This command also checks if PSR is disable by policy.
+#>
+function Test-PSR {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+
+    if (-not (Get-Command 'psr.exe' -ErrorAction SilentlyContinue)) {
+        Write-Error "psr.exe is not available"
+        return $false
+    }
+
+    # If PSR is disabled by policy, bail (With admin privilege, it might be possible to change the reg value, but let's respect the policy).
+    # https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-appcompat
+    $appCompat = Get-ItemProperty 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Windows\AppCompat' -Name 'DisableUAR' -ErrorAction SilentlyContinue
+
+    if ($appCompat.DisableUAR) {
+        Write-Error "PSR is disabled by policy. HKLM\SOFTWARE\Policies\Microsoft\Windows\AppCompat\DisableUAR is set to $($appCompat.DisableUAR)"
+        return $false
+    }
+
+    $true
+}
+
 function Start-PSR {
+    [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
         $Path,
@@ -3206,8 +3233,7 @@ function Start-PSR {
         [switch]$ShowGUI
     )
 
-    if (-not (Get-Command 'psr.exe' -ErrorAction SilentlyContinue)) {
-        Write-Error "psr.exe is not available"
+    if (-not (Test-PSR)) {
         return
     }
 
@@ -15364,6 +15390,13 @@ function Collect-OutlookInfo {
 
         if ($Component -contains 'PSR') {
             Write-Progress -Status 'Starting PSR'
+
+            $err = $($psrAvailable = Test-PSR) 2>&1
+
+            if (-not $psrAvailable) {
+                Write-Error -ErrorRecord $err
+                return
+            }
 
             # Make sure psr isn't running already.
             $psrProcesses = @(Get-Process psr -ErrorAction SilentlyContinue)
