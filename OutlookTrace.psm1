@@ -3973,6 +3973,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { Get-NetFrameworkVersion } }
         @{ScriptBlock = { cmdkey /list }; FileName = 'cmdkey.txt' }
         @{ScriptBlock = { Get-StoredCredential -All } }
+        @{ScriptBlock = { Get-DefaultMailClient }}
 
         $userArg = @{ User = $User }
         @{ScriptBlock = { param($User) Get-WebView2 @PSBoundParameters }; ArgumentList = $userArg }
@@ -14340,13 +14341,6 @@ function Get-CloudSettings {
     }
 }
 
-$InstallModeMap = @{
-    'Default'            = [Win32.Msi+InstallMode]::INSTALLMODE_DEFAULT
-    'Existing'           = [Win32.Msi+InstallMode]::INSTALLMODE_EXISTING
-    'NoDetection'        = [Win32.Msi+InstallMode]::INSTALLMODE_NODETECTION
-    'NoSourceResolution' = [Win32.Msi+InstallMode]::INSTALLMODE_NOSOURCERESOLUTION
-}
-
 $OfficeCategoryMap = [ordered]@{
     'O16' = '{5812C571-53F0-4467-BEFA-0A4F47A9437C}'
     'O15' = '{E83B4360-C208-4325-9504-0D23003A74A5}'
@@ -14374,7 +14368,14 @@ function Get-MsiComponentPath {
         [string]$InstallMode = 'Default'
     )
 
-    $mode = $Script:InstallModeMap[$InstallMode]
+    $InstallModeMap = @{
+        'Default'            = [Win32.Msi+InstallMode]::INSTALLMODE_DEFAULT
+        'Existing'           = [Win32.Msi+InstallMode]::INSTALLMODE_EXISTING
+        'NoDetection'        = [Win32.Msi+InstallMode]::INSTALLMODE_NODETECTION
+        'NoSourceResolution' = [Win32.Msi+InstallMode]::INSTALLMODE_NOSOURCERESOLUTION
+    }
+
+    $mode = $InstallModeMap[$InstallMode]
     [UInt32]$cch = 0
 
     Write-Log "Invoking MsiProvideQualifiedComponentW(Category:$Category, Qualifier:$Qualifier, Mode:$mode)"
@@ -14444,20 +14445,37 @@ function Get-DefaultMailClient {
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
     param(
+        $User
     )
+
+    $userRegRoot = Get-UserRegistryRoot -User $User
+
+    if (-not $userRegRoot) {
+        return
+    }
 
     # Walk registry paths:
     # HKLM default mail client -> MSIComponentID/MSIApplicationLCID -> HKCU LCID lookup -> MSI component path.
 
     $mailClientsKey = 'Registry::HKLM\SOFTWARE\Clients\Mail'
-    $mailClientName = (Get-ItemProperty $mailClientsKey -ErrorAction SilentlyContinue).'(default)'
 
-    if (-not $mailClientName) {
+    # With Office ClickToRun, use the redirected path
+    $c2rMailClientKey = 'Registry::HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Clients\Mail'
+
+    if (Test-Path $c2rMailClientKey) {
+        $mailClientsKey = $c2rMailClientKey
+        Write-Verbose "ClickToRun registry redirection found"
+    }
+
+    $clientName = (Get-ItemProperty $mailClientsKey -ErrorAction SilentlyContinue).'(default)'
+
+    if (-not $clientName) {
         Write-Error "No default mail client"
         return
     }
 
-    $clientKey = Join-Path $mailClientsKey $mailClientName
+    # Move to the subkey with the name found above
+    $clientKey = Join-Path $mailClientsKey $clientName
 
     if (-not (Test-Path $clientKey)) {
         Write-Error "Mail client key '$clientKey' does not exist"
@@ -14484,7 +14502,8 @@ function Get-DefaultMailClient {
         return
     }
 
-    $lcidKey = Join-Path 'Registry::HKCU\Software' $clientProps.MSIApplicationLCID[0]
+    # Navigate to User registry hive
+    $lcidKey = Join-Path $userRegRoot 'Software' | Join-Path -ChildPath $clientProps.MSIApplicationLCID[0]
     $lcid = (Get-ItemProperty $lcidKey -Name $clientProps.MSIApplicationLCID[1] -ErrorAction SilentlyContinue).$($clientProps.MSIApplicationLCID[1])
 
     if (-not $lcid) {
@@ -14492,6 +14511,9 @@ function Get-DefaultMailClient {
         return
     }
 
+    # Note: When MSI API is invoked inside Outlook (C2R), it'll look for 'HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Installer\Components\F1291BD604B860441AB89E60BDEE0F9C'.
+    # But when invoked from PowerShell, it'll look for 'HKEY_CLASSES_ROOT\Installer\Components\F1291BD604B860441AB89E60BDEE0F9C'
+    # They should match, but they are separate entities.
     $msiArgs = @{
         Category    = $msiComponentId
         Qualifier   = "$lcid\NT"
@@ -14504,8 +14526,11 @@ function Get-DefaultMailClient {
         return
     }
 
+    # Note: When MSI API is invoked inside Outlook (C2R), it'll look for HKLM\SOFTWARE\Microsoft\Office\ClickToRun\REGISTRY\MACHINE\Software\Classes\Installer\Components\F1291BD604B860441AB89E60BDEE0F9C.
+    # But from PowerShell, it'll look for HKEY_CLASSES_ROOT\Installer\Components\F1291BD604B860441AB89E60BDEE0F9C == `HKLM\SOFTWARE\Classes\Installer\Components\F1291BD604B860441AB89E60BDEE0F9C`
+    # They should match, but they are separate entities.
     [PSCustomObject]@{
-        Name             = $mailClientName
+        Name             = $clientName
         MsiComponentId   = $msiComponentId
         MsiComponentLcid = $lcid
         MsiComponentPath = $componentPath
