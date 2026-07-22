@@ -6346,6 +6346,33 @@ function Save-CachedOutlookConfig {
     Save-Item -Path $sourcePath -Filter '*Config*.json' -IncludeHidden -Destination $Path -PassThru | Remove-HiddenAttribute
 }
 
+function Save-WebServiceCache {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        # Where to save
+        $Path,
+        # Target user name
+        [string]$User
+    )
+
+    $LocalAppData = 'Local AppData'
+    $sourcePath = Get-UserShellFolder -User $User -ShellFolderName $LocalAppData | Join-Path -ChildPath 'Microsoft\Office\16.0\WebServiceCache\'
+
+    if (-not $sourcePath) {
+        Write-Error "Cannot find $LocalAppData for $User"
+        return
+    }
+
+    if (-not (Test-Path $Path)) {
+        $null = New-Item $Path -ItemType Directory -ErrorAction Stop
+    }
+
+    $Path = Convert-Path -LiteralPath $Path
+
+    Save-Item -Path $sourcePath -IncludeHidden -Destination $Path -Recurse -PassThru | Remove-HiddenAttribute
+}
+
 function Remove-HiddenAttribute {
     [CmdletBinding()]
     param(
@@ -12973,7 +13000,7 @@ function Get-NetSymbolInfo {
         'C:\Windows\SysWOW64\winhttp.dll'
         'C:\Windows\SysWOW64\wininet.dll'
         'C:\Windows\SysWOW64\webio.dll'
-     } | Get-SymbolInfo 
+     } | Get-SymbolInfo
 }
 
 function Get-PresentationMode {
@@ -15441,6 +15468,8 @@ function Collect-OutlookInfo {
 
             Invoke-ScriptBlock { param($User, $Path) Save-CachedAutodiscover @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'Cached AutoDiscover' }
             Invoke-ScriptBlock { param($User, $Path) Save-CachedOutlookConfig @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'Cached OutlookConfig' }
+            Invoke-ScriptBlock { param($User, $Path) Save-WebServiceCache @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'WebServiceCache' }
+
             Invoke-ScriptBlock { param($User, $Path) Save-PolicyNudge @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'PolicyNudge' }
             Invoke-ScriptBlock { param($User, $Path) Save-DLP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'DLP' }
             Invoke-ScriptBlock { param($User, $Path) Save-CLP @PSBoundParameters } -ArgumentList @{ User = $targetUser; Path = Join-Path $OfficeDir 'CLP' }
