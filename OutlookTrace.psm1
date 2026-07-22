@@ -2218,7 +2218,8 @@ function Save-Item {
             }
 
             try {
-                Copy-Item -LiteralPath $file.FullName -Destination $dest -PassThru:$PassThru
+                # -Force will overwrite even if a hidden file with the same name exits.
+                Copy-Item -LiteralPath $file.FullName -Destination $dest -PassThru:$PassThru -Force
             }
             catch {
                 Write-Error -Message "Failed to copy '$($file.FullName)'. $_" -Exception $_.Exception
@@ -6346,6 +6347,10 @@ function Save-CachedOutlookConfig {
     Save-Item -Path $sourcePath -Filter '*Config*.json' -IncludeHidden -Destination $Path -PassThru | Remove-HiddenAttribute
 }
 
+<#
+.SYNOPSIS
+Save Office WebServiceCache under %LOCALAPPDATA%\Microsoft\Office\16.0\WebServiceCache\
+#>
 function Save-WebServiceCache {
     [CmdletBinding()]
     param(
@@ -6383,18 +6388,15 @@ function Remove-HiddenAttribute {
     )
 
     process {
-        try {
-            if ((Get-ItemProperty $Path).Attributes -band [IO.FileAttributes]::Hidden) {
-                (Get-ItemProperty $Path).Attributes -= 'Hidden'
-                return
-            }
-        }
-        catch {
-            # ignore
+        $prop = Get-ItemProperty $Path
+
+        if (-not $prop) {
+            return
         }
 
-        # This could fail if attributes other than Archive, Hidden, Normal, ReadOnly, or System are set (such as NotContentIndexed)
-        Set-ItemProperty $Path -Name Attributes -Value ((Get-ItemProperty $Path).Attributes -bxor [IO.FileAttributes]::Hidden)
+        if ($prop.Attributes -band [IO.FileAttributes]::Hidden) {
+            Set-ItemProperty $Path -Name Attributes -Value ($prop.Attributes -band -bnot [IO.FileAttributes]::Hidden)
+        }
     }
 }
 
