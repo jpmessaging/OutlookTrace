@@ -1,11 +1,14 @@
-#include "pch.h"
+#include <winrt/windows.foundation.h>
+#include <winrt/windows.security.authentication.web.core.h>
+#include <WebAuthenticationCoreManagerInterop.h>
+#include <Windows.h>
 
 BOOL APIENTRY DllMain(
     HMODULE hModule,
-    DWORD  ul_reason_for_call,
-    [[maybe_unused]] LPVOID lpReserved)
+    DWORD  reason,
+    LPVOID /*lpReserved*/)
 {
-    switch (ul_reason_for_call)
+    switch (reason)
     {
     case DLL_PROCESS_ATTACH:
     {

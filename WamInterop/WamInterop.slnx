@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="WamInterop/WamInterop.vcxproj" Id="2f08a799-6b62-486f-8eff-5d7f1a1da246" />
+</Solution>
