@@ -12011,6 +12011,12 @@ function Compress-File {
     if ($outToFile) {
         $DestinationPath = [IO.Path]::GetFullPath([IO.Path]::Combine($PWD.ProviderPath, $DestinationPath))
 
+        # DestinationPath must be a file path, not a directory.
+        if (Test-Path -LiteralPath $DestinationPath -PathType Container) {
+            Write-Error "DestinationPath is a directory (`"$DestinationPath`"). Specify a file path."
+            return
+        }
+
         if (-not $Force -and (Test-Path -LiteralPath $DestinationPath -PathType Leaf)) {
             Write-Error "DestinationPath already exists (`"$DestinationPath`"). To overwrite, use -Force switch"
             return
@@ -12026,13 +12032,18 @@ function Compress-File {
     $istream = $null
     $ostream = $null
     $deflate = $null
+    $tempPath = $null
+    $tempCreated = $false
     $succeeded = $false
 
     try {
         $istream = [System.IO.File]::OpenRead($Path)
 
         $ostream = if ($outToFile) {
-            [System.IO.File]::Create($DestinationPath)
+            # Create a temporary file in the same directory as DestinationPath
+            $tempPath = Join-Path ([IO.Path]::GetDirectoryName($DestinationPath)) "$([Guid]::NewGuid().ToString('N')).tmp"
+            [System.IO.FileStream]::new($tempPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            $tempCreated = $true
         }
         else {
             [System.IO.MemoryStream]::new()
@@ -12041,23 +12052,49 @@ function Compress-File {
         $deflate = [System.IO.Compression.DeflateStream]::new(
             $ostream,
             $CompressionLevel,
-            $false # LeaveOpen
+            $false # LeaveOpen is false so disposing deflate stream will also close the underlying stream (i.e. $ostream)
         )
 
         $istream.CopyTo($deflate)
+
+        # Record success after Deflate finalization
+        $deflate.Dispose()
+        $deflate = $null
+
+        # Replace or move the temp file to DestinationPath
+        # Note: Strictly speaking, there's a race condition after the temp file is close above and used for move/replace below.
+        # To avoid that, I need to keep the file handle open and use it to rename/move file using Win32 API SetFileInformationByHandle.
+        # But that's overkill for this scenario.
+        if ($outToFile) {
+            if (Test-Path -LiteralPath $DestinationPath -PathType Leaf) {
+                if (-not $Force) {
+                    Write-Error "DestinationPath already exists (`"$DestinationPath`"). To overwrite, use -Force switch"
+                    return
+                }
+
+                # For the last param, $null cannot be used because PowerShell converts $null to an empty string
+                # It'd fail like "MethodInvocationException: Exception calling "Replace" with "3" argument(s): "The path is empty. (Parameter 'path')"
+                [IO.File]::Replace($tempPath, $DestinationPath, <# destinationBackupFileName #> [NullString]::Value)
+            }
+            else {
+                # Move the temp file to DestinationPath
+                [IO.File]::Move($tempPath, $DestinationPath)
+            }
+        }
+
         $succeeded = $true
     }
     catch {
         Write-Error -ErrorRecord $_
     }
     finally {
-        if ($deflate) { $deflate.Dispose() }
-        if ($ostream) { $ostream.Dispose() }
-        if ($istream) { $istream.Dispose() }
+        if ($deflate) { try { $deflate.Dispose() } catch { Write-Error -ErrorRecord $_ } }
+        if ($ostream) { try { $ostream.Dispose() } catch { Write-Error -ErrorRecord $_ } }
+        if ($istream) { try { $istream.Dispose() } catch { Write-Error -ErrorRecord $_ } }
 
         # Just in case CopyTo() fails in middle of write. Remove incomplete output file.
-        if ($outToFile -and -not $succeeded -and (Test-Path -LiteralPath $DestinationPath -PathType Leaf)) {
-            Remove-Item -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue
+        if (-not $succeeded -and $tempCreated) {
+            Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
         }
     }
 
