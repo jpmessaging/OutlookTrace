@@ -4,9 +4,9 @@
 
 OutlookTrace.psm1 は Outlook に関する情報採取用の PowerShell スクリプトです。
 
-[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2026-07-22/OutlookTrace.psm1)
+[ダウンロード](https://github.com/jpmessaging/OutlookTrace/releases/download/v2026-08-09/OutlookTrace.psm1)
 
-SHA256: `B13C82BC26384A82A0599FD3BC761B196D7DB53F04593F71B2AEFA5EF55167BF`
+SHA256: `0FAF4CD3CB9620588487F9CA5DCC1AED79512D5A77862FA4CC443790A7EB6E10`
 
 `Get-FileHash` コマンドでファイル ハッシュを取得できます:
 
@@ -19,7 +19,7 @@ Fiddler トレースや Process Monitor ログ、ZoomIt によるスクリーン
 - [Fiddler Everywhere Reporter](https://api.getfiddler.com/reporter/win/latest)
 - [Process Monitor](https://download.sysinternals.com/files/ProcessMonitor.zip)
 - [ZoomIt](https://download.sysinternals.com/files/ZoomIt.zip)
-- [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-584-0/TTD.msixbundle)
+- [TTD](https://windbg.download.prss.microsoft.com/dbazure/prod/1-11-611-0/TTD.msixbundle)
 
 いずれも `Collect-OutlookInfo` の `-Path` パラメータで指定するフォルダ配下に配置ください。  
 
