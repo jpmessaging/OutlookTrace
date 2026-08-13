@@ -3989,6 +3989,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { cmdkey /list }; FileName = 'cmdkey.txt' }
         @{ScriptBlock = { Get-StoredCredential -All } }
         @{ScriptBlock = { Get-DefaultMailClient } }
+        @{ScriptBlock = { Get-ToastNotifier -AppUserModelId 'Microsoft.Office.OUTLOOK.EXE.15' }}
 
         $userArg = @{ User = $User }
         @{ScriptBlock = { param($User) Get-WebView2 @PSBoundParameters }; ArgumentList = $userArg }
@@ -12008,6 +12009,9 @@ function Save-WamInteropDll {
 .SYNOPSIS
     Get WinRT ToastNotifier's Setting for a specific AppUserModelId
 
+.NOTES
+    ToastNotifier's Setting depends on the User. So this command should be run by the user of interest.
+
 .LINK
     - ToastNotifier Class
       https://learn.microsoft.com/en-us/uwp/api/windows.ui.notifications.toastnotifier?view=winrt-28000
@@ -12016,11 +12020,13 @@ function Save-WamInteropDll {
       https://learn.microsoft.com/en-us/uwp/api/windows.ui.notifications.toastnotifier.setting?view=winrt-28000
 
 .EXAMPLE
+    Get-ToastNotifier -AppUserModelId 'Microsoft.Office.OUTLOOK.EXE.15'
 #>
 function Get-ToastNotifier {
     [CmdletBinding()]
+    [OutputType([PSCustomObject])]
     param(
-        # Target AppUserModelId
+        # Target AppUserModelId (e.g. 'Microsoft.Office.OUTLOOK.EXE.15')
         [Parameter(Mandatory)]
         [string]$AppUserModelId
     )
