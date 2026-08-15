@@ -12021,16 +12021,20 @@ function Save-WamInteropDll {
 
 .EXAMPLE
     Get-ToastNotifier -AppUserModelId 'Microsoft.Office.OUTLOOK.EXE.15'
+
+.EXAMPLE
+    Get-ToastNotifier -AppUserModelId 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows'
 #>
 function Get-ToastNotifier {
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
     param(
-        # Target AppUserModelId (e.g. 'Microsoft.Office.OUTLOOK.EXE.15')
+        # Target AppUserModelId (e.g. 'Microsoft.Office.OUTLOOK.EXE.15', 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows')
         [Parameter(Mandatory)]
         [string]$AppUserModelId
     )
 
+    # Verify if WinRT API is available.
     if (-not (Test-WinRTApi -TypeName 'Windows.UI.Notifications.ToastNotificationManager' -MethodName 'CreateToastNotifier')) {
         return
     }
@@ -12066,14 +12070,32 @@ function Get-ToastNotifier {
     }
 }
 
+<#
+.SYNOPSIS
+    Show a toast notification using WinRT ToastNotifier for a specific AppUserModelId
+
+.EXAMPLE
+    Show-ToastNotification -AppUserModelId 'Microsoft.Office.OUTLOOK.EXE.15' -Message 'This is a test notification'
+    Show a toast notification as Classic Outlook.
+
+.EXAMPLE
+    Show-ToastNotification -AppUserModelId 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows' -Message 'This is a test notification'
+    Show a toast notification as New Outlook.
+#>
 function Show-ToastNotification {
-    [CmdletBinding()]
+    [CmdletBinding(PositionalBinding = $false)]
     param(
-        # Target AppUserModelId (e.g. 'Microsoft.Office.OUTLOOK.EXE.15')
         [Parameter(Mandatory)]
+        # Target AppUserModelId (e.g. 'Microsoft.Office.OUTLOOK.EXE.15', 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows').
         [string]$AppUserModelId,
+        # Optional message to show in the toast notification.
         [string]$Message
     )
+
+    # Verify if WinRT API is available.
+    if (-not (Test-WinRTApi -TypeName 'Windows.UI.Notifications.ToastNotificationManager' -MethodName 'CreateToastNotifier')) {
+        return
+    }
 
     $toastXml = $null
     $toast = $null
@@ -12096,8 +12118,6 @@ function Show-ToastNotification {
         }
 
         # Create ToastNotification from XmlDocument
-        $toast = $null
-
         try {
             $toast= [Windows.UI.Notifications.ToastNotification, Windows, ContentType = WindowsRuntime]::new($toastXml)
         }
@@ -12110,8 +12130,6 @@ function Show-ToastNotification {
         }
 
         # Create a ToastNotifier for the specified AppUserModelId and show the toast notification
-        $notifier = $null
-
         try {
             $notifier = [Windows.UI.Notifications.ToastNotificationManager, Windows, ContentType = WindowsRuntime]::CreateToastNotifier($AppUserModelId)
         }
@@ -12124,8 +12142,9 @@ function Show-ToastNotification {
         }
 
         if ($notifier.Setting -ne [Windows.UI.Notifications.NotificationSetting]::Enabled) {
-            Write-Warning "ToastNotification is disabled for AppUserModelId:$AppUserModelId. Setting:$($notifier.Setting)"
-            # Note: Even if notification is disable, this command continue to invoke Show() because this command is intended for troubleshooting purpose.
+            $currentUser = Resolve-User ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -ErrorAction SilentlyContinue
+            Write-Warning "ToastNotification is disabled for AppUserModelId:$AppUserModelId. User:$currentUser, Setting:$($notifier.Setting)"
+            # Note: Even if notification is disable, continue to invoke Show() because this command is intended for troubleshooting purpose.
         }
 
         try {
