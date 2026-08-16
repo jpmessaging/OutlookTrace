@@ -3989,7 +3989,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { cmdkey /list }; FileName = 'cmdkey.txt' }
         @{ScriptBlock = { Get-StoredCredential -All } }
         @{ScriptBlock = { Get-DefaultMailClient } }
-        @{ScriptBlock = { Get-ToastNotifier -AppUserModelId 'Microsoft.Office.OUTLOOK.EXE.15' }}
+        @{ScriptBlock = { 'Microsoft.Office.OUTLOOK.EXE.15', 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows' | Get-ToastNotifier }; FileName = 'ToastNotifier.xml' }
 
         $userArg = @{ User = $User }
         @{ScriptBlock = { param($User) Get-WebView2 @PSBoundParameters }; ArgumentList = $userArg }
@@ -12030,41 +12030,51 @@ function Get-ToastNotifier {
     [OutputType([PSCustomObject])]
     param(
         # Target AppUserModelId (e.g. 'Microsoft.Office.OUTLOOK.EXE.15', 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows')
-        [Parameter(Mandatory)]
+        [Parameter(Mandatory, ValueFromPipeline = $true)]
         [string]$AppUserModelId
     )
 
-    # Verify if WinRT API is available.
-    if (-not (Test-WinRTApi -TypeName 'Windows.UI.Notifications.ToastNotificationManager' -MethodName 'CreateToastNotifier')) {
-        return
-    }
+    begin {
+        $beginOk = $false
 
-    $currentUser = Resolve-User ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -ErrorAction SilentlyContinue
-    $notifier = $null
-
-    try {
-        $notifier = [Windows.UI.Notifications.ToastNotificationManager, Windows, ContentType = WindowsRuntime]::CreateToastNotifier($AppUserModelId)
-    }
-    catch {
-        Write-Error -Message "Windows.UI.Notifications.ToastNotificationManager.CreateToastNotifier failed" -Exception $_.Exception
-    }
-
-    if ($null -eq $notifier) {
-        return
-    }
-
-    try {
-        [PSCustomObject]@{
-            User           = $currentUser
-            AppUserModelId = $AppUserModelId
-            Setting        = $notifier.Setting
+        # Verify if WinRT API is available.
+        if (-not (Test-WinRTApi -TypeName 'Windows.UI.Notifications.ToastNotificationManager' -MethodName 'CreateToastNotifier')) {
+            return
         }
+
+        $currentUser = Resolve-User ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -ErrorAction SilentlyContinue
+        $beginOk = $true
     }
-    catch {
-        Write-Error -Message "Failed to get ToastNotifier.Setting" -Exception $_.Exception
-    }
-    finally {
-        if ($notifier) {
+
+    process {
+        if (-not $beginOk) {
+            return
+        }
+
+        $notifier = $null
+
+        try {
+            $notifier = [Windows.UI.Notifications.ToastNotificationManager, Windows, ContentType = WindowsRuntime]::CreateToastNotifier($AppUserModelId)
+        }
+        catch {
+            Write-Error -Message "Windows.UI.Notifications.ToastNotificationManager.CreateToastNotifier failed" -Exception $_.Exception
+        }
+
+        if ($null -eq $notifier) {
+            return
+        }
+
+        try {
+            [PSCustomObject]@{
+                User           = $currentUser
+                AppUserModelId = $AppUserModelId
+                Setting        = $notifier.Setting
+            }
+        }
+        catch {
+            Write-Error -Message "Failed to get ToastNotifier.Setting" -Exception $_.Exception
+        }
+        finally {
             $null = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($notifier)
         }
     }
