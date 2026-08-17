@@ -11535,6 +11535,11 @@ function Get-WebAccount {
 
     $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
 
+    if (-not $provider) {
+        Write-Error "Failed to get WebAccountProvider for ProviderId:$ProviderId, Authority:$Authority"
+        return
+    }
+
     $findAllAccountsResult = [Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager, Windows, ContentType = WindowsRuntime]::FindAllAccountsAsync($provider, $ClientId) `
     | Receive-WinRTAsyncResult -TResult ([Windows.Security.Authentication.Web.Core.FindAllAccountsResult, Windows, ContentType = WindowsRuntime])
 
@@ -11677,6 +11682,12 @@ function Get-TokenSilently {
     Write-Log "Get-TokenSilently() called with ProviderId:$ProviderId, Authority:$Authority, ClientId:$ClientId, Scopes:$Scopes, Resource:$Resource, AddWamCompat:$AddWamCompat, AddClaimCapability:$AddClaimCapability, IncludeRawToken:$IncludeRawToken, WebAccount:$($WebAccount.Id)"
 
     $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
+
+    if (-not $provider) {
+        Write-Error "Failed to get WebAccountProvider for ProviderId:$ProviderId, Authority:$Authority"
+        return
+    }
+
     $request = New-WebTokenRequest -Provider $provider -Scopes $Scopes -ClientId $ClientId -Resource $Resource -AddWamCompat:$AddWamCompat -AddClaimCapability:$AddClaimCapability -Properties $RequestProperties
 
     if ($WebAccount) {
@@ -11755,7 +11766,6 @@ function Invoke-RequestToken {
     }
 
     $interopDllPath = Join-Path $env:TEMP 'WamInterop.dll'
-
     $hModule = [IntPtr]::Zero
 
     $currentProc = Get-Process -Id $PID
@@ -11809,15 +11819,28 @@ function Invoke-RequestToken {
         Write-Log "WamInterop.dll is already loaded"
     }
 
-    $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
-    $request = New-WebTokenRequest -Provider $provider -Scopes $Scopes -ClientId $ClientId -Resource $Resource -AddWamCompat:$AddWamCompat -AddClaimCapability:$AddClaimCapability -Properties $RequestProperties `
-        -PromptType ([Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]::ForceAuthentication)
-
     $hwnd = [IntPtr]::Zero
     $runSpaceOpened = $false
     $requestResult = $null
+    $provider = $null
+    $request = $null
 
     try {
+        $provider = Get-WebAccountProvider -ProviderId $ProviderId -Authority $Authority
+
+        if (-not $provider) {
+            Write-Error "Failed to get WebAccountProvider for ProviderId:$ProviderId, Authority:$Authority"
+            return
+        }
+
+        $request = New-WebTokenRequest -Provider $provider -Scopes $Scopes -ClientId $ClientId -Resource $Resource -AddWamCompat:$AddWamCompat -AddClaimCapability:$AddClaimCapability -Properties $RequestProperties `
+            -PromptType ([Windows.Security.Authentication.Web.Core.WebTokenRequestPromptType]::ForceAuthentication)
+
+        if (-not $request) {
+            Write-Error "Failed to create WebTokenRequest"
+            return
+        }
+
         if (-not $Script:RunspacePool) {
             Open-TaskRunspace
             $runSpaceOpened = $true
@@ -11856,8 +11879,13 @@ function Invoke-RequestToken {
         Write-Error -ErrorRecord $_
     }
     finally {
-        $null = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($request)
-        $null = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($provider)
+        if ($request) {
+            $null = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($request)
+        }
+
+        if ($provider) {
+            $null = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($provider)
+        }
 
         if ($hwnd -ne [IntPtr]::Zero) {
             # Destroy anchor window
