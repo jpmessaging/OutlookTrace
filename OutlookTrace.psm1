@@ -3989,7 +3989,7 @@ function Save-OSConfiguration {
         @{ScriptBlock = { cmdkey /list }; FileName = 'cmdkey.txt' }
         @{ScriptBlock = { Get-StoredCredential -All } }
         @{ScriptBlock = { Get-DefaultMailClient } }
-        @{ScriptBlock = { 'Microsoft.Office.OUTLOOK.EXE.15', 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows' | Get-ToastNotifier }; FileName = 'ToastNotifier.xml' }
+        @{ScriptBlock = { $Script:AppUserModelIds.Values | Get-ToastNotifier }; FileName = 'ToastNotifier.xml' }
 
         $userArg = @{ User = $User }
         @{ScriptBlock = { param($User) Get-WebView2 @PSBoundParameters }; ArgumentList = $userArg }
@@ -12031,6 +12031,12 @@ function Save-WamInteropDll {
             $deflateStream.Dispose()
         }
     }
+}
+
+# AppUserModelIds for Outlook family
+$AppUserModelIds = @{
+    ClassicOutlook = 'Microsoft.Office.OUTLOOK.EXE.15'
+    NewOutlook     = 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows'
 }
 
 <#
