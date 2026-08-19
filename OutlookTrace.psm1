@@ -11348,7 +11348,7 @@ $WAM = @{
     Scopes     = @{
         # Note: scopes are space-delimited strings:
         # https://datatracker.ietf.org/doc/html/rfc6749#section-3.3
-        Default = 'https://outlook.office365.com//.default offline_access openid profile'
+        Default = 'offline_access openid profile'
     }
 }
 
@@ -11661,7 +11661,7 @@ function Get-TokenSilently {
         # https://datatracker.ietf.org/doc/html/rfc6749#section-3.3
         # e.g. "https://outlook.office365.com//.default offline_access openid profile"
         [string]$Scopes,
-        # e.g. 'https://outlook.office365.com', 'https://graph.windows.net'
+        # e.g. 'https://outlook.office365.com/', 'https://graph.windows.net'
         [string]$Resource,
         # Add "wam_compat=2.0" to request
         [switch]$AddWamCompat,
@@ -11686,6 +11686,11 @@ function Get-TokenSilently {
     if (-not $provider) {
         Write-Error "Failed to get WebAccountProvider for ProviderId:$ProviderId, Authority:$Authority"
         return
+    }
+
+    if ($AddWamCompat -and (-not $Authority.StartsWith('http')) -and (-not $Scopes)) {
+        $Scopes = Get-DefaultScopes -Resource $Resource
+        Write-Log "AddWamCompat is specified but Scopes is not. Using default Scopes:$Scopes"
     }
 
     $request = New-WebTokenRequest -Provider $provider -Scopes $Scopes -ClientId $ClientId -Resource $Resource -AddWamCompat:$AddWamCompat -AddClaimCapability:$AddClaimCapability -Properties $RequestProperties
@@ -11749,7 +11754,7 @@ function Invoke-RequestToken {
         # https://datatracker.ietf.org/doc/html/rfc6749#section-3.3
         # e.g. "https://outlook.office365.com//.default offline_access openid profile"
         [string]$Scopes,
-        # e.g. 'https://outlook.office365.com', 'https://graph.windows.net'
+        # e.g. 'https://outlook.office365.com/', 'https://graph.windows.net'
         [string]$Resource,
         # Add "wam_compat=2.0" to request
         [Switch]$AddWamCompat,
@@ -11831,6 +11836,12 @@ function Invoke-RequestToken {
         if (-not $provider) {
             Write-Error "Failed to get WebAccountProvider for ProviderId:$ProviderId, Authority:$Authority"
             return
+        }
+
+        # When WamCompat is added for Microsoft IdP, scope must be specified.
+        if ($AddWamCompat -and (-not $Authority.StartsWith('http')) -and (-not $Scopes)) {
+            $Scopes = Get-DefaultScopes -Resource $Resource
+            Write-Log "AddWamCompat is specified but Scopes is not. Using default Scopes:$Scopes"
         }
 
         $request = New-WebTokenRequest -Provider $provider -Scopes $Scopes -ClientId $ClientId -Resource $Resource -AddWamCompat:$AddWamCompat -AddClaimCapability:$AddClaimCapability -Properties $RequestProperties `
@@ -11922,6 +11933,24 @@ function Invoke-RequestToken {
 
     $requestResult | Format-WebTokenRequestResult -IncludeRawToken:$IncludeRawToken
     $null = [System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($requestResult)
+}
+
+function Get-DefaultScopes {
+    [CmdletBinding(PositionalBinding = $false)]
+    [OutputType([string])]
+    param(
+        [string]$Resource
+    )
+
+    $sb = New-Object System.Text.StringBuilder
+
+    if ($Resource) {
+        $normalizedResource = $Resource.TrimEnd('/')
+        $null = $sb.Append("$normalizedResource/.default ")
+    }
+
+    $null = $sb.Append($Script:WAM.Scopes.Default)
+    $sb.ToString()
 }
 
 function Test-WamInteropDllHash {
