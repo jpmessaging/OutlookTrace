@@ -15191,7 +15191,7 @@ function Get-ExperimentConfigs {
 
     # Parse FCMap
     # It's an array of kvp, where Key is "F" and Value is "V".
-    # Note:fcMap itself should not be an object because it's possible that there are multiple properties with the same name with different cases
+    # Note: fcMap itself should not be an object because it's possible that there are multiple properties with the same name with different cases
     # e.g. "Microsoft.Office.FileIO.NoDocumentVersionsCommandsForHistoricVersions" & "Microsoft.Office.FileIO.nodocumentversionscommandsforhistoricversions"
     $fcMap = @(
         foreach ($item in $config.FCMap) {
@@ -15202,11 +15202,11 @@ function Get-ExperimentConfigs {
         }
     )
 
-    # Parse FCGroupMap
+    # Parse FCGroupMap (It might not exist. That's why SilentlyContinue is necessary for Get-Member)
     # It's an object with properties called "FCGroupMap_1", "FCGroupMap_2" etc. and each group is an array of kvp, where Key is "F" and Value is "V".
     $fcGroupMap = @{}
 
-    $config.FCGroupMap | Get-Member -MemberType Properties | & {
+    $config.FCGroupMap | Get-Member -MemberType Properties -ErrorAction SilentlyContinue | & {
         process {
             $values = @(
                 foreach ($item in $config.FCGroupMap.($_.Name)) {
@@ -15230,7 +15230,7 @@ function Get-ExperimentConfigs {
         ExpiryTime            = if ($SkipParsing) { $config.ExpTime } else { [DateTimeOffset]::FromUnixTimeSeconds(($config.ExpTime | Get-Value)) }
         ETag                  = $config.ETag | Get-Value
         FeatureConfigMap      = $fcMap
-        GroupFeatureConfigMap = [PSCustomObject]$fCGroupMap
+        GroupFeatureConfigMap = [PSCustomObject]$fcGroupMap
     }
 
     $PSDefaultParameterValues.Remove($skipParamKey)
