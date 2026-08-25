@@ -6393,6 +6393,13 @@ function Save-WebServiceCache {
     Save-Item -Path $sourcePath -IncludeHidden -Destination $Path -Recurse -PassThru | Remove-HiddenAttribute
 }
 
+<#
+.SYNOPSIS
+    Run MdmDiagnosticsTool.exe to save its output to the given directory.
+
+.EXAMPLE
+    Save-MdmDiagnostics -Path "C:\Temp\MdmDiagnostics"
+#>
 function Save-MdmDiagnostics {
     [CmdletBinding()]
     param(
@@ -12189,6 +12196,10 @@ function Get-ToastNotifier {
 .EXAMPLE
     Show-ToastNotification -AppUserModelId 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows' -Message 'This is a test notification'
     Show a toast notification as New Outlook.
+
+.EXAMPLE
+    Show-ToastNotification -AppUserModelId 'Microsoft.Office.OUTLOOK.EXE.15' -Message 'First line', 'Second line', 'Third line'
+    Show a toast notification as Classic Outlook with 3 lines of messages.
 #>
 function Show-ToastNotification {
     [CmdletBinding(PositionalBinding = $false)]
@@ -12196,8 +12207,9 @@ function Show-ToastNotification {
         [Parameter(Mandatory)]
         # Target AppUserModelId (e.g. 'Microsoft.Office.OUTLOOK.EXE.15', 'Microsoft.OutlookForWindows_8wekyb3d8bbwe!Microsoft.OutlookforWindows').
         [string]$AppUserModelId,
-        # Optional message to show in the toast notification.
-        [string]$Message
+        # Optional messages to show in the toast notification. At most 3 messages are supported.
+        [ValidateCount(1, 3)]
+        [string[]]$Message
     )
 
     # Verify if WinRT API is available.
@@ -12210,24 +12222,31 @@ function Show-ToastNotification {
     $notifier = $null
 
     try {
-        # ToastTemplateType::ToastText01 looks like this:
+        # ToastTemplateType::ToastText01 and its siblings look like this:
         # <toast><visual><binding template="ToastText01"><text id="1"></text></binding></visual></toast>
-        # see: https://learn.microsoft.com/en-us/uwp/api/windows.ui.notifications.toasttemplatetype?view=winrt-28000
-        $toastXml = [Windows.UI.Notifications.ToastNotificationManager, Windows, ContentType = WindowsRuntime]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType, Windows, ContentType = WindowsRuntime]::ToastText01)
+        # <toast><visual><binding template="ToastText02"><text id="1"></text><text id="2"></text></binding></visual></toast>
+        # <toast><visual><binding template="ToastText03"><text id="1"></text><text id="2"></text></binding></visual></toast>
+        # <toast><visual><binding template="ToastText04"><text id="1"></text><text id="2"></text><text id="3"></text></binding></visual></toast>
+        # see: https://learn.microsoft.com/en-us/uwp/api/windows.ui.notifications.toasttemplatetype
+        # You can use GetXml() method on Windows.Data.Xml.Dom.XmlDocument to get plain xml string.
+        $template = [Windows.UI.Notifications.ToastTemplateType, Windows, ContentType = WindowsRuntime]::ToastText04
+        $toastXml = [Windows.UI.Notifications.ToastNotificationManager, Windows, ContentType = WindowsRuntime]::GetTemplateContent($template)
 
-        # Note: Message is not validated here on purpose.
-        if ($Message) {
-            $node = $toastXml.SelectSingleNode('//text[@id="1"]')
+        # Add messages to the toast xml
+        $i = 0;
 
-            if ($null -ne $node) {
-                # Note: Do not use $node.AppendChild() because of marshalling issue of WinRT object in PowerShell (It'd crash powreshell.exe)
-                $node.InnerText = $Message
+        foreach ($msg in $Message) {
+            ++$i
+            if (-not $msg) { continue }
+
+            if ($node = $toastXml.SelectSingleNode("//text[@id='$i']")) {
+                $node.InnerText = $msg
             }
         }
 
         # Create ToastNotification from XmlDocument
         try {
-            $toast= [Windows.UI.Notifications.ToastNotification, Windows, ContentType = WindowsRuntime]::new($toastXml)
+            $toast = [Windows.UI.Notifications.ToastNotification, Windows, ContentType = WindowsRuntime]::new($toastXml)
         }
         catch {
             Write-Error -Message "Failed to create ToastNotification" -Exception $_.Exception
