@@ -1,0 +1,61 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build WamInterop",
+            "type": "shell",
+            "command": "${workspaceFolder}/WamInterop/Build.ps1",
+            "args": [
+                "-Configuration", "${input:Configuration}",
+                "-Platform", "x64",
+                "-Action", "${input:Action}"
+            ],
+            "group": { "kind": "build", "isDefault": true },
+            "options": {
+                "shell": {
+                    "executable": "pwsh",
+                    "args": ["-NoLogo", "-NoProfile", "-File"]
+                }
+            }
+        },
+        {
+            "label": "Build WamInterop Debug|x64",
+            "type": "shell",
+            "command": "${workspaceFolder}/WamInterop/Build.ps1",
+            "args": [
+                "-Configuration", "Debug",
+                "-Platform", "x64"
+            ],
+            "group": { "kind": "build"  },
+            "options": {
+                "shell": {
+                    "executable": "pwsh",
+                    "args": ["-NoLogo", "-NoProfile", "-File"]
+                }
+            }
+        },
+    ],
+    "inputs": [
+        {
+            "id": "Action",
+            "type": "pickString",
+            "description": "Select the build action",
+            "options": [
+                "Build",
+                "Rebuild",
+                "Clean"
+            ],
+            "default": "Build"
+        },
+        {
+            "id": "Configuration",
+            "type": "pickString",
+            "description": "Select the build configuration",
+            "options": [
+                "Debug",
+                "Release"
+            ],
+            "default": "Debug"
+        }
+    ]
+}

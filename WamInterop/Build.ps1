@@ -1,42 +1,42 @@
 <#
 .SYNOPSIS
-Builds the WamInterop C++ project with Visual Studio Build Tools.
+Builds the WamInterop with Visual Studio Build Tools.
 
 .DESCRIPTION
-Locates MSBuild through vswhere.exe, then builds WamInterop.vcxproj using the
-requested configuration, platform, and target.
+Locates MSBuild through vswhere.exe, then builds WamInterop.slnx using the requested configuration, platform, and action
 
 .EXAMPLE
 .\Build.ps1
 
-Builds Release|x64.
+Builds Debug|x64.
 
 .EXAMPLE
-.\Build.ps1 -Configuration Debug -Platform Win32 -Target Rebuild
+.\Build.ps1 -Configuration Release -Platform x64 -Action Rebuild
 #>
 [CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Release',
+    [string]$Configuration = 'Debug',
 
     [ValidateSet('Win32', 'x64')]
     [string]$Platform = 'x64',
 
     [ValidateSet('Build', 'Rebuild', 'Clean')]
-    [string]$Target = 'Build'
+    [string]$Action = 'Build'
 )
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+$slnPath = Join-Path $PSScriptRoot 'WamInterop.slnx'
 
-$projectPath = Join-Path $PSScriptRoot 'WamInterop\WamInterop.vcxproj'
-if (-not (Test-Path -LiteralPath $projectPath -PathType Leaf)) {
-    throw "Project file was not found: $projectPath"
+if (-not (Test-Path -LiteralPath $slnPath -PathType Leaf)) {
+    Write-Error "Cannot find the solution file: $slnPath"
+    return
 }
 
 $vswherePath = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+
 if (-not (Test-Path -LiteralPath $vswherePath -PathType Leaf)) {
-    throw 'vswhere.exe was not found. Install Visual Studio Build Tools with the Desktop development with C++ workload.'
+    Write-Error 'vswhere.exe was not found. Install Visual Studio Build Tools with the Desktop development with C++ workload.'
+    return
 }
 
 $msbuildPath = & $vswherePath `
@@ -47,22 +47,23 @@ $msbuildPath = & $vswherePath `
     Select-Object -First 1
 
 if (-not $msbuildPath -or -not (Test-Path -LiteralPath $msbuildPath -PathType Leaf)) {
-    throw 'MSBuild with the Visual C++ tools was not found. Install the Desktop development with C++ workload.'
+    Write-Error 'MSBuild with the Visual C++ tools was not found. Install the Desktop development with C++ workload.'
+    return
 }
 
-Write-Host "MSBuild:      $msbuildPath"
-Write-Host "Project:      $projectPath"
-Write-Host "Configuration: $Configuration|$Platform"
-Write-Host "Target:        $Target"
+Write-Host "MSBuild       : $msbuildPath"
+Write-Host "Solution      : $slnPath"
+Write-Host "Configuration : $Configuration|$Platform"
+Write-Host "Action        : $Action"
 
-& $msbuildPath $projectPath `
-    "/t:$Target" `
-    "/p:Configuration=$Configuration" `
-    "/p:Platform=$Platform" `
-    '/m' `
-    '/nologo' `
-    '/verbosity:minimal'
+& $msbuildPath $slnPath `
+    "-t:$Action" `
+    "-p:Configuration=$Configuration" `
+    "-p:Platform=$Platform" `
+    '-maxCpuCount' `
+    '-nologo' `
+    '-verbosity:minimal'
 
 if ($LASTEXITCODE -ne 0) {
-    throw "MSBuild failed with exit code $LASTEXITCODE."
+    Write-Error "MSBuild failed with exit code $LASTEXITCODE."
 }
