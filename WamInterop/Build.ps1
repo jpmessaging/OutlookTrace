@@ -56,13 +56,18 @@ Write-Host "Solution      : $slnPath"
 Write-Host "Configuration : $Configuration|$Platform"
 Write-Host "Action        : $Action"
 
-& $msbuildPath $slnPath `
-    "-t:$Action" `
-    "-p:Configuration=$Configuration" `
-    "-p:Platform=$Platform" `
-    '-maxCpuCount' `
-    '-nologo' `
-    '-verbosity:minimal'
+$msbuildArgs = @(
+    $slnPath
+    "-t:$Action"
+    "-p:Configuration=$Configuration"
+    "-p:Platform=$Platform"
+    '-maxCpuCount'
+    '-nologo'
+    # The available verbosity levels are: q[uiet], m[inimal], n[ormal], d[etailed], and diag[nostic].
+    "-verbosity:minimal"
+)
+
+& $msbuildPath $msbuildArgs
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "MSBuild failed with exit code $LASTEXITCODE."

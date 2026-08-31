@@ -66,59 +66,63 @@ HRESULT RequestToken(
     return hr;
 }
 
-LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-    switch (msg)
-    {
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
-
-    default:
-        return DefWindowProc(hwnd, msg, wParam, lParam);
-    }
-}
-
+/** Create a hidden window that can be used for RequestToken function above. 
+Window created by this function must be closed by WM_CLOSE or DestroyWindow() (Use either one, but not both).
+The window procedure of this window DOES NOT post WM_QUIT.
+ */
 extern "C"
 __declspec(dllexport)
 HWND CreateAnchorWindow()
 {
-    WNDCLASSEXW wndclass{
-    .cbSize = sizeof(WNDCLASSEX),
-    .style = CS_HREDRAW | CS_VREDRAW,
-    .lpfnWndProc = WndProc,
-    .cbClsExtra = 0,
-    .cbWndExtra = 0,
-    .hInstance = GetModuleHandleW(nullptr),
-    .hIcon = LoadIcon(NULL, IDI_APPLICATION),
-    .hCursor = LoadCursor(NULL, IDC_ARROW),
-    .hbrBackground = GetSysColorBrush(COLOR_3DFACE),
-    .lpszMenuName = nullptr,
-    .lpszClassName = L"AnchorWndClass",
-    .hIconSm = nullptr
-    };
+    // Use Immediately Invoked Lambda to ensure the window class is registered only once
+    static const ATOM wndClassAtom = []() {
+        WNDCLASSEXW wndClass{
+        .cbSize = sizeof(WNDCLASSEXW),
+        .style = CS_HREDRAW | CS_VREDRAW,
+        .lpfnWndProc = DefWindowProcW,
+        .cbClsExtra = 0,
+        .cbWndExtra = 0,
+        .hInstance = GetModuleHandleW(nullptr),
+        .hIcon = LoadIcon(NULL, IDI_APPLICATION),
+        .hCursor = LoadCursor(NULL, IDC_ARROW),
+        .hbrBackground = GetSysColorBrush(COLOR_3DFACE),
+        .lpszMenuName = nullptr,
+        .lpszClassName = L"AnchorWndClass",
+        .hIconSm = nullptr
+        };
 
-    RegisterClassExW(&wndclass);
+        return RegisterClassExW(&wndClass);
+    }();
+
+    if (0 == wndClassAtom)
+    {
+        return nullptr;
+    }
 
     // Place at center of desktop
     auto rect = RECT{};
     GetClientRect(GetDesktopWindow(), &rect);
-    auto x = rect.right / 2;
-    auto y = rect.bottom / 2;
+    auto x = static_cast<int>(rect.right / 2);
+    auto y = static_cast<int>(rect.bottom / 2);
     auto width = 0;
     auto height = 0;
 
-    auto hwndConsole = GetAncestor(GetConsoleWindow(), GA_ROOTOWNER);
+    auto hwndParent = GetAncestor(GetConsoleWindow(), GA_ROOTOWNER);
+
+    if (nullptr == hwndParent)
+    {
+        hwndParent = GetForegroundWindow();
+    }
 
     auto hwnd = CreateWindowExW(
         0,
-        wndclass.lpszClassName,
+        MAKEINTATOM(wndClassAtom),
         L"Anchor Window",
         WS_POPUP,
         x, y, width, height,
-        hwndConsole, // hWndParent
+        hwndParent,
         nullptr,
-        GetModuleHandle(nullptr),
+        GetModuleHandleW(nullptr),
         nullptr);
 
     return hwnd;

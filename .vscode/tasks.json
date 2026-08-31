@@ -34,6 +34,23 @@
                 }
             }
         },
+        {
+            "label": "Rebuild WamInterop Release|x64",
+            "type": "shell",
+            "command": "${workspaceFolder}/WamInterop/Build.ps1",
+            "args": [
+                "-Configuration", "Release",
+                "-Platform", "x64",
+                "-Action", "Rebuild"
+            ],
+            "group": { "kind": "build"  },
+            "options": {
+                "shell": {
+                    "executable": "pwsh",
+                    "args": ["-NoLogo", "-NoProfile", "-File"]
+                }
+            }
+        }
     ],
     "inputs": [
         {
