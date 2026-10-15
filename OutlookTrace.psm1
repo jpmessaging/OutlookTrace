@@ -16517,6 +16517,11 @@ function Collect-OutlookInfo {
 
         if ($EnableWebView2DevTools) {
             Enable-WebView2DevTools -ExecutableName $TargetProcessName -User $targetUser -ErrorAction Stop
+
+            if ($TargetProcessName -eq 'olk') {
+                Enable-MonarchDevTools -User $targetUser
+            }
+
             $webView2DevToolsEnabled = $true
         }
 
@@ -16885,6 +16890,10 @@ function Collect-OutlookInfo {
 
         if ($Local:webView2DevToolsEnabled) {
             Disable-WebView2DevTools -ExecutableName $TargetProcessName -User $targetUser 2>&1 | Write-Log -Category Error -PassThru
+
+            if ($TargetProcessName -eq 'olk') {
+                Disable-MonarchDevTools -User $targetUser
+            }
         }
 
         if ($Component -contains 'NewOutlook') {
