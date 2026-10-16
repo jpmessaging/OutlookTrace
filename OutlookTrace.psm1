@@ -12,7 +12,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #>
 
-$Version = 'v2026-08-30'
+$Version = 'v2026-10-16'
 #Requires -Version 3.0
 
 <#
@@ -6399,7 +6399,7 @@ function Save-WebServiceCache {
 
 <#
 .SYNOPSIS
-    Run MdmDiagnosticsTool.exe to save its output to the given directory.
+    Run MdmDiagnosticsTool.exe and save its output to the given directory.
 
 .EXAMPLE
     Save-MdmDiagnostics -Path "C:\Temp\MdmDiagnostics"
@@ -16518,6 +16518,7 @@ function Collect-OutlookInfo {
         if ($EnableWebView2DevTools) {
             Enable-WebView2DevTools -ExecutableName $TargetProcessName -User $targetUser -ErrorAction Stop
 
+            # Note: WebView2's registry, AdditionalBrowserArguments, used to work on olk. but not anymore and need to enable via config.json
             if ($TargetProcessName -eq 'olk') {
                 Enable-MonarchDevTools -User $targetUser
             }
