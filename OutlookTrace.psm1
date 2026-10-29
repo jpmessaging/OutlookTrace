@@ -885,7 +885,7 @@ namespace Win32
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool DestroyWindow(IntPtr hWnd);
-    
+
         [DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)]
         public static extern uint SendMessageTimeoutW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
 
@@ -14651,6 +14651,95 @@ function Disable-MonarchDevTools {
 
 <#
 .SYNOPSIS
+    Add a config entry to Monarch's config.json file. The file will be created if it does not exist
+#>
+function Add-MonarchConfigEntry {
+    [CmdletBinding()]
+    param(
+        $User,
+        [Parameter(Mandatory = $true)]
+        # Hashtable of entries to add to the config.json file (e.g., @{ "edgeDevTools" = "autoopen" ; "parameters" = "enableTracing" })
+        [System.Collections.Hashtable]$Entries
+    )
+
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+
+    if (-not $localAppdata) {
+        Write-Error "Failed to get Local AppData folder for user $User"
+        return
+    }
+
+    $configPath = Join-Path $localAppdata -ChildPath 'Microsoft\Olk\config.json'
+    $config = @{}
+
+    # If config.json exists, copy its properties to config
+    if (Test-path $configPath -PathType Leaf) {
+        $existing = Get-Content -Path $configPath -Raw | ConvertFrom-Json
+
+        foreach ($prop in $existing.PSObject.Properties) {
+            $config.Add($prop.Name, $prop.Value)
+        }
+
+        # $backupPath = "$configPath.bak"
+        # Rename-Item -Path $configPath -NewName $backupPath -Force
+    }
+
+    foreach ($key in $Entries.Keys) {
+        $config.$key = $Entries[$key]
+    }
+
+    # Save the updated configuration back to config.json
+    $config | ConvertTo-Json | Set-Content -Path $configPath -Force
+}
+
+<#
+.SYNOPSIS
+    Remove a config entry from Monarch's config.json file. The file will be removed if the result is empty after removal.
+#>
+function Remove-MonarchConfigEntry {
+    [CmdletBinding()]
+    param(
+        $User,
+        [Parameter(Mandatory = $true)]
+        # Collection of entry names to remove from the config.json file (e.g., @("edgeDevTools", "parameters"))
+        $Entries
+    )
+
+    $localAppdata = Get-UserShellFolder -User $User -ShellFolderName 'Local AppData'
+
+    if (-not $localAppdata) {
+        Write-Error "Failed to get Local AppData folder for user $User"
+        return
+    }
+
+    $configPath = Join-Path $localAppdata -ChildPath 'Microsoft\Olk\config.json'
+
+    if (-not (Test-Path $configPath -PathType Leaf)) {
+        Write-Error "Config file does not exist for user $User"
+        return
+    }
+
+    $config = Get-Content -Path $configPath -Raw | ConvertFrom-Json
+
+    foreach ($key in $Entries) {
+        if ($config.PSObject.Properties.Name -contains $key) {
+            $config.PSObject.Properties.Remove($key)
+            Write-Verbose "$key is found and going be removed"
+        }
+    }
+
+    # Note: Do not compare Count with 0 as it returns null when empty.
+    if ($config.PSObject.Properties.Count) {
+        $config | ConvertTo-Json | Set-Content -Path $configPath -Force
+    }
+    else {
+        Remove-Item -Path $configPath -Force
+        Write-Verbose "Config file removed as it became empty after removing entries."
+    }
+}
+
+<#
+.SYNOPSIS
     Enable Edge DevTools. This takes effect for subsequent launches of Monarch.
 
 .NOTES
@@ -16517,13 +16606,18 @@ function Collect-OutlookInfo {
 
         if ($EnableWebView2DevTools) {
             Enable-WebView2DevTools -ExecutableName $TargetProcessName -User $targetUser -ErrorAction Stop
+            $webView2DevToolsEnabled = $true
+        }
 
-            # Note: WebView2's registry, AdditionalBrowserArguments, used to work on olk. but not anymore and need to enable via config.json
-            if ($TargetProcessName -eq 'olk') {
-                Enable-MonarchDevTools -User $targetUser
+        if ($Component -contains 'NewOutlook') {
+            $monarchConfig = @{ 'parameters' = 'enableTracing' }
+
+            if ($EnableWebView2DevTools) {
+                $monarchConfig.Add('edgeDevTools', 'autoopen')
             }
 
-            $webView2DevToolsEnabled = $true
+            Add-MonarchConfigEntry -User $targetUser -Entries $monarchConfig
+            $newOutlookTraceStarted = $true
         }
 
         if ($Component -contains 'WebView2') {
@@ -16799,7 +16893,7 @@ function Collect-OutlookInfo {
         $waitStart = Get-Timestamp
         $waitResult = $null
 
-        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerStarted -or $crashDumpStarted -or $procmonStarted -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hangDumpStarted -or $wprStarted -or $recordingStarted -or $webView2DevToolsEnabled -or $webView2TraceStarted) {
+        if ($netshTraceStarted -or $outlookTraceStarted -or $psrStarted -or $ldapTraceStarted -or $capiTraceStarted -or $tcoTraceStarted -or $fiddlerStarted -or $crashDumpStarted -or $procmonStarted -or $wamTraceStarted -or $wfpStarted -or $ttdStarted -or $perfStarted -or $hangDumpStarted -or $wprStarted -or $recordingStarted -or $webView2DevToolsEnabled -or $webView2TraceStarted -or $newOutlookTraceStarted) {
             Write-Log "Waiting for the user to stop"
             $ScriptInfo.WaitStart = [DateTimeOffset]::Now
 
@@ -16891,15 +16985,12 @@ function Collect-OutlookInfo {
 
         if ($Local:webView2DevToolsEnabled) {
             Disable-WebView2DevTools -ExecutableName $TargetProcessName -User $targetUser 2>&1 | Write-Log -Category Error -PassThru
-
-            if ($TargetProcessName -eq 'olk') {
-                Disable-MonarchDevTools -User $targetUser
-            }
         }
 
         if ($Component -contains 'NewOutlook') {
             Save-MonarchLog -User $targetUser -Path (Join-Path $tempPath 'Monarch')  2>&1 | Write-Log -Category Error -PassThru
             Save-MonarchSetupLog -User $targetUser -Path (Join-Path $tempPath 'MonarchSetup')  2>&1 | Write-Log -Category Error -PassThru
+            Remove-MonarchConfigEntry -User $targetUser -Entries $monarchConfig.Keys
         }
 
         if ($Local:webView2TraceStarted) {
