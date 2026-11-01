@@ -14493,7 +14493,12 @@ function Save-MonarchLog {
         @{ Path = "$olk\EBWebView\Crashpad"; Destination = "$Path\EBWebView\Crashpad"; Recurse = $true }
     } | & {
         process {
-            Save-Item @_
+            if (Test-Path $_.Path -PathType Container) {
+                Save-Item @_
+            }
+            else {
+                Write-Log "Path '$($_.Path)' does not exist" -Category Warning
+            }
         }
     }
 }
