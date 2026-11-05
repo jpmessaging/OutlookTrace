@@ -13967,18 +13967,24 @@ function Get-OfficeSymbolInfo {
     $officeInfo = Get-OfficeInfo
 
     if (-not $officeInfo) {
-        Write-Log "Microsoft Office is not installed" -Category Warning
         return
     }
 
-    # e.g. C:\Program Files\Microsoft Office\root\Office16\
+    if (-not $officeInfo.OutlookMapi) {
+        Write-Error "OfficeInfo is missing OutlookMapi property"
+        return
+    }
+
+    # e.g. officePath looks like "C:\Program Files\Microsoft Office\root\Office16"
     $officePath = Split-Path $officeInfo.OutlookMapi -Parent
 
-    $sharedPath = if ($officeInfo.Architecture -eq 'x64') {
-        Join-Path $officeInfo.InstallPath 'root\vfs\ProgramFilesCommonX64\Microsoft Shared\OFFICE16'
-    }
-    elseif ($officeInfo.Architecture -eq 'x86') {
-        Join-Path $officeInfo.InstallPath 'root\vfs\ProgramFilesCommonX86\Microsoft Shared\OFFICE16'
+    $sharedPath = switch ($officeInfo.Architecture) {
+        'x64' { Join-Path $officeInfo.InstallPath 'root\vfs\ProgramFilesCommonX64\Microsoft Shared\OFFICE16' }
+        'x86' { Join-Path $officeInfo.InstallPath 'root\vfs\ProgramFilesCommonX86\Microsoft Shared\OFFICE16' }
+        default {
+            Write-Error "OfficeInfo.Architecture, $($officeInfo.Architecture), is not recognized"
+            return
+        }
     }
 
     & {
