@@ -16331,7 +16331,7 @@ function Collect-OutlookInfo {
         # To use Start-Task, make sure to open runspaces first and close it when finished.
         # Currently MaxRunspaces is 8 or more because there are 8 tasks at most. 3 of them, processCaptureTask, psrTask, and hangMonitorTask are long running.
         $minimumMaxRunspacesCount = 8
-        $vars = 'LogWriter', 'PSDefaultParameterValues', 'MyModulePath', 'Emoji', 'AppUserModelIds', 'OfficeInfoCache' | Get-Variable
+        $vars = 'LogWriter', 'PSDefaultParameterValues', 'MyModulePath', 'Emoji', 'AppUserModelIds', 'OfficeInfoCache' | Get-Variable -ErrorAction SilentlyContinue
         Open-TaskRunspace -Variables $vars -MinRunspaces ([int]$env:NUMBER_OF_PROCESSORS) -MaxRunspaces ([math]::Max($minimumMaxRunspacesCount, (2 * [int]$env:NUMBER_OF_PROCESSORS)))
 
         # Configure log file mode and max file size for ETW traces (OutlookTrace, WAM, LDAP, and CAPI)
